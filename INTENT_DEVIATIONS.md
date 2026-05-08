@@ -135,3 +135,30 @@ Trivial — switching `models.main.provider` from `wrapper` back to `anthropic` 
 
 **User action requested (optional):**
 If you'd prefer the strict spec path, populate `.env` with `ANTHROPIC_API_KEY` (and optionally `OPENAI_API_KEY`, `TAVILY_API_KEY`) and switch `sherlock.live.yaml`'s providers back to `anthropic` etc. Sherlock auto-loads `.env` via python-dotenv. The wrapper-as-runtime path remains available either way.
+
+## 2026-05-08 — DEVIATION-005: Authoritative evaluator is a Claude-class subagent, not gemini-flash-lite
+
+**Loop / milestone:** post-loop-9 in the Ralph cycle.
+**Spec reference:** EVALUATION_PROTOCOL.md § 3.3 ("evaluator is gemini-3.1-flash-lite-preview … through the cli-wrapper-unified")
+**What the spec says (or implies):**
+The evaluator is a small fast subscription-funded Gemini model. Its JSON-rubric output is the official score that gates the 80% threshold.
+
+**What I did instead:**
+The orchestrator agent (Claude Code class) — or a Claude-class subagent dispatched by the orchestrator — is the authoritative evaluator. The small-model evaluator stays in the codebase as a sanity-check baseline but its score is no longer what drives the Ralph loop's diagnose-fix-retry cycle.
+
+**Why:**
+Loops 2-9 made it clear that small-model evaluators (gemini-3.1-flash-lite-preview, gemini-2.5-flash-lite, codex/gpt-5.4-mini) score by surface pattern-match against the gold standard. They lack the conversation-flow understanding, spec knowledge, and intent-tracking that makes a Sherlock-shaped judgment. When the runtime workers (LLM-1/LLM-2/LLM-3) are themselves gpt-5.4-mini or claude-haiku-4-5 class, the evaluator must be CLASS-ABOVE the workers — otherwise there is no headroom for the worker output to shine. **Ralph's whole point is that the orchestrator (with full intent + spec + conversation history) judges the worker output and steers; outsourcing the judgment to a similarly-sized model collapses Ralph into a noise-driven random walk.**
+
+User direction (verbatim, 2026-05-08): "평가자는 너가 서브에이전트로 평가해야지 무슨 작은 모델들한테 평가를 시키냐 지금까지의 루프가 의미 없어져보이네 그러니까 너가 여러번 루프를 도는거지 왜 평가를 실제 사용 모델들을 시켜? 그럼 너가 랄프할 이유가 뭐냐?"
+
+**Effect on prior loops:**
+The §4a / §4b trajectory tables in `logs/REPORT.md` (loops 2-9) are demoted to "small-model sanity baseline" status. The score deltas they report still indicate which fixes moved which dimension (signal-in-noise), but they are not the rubric for the 80% gate going forward.
+
+**New evaluator path:**
+After each `sherlock evaluate` run, the orchestrator dispatches a subagent with: (a) the gold standard, (b) the candidate `sherlock_output.md`, (c) the rubric prompt, and (d) any spec context the subagent needs. The subagent returns JSON in the same shape (`summary_fidelity / inference_quality / classification_correctness / tool_recommendations / final_score / notes`) plus an `evaluator_model: "claude-orchestrator-subagent"` marker. This becomes the loop's official score in `evaluation/runs/<ts>/score.txt` (overwriting any prior small-model write).
+
+**Reversibility:**
+Trivial — to revert, treat the small-model evaluator's score as authoritative again. The `EvaluatorScore.evaluator_model` field already records which path was used, so trajectory analysis can group either way.
+
+**User action requested (optional):**
+None — this is the user's explicit direction.
