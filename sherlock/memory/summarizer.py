@@ -203,27 +203,13 @@ class SummarizerEngine:
             # remains unreferenced.
             let_fade = bool(fact.get("let_fade"))
             init_state = MemoryState.COLD if let_fade else MemoryState.FRESH
-            # Auto-pin classifier (Loop 13 fix): force pin when content
-            # contains identity / safety / contract / appointment markers.
-            # The Loop-12 subagent observed Section 3 PIN had only 3 entries
-            # vs gold's ~17 because LLM-2 was conservative with
-            # pin_recommended; this nets in the obvious wins.
-            content_low = str(content).lower()
-            forced_pin = (not let_fade) and any(
-                marker in content_low
-                for marker in (
-                    "allerg", "epipen", "epinephrine",  # safety
-                    "freelance", "contract",  # role / contract
-                    "yujin",  # daughter
-                    "tokyo", "june 12", "june 13", "june 14", "june 15",  # trip
-                    "monterey ginza", "toyosu",
-                    "phoebe",  # concert
-                    "neurolog", "dr lee", "dr park", "severance",  # appts
-                    "ipad pro", "wacom", "trade-in",  # purchase
-                    "erin",  # boss
-                    "vue 3", "react",  # framework
-                )
-            )
+            # Loop-15 architectural redesign: removed the hardcoded
+            # auto-pin keyword classifier (was: "allerg", "yujin", "epipen",
+            # "phoebe", … 16 markers). It overfit on this specific dummy
+            # conversation. The agentic answer is for the consolidator
+            # (Section 3) to read every user_utterance and decide PIN
+            # status itself. LLM-2's pin_recommended flag is now the only
+            # input signal here.
             self._store.add(
                 conversation_id=conversation_id,
                 content=str(content),
@@ -231,7 +217,7 @@ class SummarizerEngine:
                 source=fsrc,
                 confidence=confidence,
                 last_used_turn_index=turn_index,
-                pinned=(bool(fact.get("pin_recommended")) or forced_pin) and not let_fade,
+                pinned=bool(fact.get("pin_recommended")) and not let_fade,
                 evidence=json.dumps(evidence_list),
                 semantic_triple=triple_tuple,
                 initial_state=init_state,
