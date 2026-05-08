@@ -24,16 +24,18 @@ models:
   main:
     provider: wrapper-claude
     model: claude-haiku-4-5
-  # Summarizer + inferer use Gemini Flash Lite via the wrapper for SPEED
-  # (Claude haiku via wrapper is ~10-15s/call; Gemini flash lite is ~3-4s).
-  # The evaluator uses the same model — that's deliberate; both are
-  # subscription-funded.
+  # Summarizer + inferer: switched to codex/gpt-5.4-mini after observing
+  # that gemini-3.1-flash-lite-preview rate-limits affected BOTH the
+  # evaluator and the companion runtime providers — loop-9 returned empty
+  # Section 2/3/4 because every LLM-2/LLM-3 call was silently failing.
+  # gpt-5.4-mini via wrapper is similarly fast (~3-4s/call) but on a
+  # separate quota.
   background_summary:
-    provider: wrapper-gemini
-    model: gemini-3.1-flash-lite-preview
+    provider: wrapper-codex
+    model: gpt-5.4-mini
   background_inference:
-    provider: wrapper-gemini
-    model: gemini-3.1-flash-lite-preview
+    provider: wrapper-codex
+    model: gpt-5.4-mini
 
 storage:
   sqlite_path: ./live_runs/sherlock.db

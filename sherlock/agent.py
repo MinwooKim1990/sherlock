@@ -344,6 +344,7 @@ class Sherlock:
         #    output can populate the active intent slot.
         hypotheses: list[dict] = []
         search_results: list[dict] = []
+        infer_error: Optional[str] = None
         if self._inferer is not None:
             try:
                 infer_result = self._inferer.infer(
@@ -369,8 +370,17 @@ class Sherlock:
                             search_results.extend(self._search.search(topic, max_results=3))
                         except Exception:
                             pass
-            except Exception:
+            except Exception as exc:
                 hypotheses = []
+                infer_error = f"{type(exc).__name__}: {exc}"
+                # First-failure visibility: print once when a turn loses its
+                # inferer to a silent provider error. Loops 8-9 wasted a full
+                # run because rate-limited gemini failures were swallowed.
+                import sys
+                print(
+                    f"  [inferer error turn {turn_index}] {infer_error[:160]}",
+                    file=sys.stderr,
+                )
 
         # 4. Retrieve memories (RAG top-K).
         retrieved = self._retrieve_memories(user_input)
@@ -414,8 +424,13 @@ class Sherlock:
                         turn_index=turn_index,
                     )
                     summary_run = True
-                except Exception:
+                except Exception as exc:
                     summary_run = False
+                    import sys
+                    print(
+                        f"  [summarizer error turn {turn_index}] {type(exc).__name__}: {exc}"[:160],
+                        file=sys.stderr,
+                    )
 
         # 8. Decay pass.
         active_topics = [user_input]
