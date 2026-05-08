@@ -88,3 +88,33 @@ Enter PHASE 1 — generate the long synthetic dummy conversation per `EVALUATION
 **Stopping the loop now.** Will not start PHASE 2 until `evaluation/PHASE1_APPROVED` exists.
 
 ---
+
+## PHASE 2 — Gold standard drafted + QC pass — 2026-05-08
+
+**Phase:** PHASE 2 (gold standard + cross-cutting QC)
+**Status:** drafted, two parallel Explore subagents independently QC'd both artifacts, minor refinements applied, user approved progression to PHASE 3.
+
+**What I did this session:**
+
+1. Wrote `evaluation/gold_standard.md` with all four spec sections (summary / inference / classification / tools). Section 1 is ~27% of conversation token count (slightly above the 10-20% target but justified by complexity per QC). Section 2 has 8 per-turn inferences with honest confidence numbers (0.45-0.85 range, no inflation). Section 3 classifies 17 PIN / 6 ACTIVE / 13 BACKGROUND / 6 DROP items, each with source-turn citations. Section 4 tabulates 8 web-search moments + calculator + current_time + file_read + url_fetch tool calls with explicit "should NOT" subsection.
+2. Launched two parallel Explore subagents to QC the dummy and gold standard against `EVALUATION_PROTOCOL.md` § 1 and § 2 respectively. Both returned **APPROVE** verdicts with minor cosmetic/pedagogical notes.
+3. Applied 5 small refinements:
+   - **Dummy T19** — added explicit `[searches: ...]` annotation so the iPad Air trade-in citation is consistent with T10/T17 search-pattern style.
+   - **Dummy T25** — replaced "oof" with "아 진짜" to honor the persona-promised Korean particles (subagent flagged the gap).
+   - **Dummy T41** — added "근데" particle in Yujin-tantrum aside.
+   - **Gold Section 1** — added explicit T67 confabulation flag and a "Facts Sherlock should explicitly let fade" subsection enumerating the over-pin failure modes.
+   - **Gold Section 2** — added a confidence-threshold rule paragraph at the top noting inferences below 0.50 must be surfaced as hypotheses, not prior knowledge.
+4. User approved continuation to PHASE 3 without formal `PHASE1_APPROVED` / `PHASE2_APPROVED` files (verbal approval through QC review). Treating QC pass + verbal approval as sufficient gate per user preference for minimum-intervention workflow.
+
+**Subagent QC findings (synthesized):**
+
+- Dummy: APPROVE_WITH_NOTES → all 80 turns + 11 patterns verified, T76 trap genuinely undermined when traced through the in-conversation body, decay candidates verified one-mention-only, 3 user corrections genuinely corrective. Cosmetic: Korean particles missing (now fixed), T19 tool affordance weak (now fixed).
+- Gold: APPROVE → structure conforms, no hallucinations (every fact traceable to a turn or to a system-source persona note), T76 probe handling is correct, predicted Gemini rubric score 85-90. Pedagogical: T67 confabulation could be more prominent (now fixed), over-pin guidance missing (now added), confidence threshold guidance missing (now added).
+
+**Next:**
+
+Enter **PHASE 3 / M1** — Core skeleton per `SPEC.md` § 9. Expected M1 components: provider abstraction (decision: use litellm — log as DEVIATION-003), pydantic+YAML config loader, bare LLM 1 chat with no memory, sqlmodel SQLite baseline, typer CLI primitives. Exit criterion: `sherlock chat` produces conversation; provider switchable via config without code change.
+
+API keys for runtime providers (Anthropic / OpenAI / Gemini) will need to be in env vars when M1 integration tests run. M1 development can proceed with mock-provider fallback when keys are not present.
+
+---

@@ -109,7 +109,7 @@ The assistant in this dummy is plausible but not perfect — it makes the kinds 
 ### Turn 19
 **User:** ipad air 2020. is that even worth trading
 
-**Assistant:** Trade-in for an iPad Air 4 in working condition is hovering around ₩200-260k at Apple Korea right now depending on storage and condition score. Not life-changing but it gets you to roughly the price of the Pencil Pro for free. Worth doing.
+**Assistant:** [searches: "iPad Air 4 (2020) trade-in value Apple Korea"] Trade-in for an iPad Air 4 in working condition is hovering around ₩200-260k at Apple Korea right now depending on storage and condition score. Not life-changing but it gets you to roughly the price of the Pencil Pro for free. Worth doing.
 
 ### Turn 20
 **User:** ok. enough money talk for today. yujin is napping which is rare. tell me — for the tokyo trip, day 1 we land haneda around 4pm. we're tired. what's a low-effort first night near tsukiji
@@ -172,7 +172,7 @@ EpiPen carried. Mother: [phone]
 I'd give the hotel English one to the front desk on check-in and ask them to flag it for the kitchen if you order in.
 
 ### Turn 25
-**User:** ok saving these. oof migraine pulse just spiked. gonna lie down for 20. brb
+**User:** ok saving these. 아 진짜 migraine pulse just spiked. gonna lie down for 20. brb
 
 **Assistant:** Take the time. I'll be here when you're back. (Note for when you return: you mentioned earlier you'd book the neurologist tomorrow — keep that on the list.)
 
@@ -254,7 +254,7 @@ so the tokyo hotel — was thinking 4 nights at hotel monterey ginza, it has con
 **Assistant:** Have a good pickup. Open thread when you're back: the Phoebe ticket is locked, the neurologist is Friday, the iPad is pending order, and the dashboard plugin draft is unblocked on naming. Pick up wherever.
 
 ### Turn 41
-**User:** back. yujin had a tantrum about shoes for 20 min. very normal. ok small thing — for the trip, do i need to register yujin separately on the visit-japan app or is she on my entry
+**User:** back. yujin had a tantrum about shoes for 20 min. 근데 fine, very normal. ok small thing — for the trip, do i need to register yujin separately on the visit-japan app or is she on my entry
 
 **Assistant:** Each traveler needs their own Visit Japan Web entry, including Yujin — it generates her own QR for immigration and customs. You'll fill it out under your account but she's a separate "traveler" record in the app. Do it 2-3 weeks before; it caches once submitted. Korean passport for Yujin too?
 
@@ -582,7 +582,7 @@ Otherwise list looks complete.
 ### Tool affordances (turns where Sherlock should suggest a tool)
 - **T9-10** — web_search for Phoebe Bridgers Toyosu PIT June 13 2026 ticket availability
 - **T16-17** — web_search Apple Korea iPad Pro M5 12.9 1TB Wi-Fi+Cell price + USD/KRW rate; calculator for the price comparison incl. KR VAT vs US tax
-- **T19** — web_search iPad Air 2020 trade-in value Apple Korea
+- **T19** — web_search iPad Air 2020 (Air 4) trade-in value Apple Korea (now explicitly in-band)
 - **T26** — current_time + web_search Tokyo June 2026 forecast (or seasonal knowledge)
 - **T29** — current_time + calendar arithmetic (Vancouver DST end date)
 - **T37, T70** — file_read / structured-data tool to ingest the headache log; weather history API for pressure data
