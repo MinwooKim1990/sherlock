@@ -413,20 +413,44 @@ factual errors in the draft that fall into these specific classes:
      +15. Replace any "+15" outcome claims with the correct +0 / original
      rate / June 23 phrasing.
 
-  C. **T67 / prior-role confabulation.** If the draft attributes "lead
-     designer at Korean fintech / Viva Republica adjacent / savings app /
-     burned out 8 months ago" as a USER-STATED fact, this is wrong. The
-     dummy in-conversation assistant fabricated this at T67 reply
-     before the user said anything; user only later confirms parts. The
-     draft must FLAG this as a confabulation by the dummy assistant
-     (not echo it as user-stated). If the draft already flags it, leave
-     alone.
+  C. **T67 / prior-role confabulation.** Search the ENTIRE draft (Section
+     1 prose, Section 2 inferences, Section 3 PIN/ACTIVE/BACKGROUND/DROP
+     buckets, per-turn highlights — every section) for any mention of
+     "Viva Republica" / "Korean fintech" / "savings app" / "lead designer"
+     / "burned out" attributed to the user as fact. The dummy in-
+     conversation assistant fabricated these at T67 BEFORE the user
+     said anything (user only confirms parts at T68). Use the user log
+     below to verify: search USER-STATED entries for the literal strings
+     "viva republica", "fintech", "savings app", "burned out" — if NONE
+     of those strings appear in user-stated entries before turn 68, the
+     draft is treating an assistant-fabrication as user-stated. The
+     draft must mark these claims as POTENTIAL CONFABULATIONS by the
+     dummy assistant in Section 2, OR remove them from PIN/BACKGROUND
+     and replace with a flag like "[confabulated by dummy assistant T67;
+     user did not state]". This MUST cover all four sections, not just
+     PIN.
 
   D. **Date arithmetic.** If draft says specific weekday-date (Friday May
      N, Tuesday May N), verify against the conversation reference date
      2026-05-08 (a Friday). The actual neurologist appointment is
      "Friday May 15"; pediatrician is "Tuesday May 12". Visit Japan Web
      reminder: "May 27" (NOT June 27).
+
+  E. **Five thread structure.** The conversation has FIVE distinct topic
+     threads: WORK (Nimbus dashboard / Erin onboarding / Vue 3 plugin),
+     HEALTH (migraines / neurologist / EpiPen storage), TRIP (Tokyo /
+     Phoebe Bridgers / hotel / itinerary), MONEY (iPad-vs-Wacom /
+     onboarding rate negotiation / KRW), FAMILY (Yujin / soba allergy /
+     preschool / Sora / mother). If the draft enumerates fewer than
+     five (e.g. folds family into health), expand to all five named
+     threads in Section 1 prose.
+
+  F. **Corrections block.** Section 1 should explicitly surface a
+     "Three corrections" passage covering: T3 in-house→freelance
+     correction; T20 he→she (Yujin gender); T27 React→Vue 3 framework.
+     Plus the assistant-correcting-user catch at T55 (EpiPen storage —
+     room temperature, not refrigerated). If draft doesn't have these
+     surfaced as a discrete corrections paragraph, add one.
 
 OUTPUT: emit the FULLY REVISED 4-section markdown document. Make
 MINIMAL changes — preserve everything that's correct. Only modify text
