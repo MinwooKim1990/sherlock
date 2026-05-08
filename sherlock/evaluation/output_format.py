@@ -31,6 +31,59 @@ from sherlock.memory.entry import MemoryEntry, MemorySource, MemoryState, Memory
 from sherlock.providers.base import ChatMessage
 
 
+_REFLECTION_SYSTEM = """\
+You are the REFLECTION VALIDATOR for the Sherlock memory-curation system.
+A first-pass consolidator has produced a four-section Markdown document
+about a conversation. Your job: read it against the FULL CONVERSATION
+TRANSCRIPT below and CORRECT every place where it has gone wrong.
+
+Specific failure patterns you must catch and fix:
+
+1. **PARAPHRASED TURN QUOTES.** When the document says "the assistant
+   replied X at T76" or "the user said Y at T67", verify by finding
+   ### Turn N in the transcript. If the quoted text does not literally
+   appear in that turn, REPLACE the paraphrase with the verbatim text
+   from the transcript. If the document references a turn that doesn't
+   exist, mark it `[no such turn]`.
+
+2. **CONFABULATIONS PROPAGATED FROM DUMMY ASSISTANT.** Some assistant
+   turns in the dummy contain fabrications — facts the user never
+   stated. The document may treat these as user-stated PINs. For each
+   PIN-user-stated fact, check whether the FIRST APPEARANCE of the
+   underlying claim in the transcript is in a USER turn or an ASSISTANT
+   turn. If assistant-first, downgrade the entry from PIN-user-stated
+   to "POTENTIAL CONFABULATION" with a flag.
+
+3. **DATE ARITHMETIC ERRORS.** When the document gives a calendar date
+   for an appointment / reminder / event, verify it matches the
+   transcript text. Friday/Tuesday-of-week calculations must check
+   against the conversation reference date 2026-05-08 (a Friday).
+   E.g. "Friday May 15" is correct (T36); "Friday May 10" is wrong
+   (May 10 is a Sunday).
+
+4. **OUTCOME ERRORS.** When the document states a decision outcome
+   (e.g. "+15% rate accepted"), verify against the transcript. T62
+   user picks "breathing room. tokyo is enough" → post-trip start at
+   ORIGINAL rate (+0%). Do not invent rate changes.
+
+5. **NAMED-ENTITY CONFUSIONS.** "Phoebe" is the artist (Phoebe Bridgers),
+   not a friend. "Dr Park" is the pediatrician (NOT at Severance).
+   "Dr Lee" is the neurologist (at Severance). Sora is a friend, not
+   a hotel/venue/etc.
+
+6. **DAY-NUMBER vs DATE.** Trip dates 2026-06-12 to 2026-06-15.
+   Concert is 2026-06-13 = Day 2. Verify itinerary day-number
+   alignment against gold structure (Day 1 arrival, Day 2 concert
+   day, Day 3 zoo, Day 4 depart).
+
+Output the FULLY REVISED Markdown document. Same four-section
+structure. Make minimal changes — preserve the consolidator's prose
+where it is correct; replace only the parts that violate the above
+rules. Output begins with `## Section 1 — Summary` directly. No
+preamble, no commentary outside the four sections.
+"""
+
+
 _CONSOLIDATOR_SYSTEM = """\
 You are the FINAL CONSOLIDATOR for the Sherlock memory-curation system.
 Your job: read the full conversation transcript + Sherlock's accumulated
@@ -441,10 +494,49 @@ def format_sherlock_output(agent: Sherlock) -> FormattedOutput:
     if not consolidator_text:
         return _bulletproof_fallback(all_mems)
 
-    s1, s2, s3, s4 = _split_consolidator_output(consolidator_text)
+    # Loop-17 architectural fix: REFLECTION PASS.
+    # Loop 16's verbatim-quote rule was prompt-only and didn't bind. Add a
+    # second LLM call that reads the consolidator output + transcript and
+    # corrects (a) paraphrased turn-quotes (T76, T67), (b) confabulations
+    # propagated from dummy assistant, (c) date arithmetic errors, (d)
+    # decision-outcome errors (T62 +15 vs +0), (e) named-entity confusions
+    # (Phoebe-as-friend, Dr Park at Severance), (f) trip day-number errors.
+    revised_text = consolidator_text
+    try:
+        reflection_user_msg = (
+            "## FIRST-PASS CONSOLIDATOR OUTPUT (review and correct):\n\n"
+            f"{consolidator_text}\n\n"
+            "---\n\n"
+            "## FULL CONVERSATION TRANSCRIPT (ground truth):\n\n"
+            f"{transcript}\n\n"
+            "---\n\n"
+            "## FACT-FIRST-APPEARANCE TABLE (use to detect propagated confabulations):\n\n"
+            f"{first_seen}\n\n"
+            "---\n\n"
+            "Now produce the FULLY REVISED Markdown per your system prompt. "
+            "Output begins with `## Section 1 — Summary` directly."
+        )
+        ref_messages = [
+            ChatMessage(role="system", content=_REFLECTION_SYSTEM),
+            ChatMessage(role="user", content=reflection_user_msg),
+        ]
+        ref_resp = agent.provider.chat(ref_messages)
+        ref_text = (ref_resp.text or "").strip()
+        from sherlock.agent import _parse_companions_tag
+        ref_text, _ = _parse_companions_tag(ref_text)
+        ref_text = ref_text.strip()
+        if ref_text and ref_text.startswith("## Section 1"):
+            revised_text = ref_text
+    except Exception:
+        # Reflection failed — fall back to first-pass output (still valid).
+        pass
+
+    s1, s2, s3, s4 = _split_consolidator_output(revised_text)
     if not s1.strip():
-        # Consolidator didn't structure properly — fall back deterministically.
-        return _bulletproof_fallback(all_mems)
+        # Reflection broke structure — try first-pass.
+        s1, s2, s3, s4 = _split_consolidator_output(consolidator_text)
+        if not s1.strip():
+            return _bulletproof_fallback(all_mems)
 
     return FormattedOutput(
         section_1_summary=s1,
