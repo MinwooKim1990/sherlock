@@ -6,6 +6,7 @@ __pycache__/
 .ruff_cache/
 .env
 .env.*
+!.env.example
 secrets/
 logs/raw.jsonl
 logs/raw.*.jsonl.gz
@@ -15,4 +16,6 @@ state/current.json
 evaluation/runs/
 sherlock.db
 sherlock_vectors/
+fake_runs/
+live_runs/
 .DS_Store

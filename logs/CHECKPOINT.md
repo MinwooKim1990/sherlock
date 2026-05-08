@@ -1,11 +1,17 @@
 # CHECKPOINT — 2026-05-08
 
-**Status:** PHASE 0 complete. Ready to enter PHASE 1.
+**Status:** PHASE 3 / M1 complete. Advancing to M2.
 
-- ✅ Sandbox: `.venv/` on **Python 3.12.13**, `sherlock` installed editable.
-- ✅ Evaluator: `~/Desktop/cli-wrapper-unified/` reachable via both CLI and Python import. Default Gemini id `gemini-3.1-flash-lite-preview` matches the spec exactly. Smoke calls returned expected text.
-- ✅ Layout, logs, state, git baseline all in place.
-- ⏭ **Next:** PHASE 1 — generate the long synthetic dummy conversation. Will write to `evaluation/dummy_conversation.md`, then create `logs/AWAITING_PHASE1_APPROVAL.md` and stop.
-- 🔑 **User action needed before PHASE 3 only:** API keys for Anthropic / OpenAI / Gemini in env vars (the spec's YAML config wires them up). PHASE 1–2 generation does not need them.
+- ✅ PHASE 0: sandbox + venv + wrapper verified (commit `f9f9469`).
+- ✅ PHASE 1: 80-turn dummy conversation, QC-approved (commit `541c0a5`).
+- ✅ PHASE 2: gold standard with 4 sections, QC-approved (commit `fb4318d`).
+- ✅ **M1: core skeleton — 16 tests pass, CLI works end-to-end** (commit `3206ece`).
+  - litellm-backed providers (Anthropic / OpenAI / Gemini / xAI / Ollama / LM Studio behind one ABC)
+  - pydantic + YAML config loader
+  - SQLite (sqlmodel) baseline
+  - bare chat (no memory yet — M2 layer)
+  - typer CLI: `sherlock chat`, `sherlock config validate / show`, `sherlock models`
+- ⏭ **Next: M2 — memory layer.** Vector DB (Chroma) + embedding provider + LLM-2 summarization cycle + K-turn retention + 4-state decay.
+- 🔑 **API key status:** `ANTHROPIC_API_KEY` is set in your shell but not propagating to pytest's subprocess in this environment. Live smoke skipped. Code path is wired and will work as soon as the env var is inherited (e.g. running pytest from a shell where you've explicitly `export`-ed the key).
 
-See `logs/curated.md` for the full bootstrap log and `INTENT_DEVIATIONS.md` for the two PHASE 0 deviations (wrapper-via-Python-import, python3.12-preference).
+See `logs/curated.md` for full loop history and `INTENT_DEVIATIONS.md` for the three deviations applied so far (DEVIATION-001 wrapper-via-Python-import, DEVIATION-002 python3.12-preference, DEVIATION-003 litellm-as-provider-backend).

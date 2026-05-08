@@ -1,7 +1,9 @@
-"""Top-level `sherlock` CLI. M1 surface only — `chat` and `config`."""
+"""Top-level `sherlock` CLI."""
 from __future__ import annotations
 
+import json
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import typer
@@ -128,6 +130,97 @@ def models_list(
         console.print(
             f"inference: {cfg.models.background_inference.provider}/{cfg.models.background_inference.model}"
         )
+
+
+@app.command("evaluate")
+def evaluate(
+    config: Path | None = typer.Option(None, "--config", "-c"),
+    conversation: Path = typer.Option(
+        Path("evaluation/dummy_conversation.md"),
+        "--conversation",
+        help="Path to dummy conversation markdown.",
+    ),
+    gold: Path = typer.Option(
+        Path("evaluation/gold_standard.md"),
+        "--gold",
+        help="Path to gold standard markdown.",
+    ),
+    evaluator_prompt: Path = typer.Option(
+        Path("evaluation/evaluator_system_prompt.txt"),
+        "--evaluator-prompt",
+        help="Evaluator rubric file.",
+    ),
+    runs_root: Path = typer.Option(
+        Path("evaluation/runs"),
+        "--runs",
+        help="Directory under which the timestamped run is written.",
+    ),
+    max_turns: int | None = typer.Option(None, "--max-turns", help="Cap turns for fast smoke runs."),
+    skip_score: bool = typer.Option(False, "--skip-score", help="Replay + format only; don't call the evaluator."),
+) -> None:
+    """Replay the dummy conversation through Sherlock and score against the gold standard."""
+    from sherlock.evaluation import format_sherlock_output, replay_dummy_conversation
+    from sherlock.evaluation.evaluator import GeminiEvaluator
+
+    cfg_path = _resolve_config(config)
+    cfg = Config.from_yaml(cfg_path)
+    agent = Sherlock(cfg)
+    if cfg.bootstrap.auto_run_on_init:
+        agent._maybe_bootstrap()
+
+    ts = datetime.utcnow().strftime("%Y-%m-%dT%H-%M-%S")
+    run_dir = runs_root / ts
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    console.print(f"[cyan]Replaying[/cyan] {conversation} → {cfg.models.main.provider}/{cfg.models.main.model}")
+
+    def _progress(i, t, error):
+        if error:
+            console.print(f"  turn {t.turn_number} [red]ERR[/red] {error}")
+        else:
+            if (i + 1) % 10 == 0:
+                console.print(f"  replayed {i + 1} turns…")
+
+    turns = replay_dummy_conversation(
+        agent, conversation, max_turns=max_turns, progress_callback=_progress
+    )
+    console.print(f"[green]Replay done[/green] — {len(turns)} turns")
+
+    output = format_sherlock_output(agent)
+    candidate_path = run_dir / "sherlock_output.md"
+    candidate_path.write_text(output.to_markdown(), encoding="utf-8")
+    console.print(f"  wrote {candidate_path}")
+
+    if skip_score:
+        console.print("[yellow]--skip-score set; not calling evaluator.[/yellow]")
+        return
+
+    evaluator = GeminiEvaluator(evaluator_prompt)
+    gold_md = gold.read_text(encoding="utf-8")
+    score = evaluator.evaluate(gold_md=gold_md, candidate_md=output.to_markdown())
+
+    eval_json = run_dir / "evaluator_output.json"
+    eval_json.write_text(
+        json.dumps({**score.to_dict(), "raw_response": score.raw_response}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    (run_dir / "score.txt").write_text(str(score.final_score) + "\n", encoding="utf-8")
+    (run_dir / "comparison_input.md").write_text(
+        f"# GOLD\n\n{gold_md}\n\n---\n\n# CANDIDATE\n\n{output.to_markdown()}",
+        encoding="utf-8",
+    )
+
+    console.print(
+        Panel.fit(
+            f"[bold]Final: {score.final_score}/100[/bold]\n"
+            f"  summary_fidelity:           {score.summary_fidelity}\n"
+            f"  inference_quality:          {score.inference_quality}\n"
+            f"  classification_correctness: {score.classification_correctness}\n"
+            f"  tool_recommendations:       {score.tool_recommendations}\n\n"
+            f"notes: {score.notes[:300]}{'…' if len(score.notes) > 300 else ''}",
+            border_style="cyan" if score.final_score >= 80 else "yellow",
+        )
+    )
 
 
 def main() -> None:  # pragma: no cover

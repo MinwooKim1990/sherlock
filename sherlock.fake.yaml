@@ -1,0 +1,43 @@
+# Hermetic config — all providers Fake. Use for replay-pipeline smoke checks.
+project: sherlock_fake_smoke
+
+main_system_prompt:
+  path: ./prompts/main_system_prompt.md
+  domain_hints:
+    - "casual conversational assistant"
+
+models:
+  main:
+    provider: fake
+    model: main
+  background_summary:
+    provider: fake
+    model: summary
+  background_inference:
+    provider: fake
+    model: inference
+
+storage:
+  sqlite_path: ./fake_runs/sherlock.db
+  vector_db: chroma
+  vector_path: ./fake_runs/sherlock_vectors
+  embedding:
+    provider: fake
+    model: fake-embedding
+
+memory:
+  k_turn_min: 3
+  k_turn_max: 8
+  summarize_every_n_turns: 4
+
+search:
+  provider: stub
+  always_on: true
+  inject_datetime: true
+
+inference:
+  cold_start_turns: 0
+  confidence_threshold: 0.4
+
+bootstrap:
+  auto_run_on_init: true   # Fake bootstrap fails → default companion prompts (DEFAULT_LLM2/3) are installed via the fallback path; this is what we want to exercise.

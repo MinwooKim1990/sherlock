@@ -1,6 +1,6 @@
 """Pydantic config schema and YAML loader.
 
-M1-relevant subset of SPEC.md § 8.3. M2+ fields are declared with sane
+M1+M2+M3 subset of SPEC.md § 8.3. M2+ fields are declared with sane
 defaults so downstream code can read them without breaking when omitted.
 """
 from __future__ import annotations
@@ -10,7 +10,12 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
+from dotenv import load_dotenv
 from pydantic import BaseModel, Field, field_validator
+
+# Auto-load .env from CWD (or any parent) so users can put keys in a project-
+# local .env file without exporting in their shell. No-op when no .env exists.
+load_dotenv()
 
 
 class MainPromptConfig(BaseModel):
@@ -48,15 +53,70 @@ class ModelsConfig(BaseModel):
     background_inference: ModelConfig | None = None
 
 
+class EmbeddingConfig(BaseModel):
+    provider: str = "fake"  # default to fake so tests are hermetic
+    model: str = "fake-embedding"
+    api_key_env: str | None = None
+
+
 class StorageConfig(BaseModel):
     sqlite_path: Path = Path("./sherlock.db")
     vector_db: Literal["chroma", "lancedb"] = "chroma"
     vector_path: Path = Path("./sherlock_vectors")
+    embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
+
+
+class DecayPolicyConfig(BaseModel):
+    warm_after_days: float = 7.0
+    cold_after_days: float = 30.0
+    forgotten_after_days: float = 90.0
+    warm_after_turns: int = 1
+    cold_after_turns: int = 12
+    forgotten_after_turns: int = 30
+
+
+class TopicClusterConfig(BaseModel):
+    algorithm: str = "hdbscan"
+    min_cluster_size: int = 3
 
 
 class MemoryConfig(BaseModel):
     k_turn_min: int = 3
+    k_turn_max: int = 10
     k_turn_max_adaptive: bool = True
+    decay: DecayPolicyConfig = Field(default_factory=DecayPolicyConfig)
+    topic_cluster: TopicClusterConfig = Field(default_factory=TopicClusterConfig)
+    summarize_every_n_turns: int = 3
+    topic_change_similarity_threshold: float = 0.4
+    rag_top_k: int = 5
+
+
+class SearchConfig(BaseModel):
+    provider: str = "tavily"
+    api_key_env: str | None = "TAVILY_API_KEY"
+    always_on: bool = True
+    inject_datetime: bool = True
+
+
+class InferenceConfig(BaseModel):
+    evolution_enabled: bool = True
+    evolution_interval_turns: int = 20
+    confidence_threshold: float = 0.4
+    cold_start_turns: int = 0  # M2 keeps this loose; M3 raises to 10
+
+
+class ToolsConfig(BaseModel):
+    builtin: list[str] = Field(
+        default_factory=lambda: ["web_search", "current_time", "calculator", "url_fetch"]
+    )
+    mcp_servers: list[str] = Field(default_factory=list)
+
+
+class BootstrapConfig(BaseModel):
+    auto_run_on_init: bool = True
+    regenerate_on_main_prompt_change: bool = True
+    carry_over_user_patterns: bool = True
+    require_user_confirmation: bool = False  # default False so dev/eval flow doesn't block
 
 
 class ExecutionConfig(BaseModel):
@@ -74,6 +134,10 @@ class Config(BaseModel):
     models: ModelsConfig
     storage: StorageConfig = Field(default_factory=StorageConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    search: SearchConfig = Field(default_factory=SearchConfig)
+    inference: InferenceConfig = Field(default_factory=InferenceConfig)
+    tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    bootstrap: BootstrapConfig = Field(default_factory=BootstrapConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
 
     @field_validator("main_system_prompt", mode="after")

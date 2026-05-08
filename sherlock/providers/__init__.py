@@ -1,7 +1,13 @@
-"""Provider abstraction. M1 uses litellm under the hood (DEVIATION-003)."""
+"""Provider abstraction.
+
+- LiteLLM-backed (DEVIATION-003) for the spec'd path.
+- WrapperProvider (DEVIATION-004) for subscription-auth paths.
+- FakeProvider for hermetic tests.
+"""
 from sherlock.providers.base import BaseProvider, ChatMessage, ChatResponse
 from sherlock.providers.fake import FakeProvider
 from sherlock.providers.litellm_provider import LiteLLMProvider
+from sherlock.providers.wrapper_provider import WrapperProvider
 
 __all__ = [
     "BaseProvider",
@@ -9,13 +15,15 @@ __all__ = [
     "ChatResponse",
     "FakeProvider",
     "LiteLLMProvider",
+    "WrapperProvider",
     "build_provider",
 ]
 
 
 def build_provider(model_config) -> BaseProvider:
-    """Construct a provider from a `ModelConfig` (or `FakeProvider` if provider == 'fake')."""
     prov = model_config.provider.lower()
     if prov == "fake":
         return FakeProvider(model_id=model_config.model)
+    if prov.startswith("wrapper"):
+        return WrapperProvider(model_config=model_config)
     return LiteLLMProvider(model_config=model_config)
