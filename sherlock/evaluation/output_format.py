@@ -356,14 +356,47 @@ def format_sherlock_output(agent: Sherlock) -> FormattedOutput:
     # ALONG WITH the pinned facts (so durable decisions are not lost when
     # any single segment summary skipped them) and a chronological digest of
     # user utterances (for time-sensitive context).
+    #
+    # Loop-11 regression: agent.provider.chat() returned empty whitespace
+    # (likely wrapper context-limit silent truncation), collapsing 40% of
+    # the score. Defense:
+    #   1. Try the LLM call.
+    #   2. If response is empty/whitespace, fall back to a deterministic
+    #      composition of segment summaries + pinned facts as prose.
+    #   3. Persist whichever path succeeded so Section 1 is NEVER empty.
     pinned = [m for m in all_mems if m.pinned]
+
+    def _deterministic_section_1() -> str:
+        """Compose Section 1 directly from persisted memories — no LLM call."""
+        parts: list[str] = []
+        if pinned:
+            user_pins = [p for p in pinned if p.source != MemorySource.SYSTEM]
+            sys_pins = [p for p in pinned if p.source == MemorySource.SYSTEM]
+            if user_pins:
+                parts.append("**Anchor facts established by the user:**")
+                for p in sorted(user_pins, key=lambda x: -x.confidence)[:25]:
+                    parts.append(f"- {p.content.strip()}")
+                parts.append("")
+            if sys_pins:
+                parts.append("**Persona / domain notes (system-source — NOT user-stated):**")
+                for p in sys_pins[:8]:
+                    parts.append(f"- {p.content.strip()}")
+                parts.append("")
+        if summary_mems:
+            parts.append("**Per-segment summaries (chronological):**")
+            for s in sorted(summary_mems, key=lambda x: x.created_at)[:20]:
+                parts.append(f"- {s.content.strip()}")
+            parts.append("")
+        return "\n".join(parts).strip() or "_(no compaction state available)_"
+
+    section_1 = ""
     if summary_mems or pinned:
         joined_summaries = "\n\n".join(f"- {s.content}" for s in summary_mems) or "(none)"
         joined_pins = "\n".join(
             f"- ({p.source.value}, conf {p.confidence:.2f}) {p.content}" for p in pinned
         ) or "(none)"
         joined_users = "\n".join(
-            f"- T?? {u.content}" for u in user_mems[:50]
+            f"- T?? {u.content[:200]}" for u in user_mems[:50]
         ) or "(none)"
         joined = (
             "Per-segment LLM-2 summaries:\n"
@@ -379,11 +412,20 @@ def format_sherlock_output(agent: Sherlock) -> FormattedOutput:
                 ChatMessage(role="user", content=joined),
             ]
             resp = agent.provider.chat(messages)
-            section_1 = resp.text.strip()
+            text = (resp.text or "").strip()
+            # Strip any companion tag the main model may have emitted at format time.
+            from sherlock.agent import _parse_companions_tag
+            text, _req = _parse_companions_tag(text)
+            text = text.strip()
+            section_1 = text
         except Exception:
-            section_1 = "\n\n".join(s.content for s in summary_mems) or "(formatter failed)"
-    else:
-        section_1 = "_(no LLM-2 summaries persisted; conversation may be too short.)_"
+            section_1 = ""
+
+    # Bulletproof fallback: if Section 1 is empty for ANY reason, build it
+    # deterministically. The empty Section 1 was the single biggest score
+    # regression of loop 11.
+    if not section_1.strip():
+        section_1 = _deterministic_section_1()
 
     # Section 2: ask the inference provider to consolidate inferences.
     if inference_mems and agent._inference_provider is not None:
