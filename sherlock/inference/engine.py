@@ -127,19 +127,58 @@ class InferenceResult:
 
 
 class InferenceEngine:
+    # Implicit-ask trigger phrases — when present in user text, fire LLM-3.
+    # Per SPEC §10.4 LLM-3 is "Async, on-demand" not every turn.
+    IMPLICIT_ASK_TRIGGERS = (
+        "should i", "should we", "is that a thing", "is that bad",
+        "do you think", "am i being", "am i ready", "i've been afraid",
+        "did i tell you", "did i ever tell", "did i mention", "have i",
+        "did you", "you've been calling", "how do you know",
+        "is this overkill", "am i overthinking", "is it worth",
+        "ngl", "honestly", "what do i wear", "what do i do",
+        "would that conflict", "is that a conflict",
+    )
+
     def __init__(
         self,
         provider: BaseProvider,
         store: MemoryStore,
         system_prompt: str | None = None,
-        cold_start_turns: int = 0,
+        cold_start_turns: int = 10,
         confidence_threshold: float = 0.4,
+        periodic_anchor_turns: tuple[int, ...] = (1, 6, 15, 30, 50, 70),
     ) -> None:
         self._provider = provider
         self._store = store
         self._prompt = system_prompt or DEFAULT_LLM3_PROMPT
         self._cold_start_turns = cold_start_turns
         self._conf_threshold = confidence_threshold
+        self._periodic_anchors = set(periodic_anchor_turns)
+
+    def should_fire(
+        self,
+        *,
+        turn_index: int,
+        user_text: str,
+        topic_changed: bool,
+    ) -> bool:
+        """SPEC §4.2: LLM-3 is on-demand, not every-turn. Trigger only when one of:
+          - turn_index is a periodic-anchor turn (1, 6, 15, 30, 50, 70)
+          - topic just changed (the cosine-sim trigger from the summarizer)
+          - user text contains an implicit-ask trigger phrase.
+        Cold start applies even for these triggers — early turns yield uninformed
+        inference per SPEC §10.4.
+        """
+        if turn_index < self._cold_start_turns and turn_index != 1:
+            return False
+        if turn_index in self._periodic_anchors:
+            return True
+        if topic_changed:
+            return True
+        ut = (user_text or "").lower()
+        if any(trig in ut for trig in self.IMPLICIT_ASK_TRIGGERS):
+            return True
+        return False
 
     def infer(
         self,
@@ -149,7 +188,7 @@ class InferenceEngine:
         user_text: str,
         recent_turns: list[ChatMessage],
     ) -> dict:
-        if turn_index < self._cold_start_turns:
+        if turn_index < self._cold_start_turns and turn_index != 1:
             return {}
 
         transcript_lines = [f"{m.role.upper()}: {m.content}" for m in recent_turns]

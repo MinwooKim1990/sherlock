@@ -345,7 +345,14 @@ class Sherlock:
         hypotheses: list[dict] = []
         search_results: list[dict] = []
         infer_error: Optional[str] = None
-        if self._inferer is not None:
+        # Per SPEC §4.2 LLM-3 is on-demand, not every-turn. Gate the call by
+        # the inferer's should_fire heuristic (cold start + periodic anchors
+        # + topic-changed + implicit-ask triggers).
+        if self._inferer is not None and self._inferer.should_fire(
+            turn_index=turn_index,
+            user_text=user_input,
+            topic_changed=topic_changed,
+        ):
             try:
                 infer_result = self._inferer.infer(
                     conversation_id=conv.id,

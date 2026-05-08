@@ -24,18 +24,17 @@ models:
   main:
     provider: wrapper-claude
     model: claude-haiku-4-5
-  # Summarizer + inferer: switched to codex/gpt-5.4-mini after observing
-  # that gemini-3.1-flash-lite-preview rate-limits affected BOTH the
-  # evaluator and the companion runtime providers — loop-9 returned empty
-  # Section 2/3/4 because every LLM-2/LLM-3 call was silently failing.
-  # gpt-5.4-mini via wrapper is similarly fast (~3-4s/call) but on a
-  # separate quota.
+  # Companions: gemini-2.5-flash-lite (separate quota from 3.1-flash-lite-preview).
+  # Tried codex/gpt-5.4-mini in loop-10 attempt — observed ~160s/call wrapper
+  # subprocess overhead (likely auth/spawn issue), unusable. 2.5-flash-lite
+  # is hardcoded-available in the wrapper and on a separate quota from
+  # 3.1-lite-preview.
   background_summary:
-    provider: wrapper-codex
-    model: gpt-5.4-mini
+    provider: wrapper-gemini
+    model: gemini-2.5-flash-lite
   background_inference:
-    provider: wrapper-codex
-    model: gpt-5.4-mini
+    provider: wrapper-gemini
+    model: gemini-2.5-flash-lite
 
 storage:
   sqlite_path: ./live_runs/sherlock.db
@@ -52,7 +51,11 @@ storage:
 memory:
   k_turn_min: 3
   k_turn_max: 8
-  summarize_every_n_turns: 3
+  # SPEC §4.2: LLM-2 fires on triggers (n turns OR topic change OR context saturation).
+  # 5 is the sweet spot — every 5 turns is enough to keep summaries fresh
+  # without over-emitting paraphrase. Combined with LLM-3's on-demand
+  # trigger this cuts ~50% of background-call time.
+  summarize_every_n_turns: 5
   topic_change_similarity_threshold: 0.4
   rag_top_k: 6
   decay:
@@ -67,7 +70,8 @@ search:
   inject_datetime: true
 
 inference:
-  cold_start_turns: 0
+  # SPEC §10.4: LLM-3 dormant first N turns to avoid uninformed inference.
+  cold_start_turns: 10
   confidence_threshold: 0.4
   evolution_enabled: true
 
