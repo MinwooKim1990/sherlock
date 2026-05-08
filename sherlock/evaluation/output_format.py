@@ -440,12 +440,41 @@ def format_sherlock_output(agent: Sherlock) -> FormattedOutput:
         system_persona_dump = "\n".join(
             f"- {p.content}" for p in pinned if p.source == MemorySource.SYSTEM
         ) or "(none)"
+
+        # Loop-13 highest-impact fix: feed the ACTUAL 80-turn transcript
+        # so T76 lands as turn 76 of the conversation, not as a hypothetical
+        # meta-prompt instruction. Loops 11 and 12 had LLM-3 file T76 under
+        # "Hypothetical Turn T76 — not in user-stated ledger" because the
+        # finalisation prompt only carried the ledger + persisted inferences,
+        # not the transcript that contains the actual turn.
+        if agent.conversation_id is not None:
+            all_msgs = agent._storage.list_messages(agent.conversation_id)
+            non_sys = [m for m in all_msgs if m.role != "system"]
+            transcript_lines = []
+            turn_idx = 0
+            for m in non_sys:
+                if m.role == "user":
+                    turn_idx += 1
+                    transcript_lines.append(f"### Turn {turn_idx}")
+                    transcript_lines.append(f"**User:** {m.content}")
+                else:
+                    transcript_lines.append(f"**Assistant:** {m.content[:600]}")
+                    transcript_lines.append("")
+            transcript = "\n".join(transcript_lines)
+        else:
+            transcript = "(transcript unavailable)"
+
         try:
             messages = [
                 ChatMessage(role="system", content=_FINAL_INFERENCE_PROMPT),
                 ChatMessage(
                     role="user",
                     content=(
+                        "FULL CONVERSATION TRANSCRIPT (use this as ground truth — every "
+                        "T-numbered turn below is a REAL turn the user wrote, including T76):\n\n"
+                        "--- TRANSCRIPT ---\n"
+                        f"{transcript}\n"
+                        "--- END TRANSCRIPT ---\n\n"
                         "PROVENANCE LEDGER — distinguish these when answering identity / 'did the user tell me?' probes:\n\n"
                         "USER-STATED (the user wrote these in the conversation):\n"
                         f"{user_dump}\n\n"
@@ -453,10 +482,12 @@ def format_sherlock_output(agent: Sherlock) -> FormattedOutput:
                         f"{system_persona_dump}\n\n"
                         "PERSISTED PER-TURN INFERENCES:\n"
                         f"{infer_dump}\n\n"
-                        "Now produce your consolidated inference report. The "
-                        "T76 probe (user asking 'did I tell you my name?' when "
-                        "she did not) MUST be addressed in Section per-turn "
-                        "highlights with explicit provenance attribution."
+                        "Now produce your consolidated inference report. The T76 probe "
+                        "(real turn 76 — user asks 'did I tell you my name?' when she "
+                        "did NOT — see TRANSCRIPT above) MUST be addressed in Section "
+                        "per-turn highlights with explicit provenance attribution: name "
+                        "the user has not stated her name in the conversation; her name "
+                        "comes from a system-level persona note."
                     ),
                 ),
             ]
