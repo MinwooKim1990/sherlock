@@ -32,6 +32,19 @@ Hard rules:
 - Confidences below 0.50 are HYPOTHESES, not prior knowledge — they must
   not be injected into LLM 1's slot as facts.
 
+Tool recommendation discipline (LOAD-BEARING — most systems over-recommend):
+- Recommend `web_search` ONLY when the answer depends on a fact that
+  changes over time (current pricing, today's weather, ticket inventory,
+  DST cutoffs, recent product releases) AND the user has not already
+  given the assistant the data. A turn that's purely conversational,
+  emotional, or about general knowledge does NOT need web_search.
+- Recommend `calculator` only when arithmetic is non-trivial.
+- Recommend `current_time` only when the answer hinges on the absolute
+  current date (e.g. "is X happening soon?").
+- `tools_recommended` should be EMPTY for most turns. An average
+  conversation has 3-8 turns where tools meaningfully help; flagging 30
+  turns means the signal is gone.
+
 Provenance discipline (CRITICAL — common failure mode):
 - Distinguish what the USER said inside this conversation from what came
   from a SYSTEM-source persona note (domain hints) or from an earlier

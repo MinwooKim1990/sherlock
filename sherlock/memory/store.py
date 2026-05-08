@@ -98,16 +98,19 @@ class MemoryStore:
                             existing.pinned = True
                         if confidence > existing.confidence:
                             existing.confidence = confidence
-                        # Source upgrade: user > inference > system; never demote.
-                        rank = {
-                            MemorySource.USER: 4,
-                            MemorySource.SEARCH: 3,
-                            MemorySource.TOOL: 3,
-                            MemorySource.LLM_INFERENCE: 2,
-                            MemorySource.SYSTEM: 1,
-                        }
-                        if rank.get(source, 0) > rank.get(existing.source, 0):
-                            existing.source = source
+                        # Source: SYSTEM is sticky. A persona-note fact must NEVER
+                        # become user-stated just because LLM-2 paraphrased it back
+                        # with source="user". This was the loop-3 regression.
+                        if existing.source != MemorySource.SYSTEM:
+                            rank = {
+                                MemorySource.USER: 4,
+                                MemorySource.SEARCH: 3,
+                                MemorySource.TOOL: 3,
+                                MemorySource.LLM_INFERENCE: 2,
+                                MemorySource.SYSTEM: 1,
+                            }
+                            if rank.get(source, 0) > rank.get(existing.source, 0):
+                                existing.source = source
                         s.add(existing)
                         s.commit()
                         s.refresh(existing)

@@ -133,14 +133,23 @@ class FormattedOutput:
 
 
 def _section_3(memories: list[MemoryEntry]) -> str:
-    pin: list[MemoryEntry] = []
+    pin_user: list[MemoryEntry] = []
+    pin_system: list[MemoryEntry] = []
     active: list[MemoryEntry] = []
     background: list[MemoryEntry] = []
     drop: list[MemoryEntry] = []
 
+    # Filter out user_utterance entries from PIN/ACTIVE buckets — those are
+    # transcript replay, not curated memory. They live in conversation
+    # history; including them in classification inflates the buckets.
     for m in memories:
+        if m.type == MemoryType.USER_UTTERANCE:
+            continue
         if m.pinned:
-            pin.append(m)
+            if m.source == MemorySource.SYSTEM:
+                pin_system.append(m)
+            else:
+                pin_user.append(m)
             continue
         if m.state in (MemoryState.FRESH, MemoryState.WARM):
             active.append(m)
@@ -179,7 +188,8 @@ def _section_3(memories: list[MemoryEntry]) -> str:
         return "\n".join(lines) + "\n"
 
     return "\n".join([
-        _format_bucket(pin, "PIN — must permanently remember"),
+        _format_bucket(pin_user, "PIN — must permanently remember (user-stated facts)"),
+        _format_bucket(pin_system, "PIN (system-source) — persona/domain hints, NOT user-stated"),
         _format_bucket(active, "ACTIVE — keep in slot for the current arc"),
         _format_bucket(background, "BACKGROUND — RAG-retrievable when topic returns"),
         _format_bucket(drop, "DROP — let it fade"),
