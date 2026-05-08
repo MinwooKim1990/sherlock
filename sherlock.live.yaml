@@ -70,6 +70,10 @@ inference:
   evolution_enabled: true
 
 bootstrap:
-  auto_run_on_init: true
+  # Loop 7+: Bootstrap-authored prompts have been inconsistent across runs
+  # — some lacked the tool/pin discipline that loops 4-6 needed. Switching
+  # to DEFAULT_LLM2_PROMPT + DEFAULT_LLM3_PROMPT (which carry the discipline
+  # rules verbatim) for reproducibility and direct prompt control.
+  auto_run_on_init: false
   carry_over_user_patterns: true
   require_user_confirmation: false

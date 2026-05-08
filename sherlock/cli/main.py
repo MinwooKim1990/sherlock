@@ -164,9 +164,9 @@ def evaluate(
 
     cfg_path = _resolve_config(config)
     cfg = Config.from_yaml(cfg_path)
-    agent = Sherlock(cfg)
-    if cfg.bootstrap.auto_run_on_init:
-        agent._maybe_bootstrap()
+    # from_yaml installs companion prompts (bootstrapped or default) and
+    # wires the search engine, so the memory layer is fully active.
+    agent = Sherlock.from_yaml(cfg_path)
 
     ts = datetime.utcnow().strftime("%Y-%m-%dT%H-%M-%S")
     run_dir = runs_root / ts

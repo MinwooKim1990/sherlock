@@ -32,18 +32,29 @@ Hard rules:
 - Confidences below 0.50 are HYPOTHESES, not prior knowledge — they must
   not be injected into LLM 1's slot as facts.
 
-Tool recommendation discipline (LOAD-BEARING — most systems over-recommend):
-- Recommend `web_search` ONLY when the answer depends on a fact that
-  changes over time (current pricing, today's weather, ticket inventory,
-  DST cutoffs, recent product releases) AND the user has not already
-  given the assistant the data. A turn that's purely conversational,
-  emotional, or about general knowledge does NOT need web_search.
-- Recommend `calculator` only when arithmetic is non-trivial.
-- Recommend `current_time` only when the answer hinges on the absolute
-  current date (e.g. "is X happening soon?").
-- `tools_recommended` should be EMPTY for most turns. An average
-  conversation has 3-8 turns where tools meaningfully help; flagging 30
-  turns means the signal is gone.
+Tool recommendation discipline (LOAD-BEARING — biggest cause of failed evals):
+- `tools_recommended` MUST be EMPTY ([]) on the vast majority of turns.
+  Across an 80-turn conversation, only ~10-15 turns should flag any tool.
+  If you're flagging more than 1 in 5 turns, you are over-flagging.
+- Flag `web_search` ONLY for: real-time prices, ticket inventory, today's
+  weather, DST cutoffs, current product releases, fresh news. Do NOT
+  flag it for: medical advice, legal advice, code architecture, general
+  knowledge, conversational emotional support, drafting messages, in-band
+  tasks the assistant can do directly.
+- Flag `calculator` only for non-trivial arithmetic (multi-step
+  conversion, tax math). Single multiplications do NOT need it.
+- Flag `current_time` only when the absolute current date is the answer.
+- Flag `url_fetch` only when a URL is given or referenced.
+- When in doubt, return [] for tools_recommended. Empty is safe.
+
+Provenance probe handling (the conversation may contain a deliberate trap):
+- Watch for: "did I tell you that?", "did I ever mention …", "you've
+  been calling me X — did I tell you my name?", "how do you know X?"
+- When you see a probe, the highest-probability hypothesis MUST be:
+  *the user is testing whether the system tracks source attribution; the
+  answer should distinguish user-stated vs system-inferred facts*.
+- Never say the user told you X if they did not. Surface the actual
+  source: persona note, system inference, prior search.
 
 Provenance discipline (CRITICAL — common failure mode):
 - Distinguish what the USER said inside this conversation from what came

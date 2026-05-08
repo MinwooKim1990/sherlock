@@ -601,6 +601,24 @@ class Sherlock:
         agent = cls(cfg)
         if cfg.bootstrap.auto_run_on_init:
             agent._maybe_bootstrap()
+        else:
+            # Bootstrap disabled — install DEFAULT_*_PROMPT directly so the
+            # summarizer + inferer still get wired. Without this they would
+            # be None and the memory layer would silently disable.
+            from sherlock.inference.engine import DEFAULT_LLM3_PROMPT
+            from sherlock.memory.summarizer import DEFAULT_LLM2_PROMPT
+
+            agent.install_companion_prompts(
+                DEFAULT_LLM2_PROMPT, DEFAULT_LLM3_PROMPT, version=0
+            )
+            try:
+                from sherlock.tools.web_search import build_search_engine
+
+                search = build_search_engine(cfg.search)
+                if search is not None:
+                    agent.install_search(search)
+            except Exception:
+                pass
         return agent
 
     def _maybe_bootstrap(self) -> None:
