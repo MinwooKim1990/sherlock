@@ -74,18 +74,26 @@ class MemoryStore:
         semantic_triple: Optional[tuple[str, str, str]] = None,
         dedup: bool = True,
     ) -> MemoryEntry:
-        # Dedup-at-add: collapse re-emitted facts (LLM-2 tends to re-emit the
-        # same pinned fact on every summary cycle). When an existing entry
-        # has the same conversation_id + type + normalised content, just
-        # touch + (optionally) upgrade pinned/confidence and return it.
+        # Dedup-at-add: collapse re-emitted facts. LLM-2 tends to paraphrase
+        # the same fact each summary cycle, so we use both:
+        #   (a) exact / 60-char-prefix match (cheap, handles re-emits with
+        #       slight tail variation),
+        #   (b) embedding cosine similarity ≥ 0.92 against same-type entries
+        #       (handles paraphrases like "Yujin has soba allergy" vs
+        #       "User's child Yujin is allergic to soba").
+        # The semantic pass only runs after (a) misses, and only against
+        # the most recent 30 entries of the same type to keep it bounded.
         if dedup and content.strip():
             norm = " ".join(content.strip().lower().split())
+            new_vec: list[float] | None = None
             with Session(self._engine) as s:
                 stmt = select(MemoryEntry).where(
                     MemoryEntry.conversation_id == conversation_id,
                     MemoryEntry.type == type,
                 )
-                for existing in s.exec(stmt):
+                rows = list(s.exec(stmt))
+                # Cheap pass first.
+                for existing in rows:
                     enorm = " ".join((existing.content or "").strip().lower().split())
                     if enorm and (enorm == norm or (len(enorm) > 30 and enorm[:60] == norm[:60])):
                         # Touch in-place; upgrade pinned/confidence if higher.
@@ -115,6 +123,60 @@ class MemoryStore:
                         s.commit()
                         s.refresh(existing)
                         return existing
+
+                # Semantic pass: embed the new content once, compare to up
+                # to the last 30 same-type rows. Threshold 0.92 chosen to
+                # collapse paraphrases without merging genuinely distinct
+                # facts.
+                rows_recent = rows[-30:] if len(rows) > 30 else rows
+                if rows_recent:
+                    new_vec = self._embed.embed_one(content)
+                    # Vector-store ids are kept in sync with SQLite ids; pull
+                    # the embeddings via Chroma in one batch.
+                    target_ids = [r.id for r in rows_recent]
+                    try:
+                        gres = self._collection.get(ids=target_ids, include=["embeddings"])
+                    except Exception:
+                        gres = None
+                    if gres:
+                        embs = gres.get("embeddings")
+                        ids = gres.get("ids")
+                        if embs is None:
+                            embs = []
+                        if ids is None:
+                            ids = []
+                        rows_by_id = {r.id: r for r in rows_recent}
+                        for rid, ev in zip(ids, embs):
+                            if ev is None or len(ev) == 0:
+                                continue
+                            sim = _cosine(new_vec, list(ev))
+                            if sim >= 0.92:
+                                existing = rows_by_id.get(rid)
+                                if existing is None:
+                                    continue
+                                existing.use_count += 1
+                                existing.last_used_at = _utcnow()
+                                existing.last_used_turn_index = max(
+                                    existing.last_used_turn_index, last_used_turn_index
+                                )
+                                if pinned and not existing.pinned:
+                                    existing.pinned = True
+                                if confidence > existing.confidence:
+                                    existing.confidence = confidence
+                                if existing.source != MemorySource.SYSTEM:
+                                    rank2 = {
+                                        MemorySource.USER: 4,
+                                        MemorySource.SEARCH: 3,
+                                        MemorySource.TOOL: 3,
+                                        MemorySource.LLM_INFERENCE: 2,
+                                        MemorySource.SYSTEM: 1,
+                                    }
+                                    if rank2.get(source, 0) > rank2.get(existing.source, 0):
+                                        existing.source = source
+                                s.add(existing)
+                                s.commit()
+                                s.refresh(existing)
+                                return existing
         st_subject, st_relation, st_object = (None, None, None)
         if semantic_triple:
             st_subject, st_relation, st_object = semantic_triple
