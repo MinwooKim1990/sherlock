@@ -48,7 +48,10 @@ class WrapperProvider(BaseProvider):
         from unified_cli import create
 
         # `create` returns a per-provider client object with .chat(prompt, ...).
-        self._client = create(self._wrapped, model=model_config.model)
+        # Timeout=300s (vs wrapper default 120s) — the consolidator pass for
+        # an 80-turn replay produces a ~74KB prompt → claude takes ~150s. Default
+        # 120s timed out in Loop 17/18 → bulletproof fallback fired → 12-13/100.
+        self._client = create(self._wrapped, model=model_config.model, timeout=300.0)
 
     @property
     def model_id(self) -> str:

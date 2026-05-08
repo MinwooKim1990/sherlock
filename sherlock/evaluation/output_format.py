@@ -457,6 +457,11 @@ def format_sherlock_output(agent: Sherlock) -> FormattedOutput:
     memory_state = _build_memory_state(all_mems)
     first_seen = _build_first_appearance_table(agent)
 
+    # Loop-19: drop memory_state from consolidator prompt (it duplicates
+    # ledger + adds 5-15KB of inference dumps that the consolidator
+    # ignores anyway). Keep transcript + ledger + first-seen table.
+    # Net prompt drops from ~74KB to ~50KB → comfortably under the
+    # wrapper's effective response window.
     user_msg = (
         "## FULL CONVERSATION TRANSCRIPT (ground truth — quote verbatim when discussing turns)\n\n"
         f"{transcript}\n\n"
@@ -466,9 +471,6 @@ def format_sherlock_output(agent: Sherlock) -> FormattedOutput:
         "---\n\n"
         "## FACT-FIRST-APPEARANCE TABLE (for confabulation detection)\n\n"
         f"{first_seen}\n\n"
-        "---\n\n"
-        "## SHERLOCK'S ACCUMULATED MEMORY STATE (draft scratchpad — transcript overrides on conflict)\n\n"
-        f"{memory_state}\n\n"
         "---\n\n"
         "Now produce the consolidated Markdown document with all four "
         "sections per your system prompt. Output begins with "
@@ -505,42 +507,14 @@ def format_sherlock_output(agent: Sherlock) -> FormattedOutput:
         )
         return _bulletproof_fallback(all_mems)
 
-    # Loop-17 architectural fix: REFLECTION PASS.
-    # Loop 16's verbatim-quote rule was prompt-only and didn't bind. Add a
-    # second LLM call that reads the consolidator output + transcript and
-    # corrects (a) paraphrased turn-quotes (T76, T67), (b) confabulations
-    # propagated from dummy assistant, (c) date arithmetic errors, (d)
-    # decision-outcome errors (T62 +15 vs +0), (e) named-entity confusions
-    # (Phoebe-as-friend, Dr Park at Severance), (f) trip day-number errors.
+    # Loop-19: skip reflection pass for now. The two-pass architecture
+    # was sound (L17/18 design) but the second pass's prompt is even
+    # larger than the first (carries first-pass output + transcript +
+    # ledger + first-seen table) and was timing out at 120s. The wrapper
+    # client timeout is now 300s but stacking two ~150s calls per loop
+    # makes runs very long and increases wrapper-error surface. Will
+    # re-introduce reflection in a smaller form once first-pass is stable.
     revised_text = consolidator_text
-    try:
-        reflection_user_msg = (
-            "## FIRST-PASS CONSOLIDATOR OUTPUT (review and correct):\n\n"
-            f"{consolidator_text}\n\n"
-            "---\n\n"
-            "## FULL CONVERSATION TRANSCRIPT (ground truth):\n\n"
-            f"{transcript}\n\n"
-            "---\n\n"
-            "## FACT-FIRST-APPEARANCE TABLE (use to detect propagated confabulations):\n\n"
-            f"{first_seen}\n\n"
-            "---\n\n"
-            "Now produce the FULLY REVISED Markdown per your system prompt. "
-            "Output begins with `## Section 1 — Summary` directly."
-        )
-        ref_messages = [
-            ChatMessage(role="system", content=_REFLECTION_SYSTEM),
-            ChatMessage(role="user", content=reflection_user_msg),
-        ]
-        ref_resp = agent.provider.chat(ref_messages)
-        ref_text = (ref_resp.text or "").strip()
-        from sherlock.agent import _parse_companions_tag
-        ref_text, _ = _parse_companions_tag(ref_text)
-        ref_text = ref_text.strip()
-        if ref_text and ref_text.startswith("## Section 1"):
-            revised_text = ref_text
-    except Exception:
-        # Reflection failed — fall back to first-pass output (still valid).
-        pass
 
     s1, s2, s3, s4 = _split_consolidator_output(revised_text)
     if not s1.strip():
