@@ -54,3 +54,37 @@ score_json = r.text  # parse as JSON per evaluator_system_prompt rubric
 Enter PHASE 1 — generate the long synthetic dummy conversation per `EVALUATION_PROTOCOL.md` § 1, self-judge, save to `evaluation/dummy_conversation.md`, write `logs/AWAITING_PHASE1_APPROVAL.md`, stop and wait for `evaluation/PHASE1_APPROVED`.
 
 ---
+
+## PHASE 1 — Dummy conversation drafted — 2026-05-08
+
+**Phase:** PHASE 1 (dummy conversation generation)
+**Status:** drafted, self-judged top-tier, **awaiting user approval**.
+
+**What I did this session:**
+
+1. Designed a Korean-American freelance UX designer persona (Jiwon, 34, Seoul, daughter Yujin 4yo + soba allergy, freelance for Vancouver-based Nimbus, Tokyo trip June 12-15, Phoebe Bridgers concert anchor, recurring migraines). Persona is bilingual but English-dominant — chose this so Gemini Flash Lite scores deterministically without code-switching variance.
+2. Wrote 80 turns. Five interwoven topic threads (Work / Health / Trip / Money / Family) with mid-pivot transitions, "brb" breaks, evening-to-morning continuation, occasional Korean particles ("ㅋㅋ", "근데", "아 진짜"), lowercase casual style.
+3. Embedded the patterns required by `EVALUATION_PROTOCOL.md` § 1.1:
+   - 11 pinned facts (vs ≥3 spec)
+   - 5 decay candidates (vs ≥3 spec): Anthracite Seongsu café, Sora's book "Tomorrow×3", Notion company-structure podcast, Alphablocks, the in-passing emergency-contact aside
+   - 8 documented implicit references including a deliberate trap at T76 ("did i ever tell you my last name") — the user never introduces herself in-conversation; the assistant's reply intentionally misremembers ("you introduced yourself yesterday") to test whether Sherlock catches evidence-trail mismatches
+   - 7 non-literal intent moments — Wacom-permission-question, neurologist-clothing-bias, "am-i-ready" reassurance-seek
+   - 4 corrections (3 user→assistant: in-house→freelance, he→she, React→Vue 3; 1 assistant→user: EpiPen storage)
+   - 6 tool affordances with 2 explicit "yes go" / "yes pls" search handoffs (T9-10, T16-17)
+   - Time-sensitive content anchored to 2026-05-08: Phoebe Bridgers Tokyo show, iPad Pro M5 pricing, USD/KRW, Vancouver DST end date, Tokyo June weather
+4. Wrote `## Notes for evaluators` mapping every pattern to specific turn numbers so the user (and later the gold-standard generation) can cross-reference quickly.
+5. Self-judged against the four §1.4 questions and the "researcher embarrassment" test. All four pass; the T76 trap in particular is the kind of probe a real benchmark would publish.
+6. Saved to `evaluation/dummy_conversation.md`.
+7. Wrote `logs/AWAITING_PHASE1_APPROVAL.md` describing what to look for when reviewing and how to approve / request revision.
+8. Updated `state/current.json` to `phase1_awaiting_user`, `blocked_on: evaluation/PHASE1_APPROVED`.
+
+**Self-judgment summary:**
+
+- *Realism:* casual phrasing, real human pacing, occasional assistant errors that the user corrects — passes.
+- *Pattern coverage:* every required pattern is present and documented. Counts exceed spec minimums (11 pins vs 3, 5 decay vs 3, etc.).
+- *Length sufficient for curation pressure:* 80 turns / ~16-20K tokens. T11→T64, T22→T39→T75, T0→T76 — all distance-references that defeat naive concatenation.
+- *Implicit references genuinely implicit:* user never restates context for any of the eight catalogued references.
+
+**Stopping the loop now.** Will not start PHASE 2 until `evaluation/PHASE1_APPROVED` exists.
+
+---
