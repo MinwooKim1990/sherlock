@@ -174,6 +174,8 @@ class SummarizerEngine:
             )
 
         # Persist each extracted fact.
+        from sherlock.memory.entry import MemoryState
+
         for fact in parsed.get("facts", []):
             try:
                 content = fact["content"]
@@ -187,6 +189,12 @@ class SummarizerEngine:
             if isinstance(triple, list) and len(triple) == 3:
                 triple_tuple = (str(triple[0]), str(triple[1]), str(triple[2]))
             evidence_list = fact.get("evidence") or []
+            # let_fade=true means LLM-2 thinks this is offhand. Land it
+            # directly in COLD so it's RAG-retrievable but not in the slot,
+            # and the next decay pass will move it to FORGOTTEN if it
+            # remains unreferenced.
+            let_fade = bool(fact.get("let_fade"))
+            init_state = MemoryState.COLD if let_fade else MemoryState.FRESH
             self._store.add(
                 conversation_id=conversation_id,
                 content=str(content),
@@ -194,13 +202,11 @@ class SummarizerEngine:
                 source=fsrc,
                 confidence=confidence,
                 last_used_turn_index=turn_index,
-                pinned=bool(fact.get("pin_recommended")),
+                pinned=bool(fact.get("pin_recommended")) and not let_fade,
                 evidence=json.dumps(evidence_list),
                 semantic_triple=triple_tuple,
+                initial_state=init_state,
             )
-            # `let_fade` shows up in M2-style decay nudge: leave the entry as
-            # FRESH for one turn but the decay engine will move it warm→cold
-            # quickly because it's not used again. Captured in evidence too.
 
         return parsed
 

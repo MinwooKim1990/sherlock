@@ -73,6 +73,7 @@ class MemoryStore:
         tags: str = "",
         semantic_triple: Optional[tuple[str, str, str]] = None,
         dedup: bool = True,
+        initial_state: MemoryState = MemoryState.FRESH,
     ) -> MemoryEntry:
         # Dedup-at-add: collapse re-emitted facts. LLM-2 tends to paraphrase
         # the same fact each summary cycle, so we use both:
@@ -192,7 +193,7 @@ class MemoryStore:
             semantic_triple_relation=st_relation,
             semantic_triple_object=st_object,
             topic_cluster_id=topic_cluster_id,
-            state=MemoryState.FRESH,
+            state=initial_state,
             pinned=pinned,
             evidence=evidence,
             tags=tags,
