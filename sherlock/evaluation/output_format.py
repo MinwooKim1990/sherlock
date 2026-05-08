@@ -232,11 +232,13 @@ class FormattedOutput:
         )
 
 
-def _build_transcript(agent: Sherlock) -> str:
+def _build_transcript(agent: Sherlock, *, assistant_cap: int = 1200) -> str:
     """Render the full conversation as T-numbered markdown.
-    Loop-16: assistant content no longer truncated at 600 chars — the
-    verbatim-quote rule needs full text for the consolidator to quote
-    correctly (esp. T76 trap and itinerary-day specifics).
+    Loop-18: re-introduced assistant truncation (cap 1200) after Loop 17's
+    no-truncation prompt was too large and the first consolidator pass
+    failed (returned empty → bulletproof fallback fired → 12/100).
+    1200 chars is enough to verbatim-quote T76's full reply and T67's,
+    while keeping total prompt size under ~30KB.
     """
     if agent.conversation_id is None:
         return "(no conversation)"
@@ -250,9 +252,8 @@ def _build_transcript(agent: Sherlock) -> str:
             lines.append(f"### Turn {turn}")
             lines.append(f"**User:** {m.content}")
         else:
-            # No truncation. The consolidator needs the actual reply text
-            # to verbatim-quote when discussing specific turns.
-            lines.append(f"**Assistant:** {m.content}")
+            content = m.content if len(m.content) <= assistant_cap else m.content[:assistant_cap] + "…"
+            lines.append(f"**Assistant:** {content}")
             lines.append("")
     return "\n".join(lines)
 
@@ -319,7 +320,7 @@ def _build_provenance_ledger(all_mems: list[MemoryEntry]) -> str:
         m for m in all_mems
         if m.source == MemorySource.SYSTEM and m.type != MemoryType.USER_UTTERANCE
     ]
-    user_block = "\n".join(f"- {u.content[:240]}" for u in user_mems[:80]) or "(none)"
+    user_block = "\n".join(f"- {u.content[:200]}" for u in user_mems[:50]) or "(none)"
     sys_block = "\n".join(f"- {s.content}" for s in system_pinned) or "(none)"
     return (
         "USER-STATED — facts the user wrote inside this conversation:\n"
@@ -488,10 +489,20 @@ def format_sherlock_output(agent: Sherlock) -> FormattedOutput:
         from sherlock.agent import _parse_companions_tag
         text, _ = _parse_companions_tag(text)
         consolidator_text = text.strip()
-    except Exception:
+    except Exception as exc:
+        import sys
+        print(
+            f"  [consolidator pass-1 error] {type(exc).__name__}: {str(exc)[:200]}",
+            file=sys.stderr,
+        )
         consolidator_text = ""
 
     if not consolidator_text:
+        import sys
+        print(
+            f"  [consolidator pass-1 returned empty; user_msg size = {len(user_msg)} chars]",
+            file=sys.stderr,
+        )
         return _bulletproof_fallback(all_mems)
 
     # Loop-17 architectural fix: REFLECTION PASS.
