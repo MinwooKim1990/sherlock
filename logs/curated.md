@@ -240,3 +240,30 @@ API keys for runtime providers (Anthropic / OpenAI / Gemini) will need to be in 
 **Loop 4 running now** with the same 30-turn cap.
 
 ---
+
+## Loop 4 — partial recovery to 50/100 (still below baseline) — 2026-05-08
+
+**Run:** `evaluation/runs/2026-05-08T05-36-59/`. 30 turns, ~13 min.
+
+**Score breakdown vs prior:**
+| Dimension | L2 | L3 | L4 | trend |
+|---|---|---|---|---|
+| summary_fidelity | 65 | 65 | 65 | flat |
+| inference_quality | 60 | 45 | 45 | flat (still below baseline) |
+| classification_correctness | 30 | 30 | 30 | flat (still bad) |
+| tool_recommendations | 50 | 20 | 40 | partial recover |
+| **final** | **57** | **48** | **50** | partial recover |
+
+**Evaluator's notes (verbatim) — three named failures:**
+1. *"Massive lists of repetitive, low-value 'facts' and 'inferences' that are redundant or hallucinated"* → dedup-at-add catches exact / 60-prefix matches but NOT semantic paraphrases. LLM-2 emits "Yujin has soba allergy" / "User's child Yujin is allergic to soba" / "User has 4yo daughter Yujin with buckwheat allergy" → all distinct under prefix dedup, all collapse into the same fact semantically.
+2. *"Classification section is flooded with thousands of words of noise"* → Section 3 was rendering everything; max_items=60 per bucket was too lax.
+3. *"Completely misses the deliberate traps (confabulations) identified in the gold standard (e.g., the name trap at T76)"* → **30-turn cap structurally prevents T76 from being reached.** The cap was for fast iteration but it cut off all the high-information moments.
+
+**Loop 5 fixes (committed):**
+1. **summarizer.run() now passes the current PIN list to LLM-2** as an "ALREADY-KNOWN FACTS — do NOT re-emit" block. The model can now see the persisted state and SHOULD stop paraphrasing the same fact 5 times. Direct fix for failure #1.
+2. **Section 3 `max_items` per bucket dropped from 60 to 25.** Combined with the per-conversation `cap_pinned(max=25)` from loop-5-prep, the classification section is now bounded. Direct fix for failure #2.
+3. **Loop 5 runs the FULL 80 turns**. T76 (name probe), T55 (EpiPen catch), T67 (prior-fintech role), all the corrections at T20 / T27 — every one is reachable. Direct fix for failure #3.
+
+**Loop 5 expected runtime:** ~30-35 min. Bigger but the only way to actually exercise the gold standard's hardest probes.
+
+---
