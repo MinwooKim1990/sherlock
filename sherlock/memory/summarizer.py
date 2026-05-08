@@ -121,9 +121,23 @@ class SummarizerEngine:
         for m in recent_turns:
             transcript_lines.append(f"{m.role.upper()}: {m.content}")
         transcript = "\n".join(transcript_lines)
+
+        # Prevent re-emit of facts already in memory: show LLM 2 what's
+        # already known so it can SKIP duplicates and only emit NEW signal.
+        # Solves the "massive lists of repetitive low-value facts" failure
+        # mode the loop-4 evaluator named.
+        existing_pinned = self._store.list(conversation_id=conversation_id, pinned=True)
+        existing_text = "\n".join(f"- {p.content}" for p in existing_pinned[:60])
+        if not existing_text:
+            existing_text = "(none yet)"
+
         user_msg = (
             "Here is the most recent stretch of conversation. Produce the "
-            "JSON described in your system prompt.\n\n--- TRANSCRIPT ---\n"
+            "JSON described in your system prompt.\n\n"
+            "--- ALREADY-KNOWN FACTS (do NOT re-emit these; only emit NEW signal) ---\n"
+            f"{existing_text}\n"
+            "--- END ALREADY-KNOWN ---\n\n"
+            "--- TRANSCRIPT ---\n"
             f"{transcript}\n--- END TRANSCRIPT ---"
         )
 

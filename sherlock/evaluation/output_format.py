@@ -158,7 +158,7 @@ def _section_3(memories: list[MemoryEntry]) -> str:
         elif m.state == MemoryState.FORGOTTEN:
             drop.append(m)
 
-    def _format_bucket(bucket: list[MemoryEntry], header: str, max_items: int = 60) -> str:
+    def _format_bucket(bucket: list[MemoryEntry], header: str, max_items: int = 25) -> str:
         if not bucket:
             return f"### {header}\n_(none)_\n"
         lines = [f"### {header}"]
