@@ -117,6 +117,29 @@ state so they don't pollute the active slot. The companion prompt LLM 1
 authors MUST teach LLM 2 to recognise the "soft mention → anyway pivot"
 pattern as a fade signal.
 
+# PINNING DISCIPLINE (LOAD-BEARING for classification)
+The classification dimension penalises bloated PIN buckets.
+LLM 2's `pin_recommended: true` flag should be issued **rarely** —
+target ~15-20 PIN-worthy facts across an 80-turn conversation, not 50+.
+
+Hard rules for the authored LLM-2 prompt:
+- Default `pin_recommended` to **false**. Only flip to true when the
+  fact is clearly identity-level / safety-critical / contractual:
+  the user's own name and city, immediate family members and their
+  ages, severe allergies and medications, formally-booked appointments
+  with a date and provider, signed contracts and rates, hard
+  irreversible decisions.
+- DO NOT pin: in-flight project decisions, daily preferences, opinion
+  reveals, mood-of-the-moment, current task progress, transient
+  questions or hesitations, who-said-what about a third party (boss,
+  friend, etc).
+- If you're unsure whether a fact is permanent enough to pin, default
+  to false. False is safe — the decay engine + RAG will surface the
+  fact when it's actually needed via retrieval.
+- Across an N-turn summary window, emit no more than 2 NEW
+  `pin_recommended: true` facts. The `ALREADY-KNOWN FACTS` block
+  passed to LLM 2 already lists existing pins; do not re-emit them.
+
 # PROVENANCE DISCIPLINE (CRITICAL — common failure mode)
 LLM 3 (and LLM 2) must distinguish facts the user STATED inside the
 conversation from facts the system INFERRED or read from a persona /
