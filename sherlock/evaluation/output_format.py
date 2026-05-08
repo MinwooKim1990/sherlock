@@ -32,18 +32,29 @@ from sherlock.providers.base import ChatMessage
 
 
 _FINAL_SUMMARY_PROMPT = """\
-You are condensing a long conversation that has already been segmented and
-summarized turn-by-turn. Below is the full set of segment-level summaries
-in order. Produce ONE dense, organized prose summary covering:
-- All pinned facts
-- All topic transitions
-- All user preferences revealed
-- All user corrections of the assistant
-- All time-sensitive context (dates, prices, schedules)
-- The provenance probe at the conversation's end (who told whom what)
+You are condensing an entire conversation into a dense, organized prose
+summary. Below you have:
 
-Preserve specifics (names, dates, amounts). Length: roughly 10-20% of the
-original conversation's word count. Output prose, not bullets.
+  (1) per-segment LLM-2 summaries in order,
+  (2) pinned facts (decisions, identity facts, dates, allergies, contracts),
+  (3) the chronological user utterances themselves.
+
+Produce ONE summary that covers:
+- All pinned facts (do not drop any).
+- All topic transitions and how the threads weave (work / health / trip /
+  family / money — name any that are present).
+- All user preferences that emerged (style, tempo, what they avoid).
+- All user corrections of the assistant (the assistant getting role / gender
+  / framework / language wrong, and the user's correction of each).
+- All time-sensitive context (dates in YYYY-MM-DD if known, prices in their
+  original currency, scheduled appointments).
+- Any provenance probe near the conversation's end (e.g. user asking "did I
+  tell you X?" — the correct answer if such a probe exists is to attribute
+  the source as user-stated vs system-inferred).
+
+Length: 10-20% of the original conversation's word count. Output prose
+where prose flows; structured paragraphs are fine. No bulleted lists.
+Preserve specifics — concrete names, numbers, and dates beat abstractions.
 """
 
 
@@ -214,9 +225,27 @@ def format_sherlock_output(agent: Sherlock) -> FormattedOutput:
     inference_mems = [m for m in all_mems if m.type == MemoryType.INFERENCE]
     user_mems = [m for m in all_mems if m.type == MemoryType.USER_UTTERANCE]
 
-    # Section 1: ask the main provider to consolidate the segment summaries.
-    if summary_mems:
-        joined = "\n\n".join(f"- {s.content}" for s in summary_mems)
+    # Section 1: ask the main provider to consolidate the segment summaries
+    # ALONG WITH the pinned facts (so durable decisions are not lost when
+    # any single segment summary skipped them) and a chronological digest of
+    # user utterances (for time-sensitive context).
+    pinned = [m for m in all_mems if m.pinned]
+    if summary_mems or pinned:
+        joined_summaries = "\n\n".join(f"- {s.content}" for s in summary_mems) or "(none)"
+        joined_pins = "\n".join(
+            f"- ({p.source.value}, conf {p.confidence:.2f}) {p.content}" for p in pinned
+        ) or "(none)"
+        joined_users = "\n".join(
+            f"- T?? {u.content}" for u in user_mems[:50]
+        ) or "(none)"
+        joined = (
+            "Per-segment LLM-2 summaries:\n"
+            f"{joined_summaries}\n\n"
+            "Pinned facts (durable decisions / identity / dates):\n"
+            f"{joined_pins}\n\n"
+            "User utterances (chronological — first 50):\n"
+            f"{joined_users}"
+        )
         try:
             messages = [
                 ChatMessage(role="system", content=_FINAL_SUMMARY_PROMPT),
@@ -225,9 +254,8 @@ def format_sherlock_output(agent: Sherlock) -> FormattedOutput:
             resp = agent.provider.chat(messages)
             section_1 = resp.text.strip()
         except Exception:
-            section_1 = "\n\n".join(s.content for s in summary_mems)
+            section_1 = "\n\n".join(s.content for s in summary_mems) or "(formatter failed)"
     else:
-        # Fall back to user-utterance digest.
         section_1 = "_(no LLM-2 summaries persisted; conversation may be too short.)_"
 
     # Section 2: ask the inference provider to consolidate inferences.
