@@ -193,11 +193,45 @@ class InferenceEngine:
 
         transcript_lines = [f"{m.role.upper()}: {m.content}" for m in recent_turns]
         transcript = "\n".join(transcript_lines)
+
+        # Provenance ledger — the load-bearing fix for Loop 11.
+        # Pull every USER_UTTERANCE memory (these are facts the user has
+        # explicitly stated inside the conversation) and pinned SYSTEM-source
+        # facts (these are persona-note / domain-hint facts, NOT user-stated).
+        # Show them to LLM-3 so it can correctly attribute provenance when
+        # the user's current turn is a probe like "did I tell you X" or
+        # "you've been calling me Y, did I say that".
+        from sherlock.memory.entry import MemorySource, MemoryType
+
+        all_mems = self._store.list(conversation_id=conversation_id)
+        user_stated = [
+            m.content for m in all_mems if m.type == MemoryType.USER_UTTERANCE
+        ]
+        system_persona = [
+            m.content for m in all_mems
+            if m.source == MemorySource.SYSTEM and m.type != MemoryType.USER_UTTERANCE
+        ]
+
+        ledger_block = (
+            "--- PROVENANCE LEDGER (READ THIS BEFORE ANSWERING ANY PROBE) ---\n"
+            f"USER-STATED — facts the user has explicitly written in this conversation ({len(user_stated)} entries):\n"
+            + "\n".join(f"  • {u[:200]}" for u in user_stated[-40:])
+            + "\n\n"
+            f"SYSTEM-PERSONA — facts from domain hints / persona notes ({len(system_persona)} entries). The user has NOT said these:\n"
+            + "\n".join(f"  • {s}" for s in system_persona)
+            + "\n--- END LEDGER ---\n"
+        )
+
         user_msg = (
-            "Recent conversation tail (most-recent last):\n\n"
+            ledger_block
+            + "\nRecent conversation tail (most-recent last):\n\n"
             f"--- TRANSCRIPT ---\n{transcript}\n--- END ---\n\n"
             f"Current user message:\n{user_text}\n\n"
-            "Produce the JSON described in your system prompt."
+            "Produce the JSON described in your system prompt. If the current "
+            "user message is a provenance probe (e.g. 'did I tell you', 'how do "
+            "you know', 'you've been calling me X'), the highest-probability "
+            "hypothesis MUST distinguish whether the relevant fact came from "
+            "USER-STATED or SYSTEM-PERSONA in the ledger above."
         )
 
         messages = [

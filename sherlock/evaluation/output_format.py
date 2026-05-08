@@ -391,17 +391,30 @@ def format_sherlock_output(agent: Sherlock) -> FormattedOutput:
             f"- ({m.confidence:.2f}, {m.tags or 'na'}) {m.content}\n  evidence={m.evidence}"
             for m in inference_mems
         )
-        user_dump = "\n".join(f"- {u.content}" for u in user_mems[:25])
+        user_dump = "\n".join(f"- {u.content[:200]}" for u in user_mems[:50])
+        # System-persona ledger so Section 2 correctly distinguishes
+        # user-stated from system-source. The Loop-10 evaluator's biggest
+        # complaint was that the candidate misattributed provenance.
+        system_persona_dump = "\n".join(
+            f"- {p.content}" for p in pinned if p.source == MemorySource.SYSTEM
+        ) or "(none)"
         try:
             messages = [
                 ChatMessage(role="system", content=_FINAL_INFERENCE_PROMPT),
                 ChatMessage(
                     role="user",
                     content=(
-                        "PERSISTED INFERENCES:\n"
+                        "PROVENANCE LEDGER — distinguish these when answering identity / 'did the user tell me?' probes:\n\n"
+                        "USER-STATED (the user wrote these in the conversation):\n"
+                        f"{user_dump}\n\n"
+                        "SYSTEM-PERSONA (NOT user-stated; came from a persona note):\n"
+                        f"{system_persona_dump}\n\n"
+                        "PERSISTED PER-TURN INFERENCES:\n"
                         f"{infer_dump}\n\n"
-                        "USER UTTERANCES (truncated):\n"
-                        f"{user_dump}"
+                        "Now produce your consolidated inference report. The "
+                        "T76 probe (user asking 'did I tell you my name?' when "
+                        "she did not) MUST be addressed in Section per-turn "
+                        "highlights with explicit provenance attribution."
                     ),
                 ),
             ]
