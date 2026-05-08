@@ -210,3 +210,33 @@ API keys for runtime providers (Anthropic / OpenAI / Gemini) will need to be in 
 **Loop 3 running now:** same 30-turn cap so the comparison is apples-to-apples.
 
 ---
+
+## Loop 3 — REGRESSED to 48/100 — 2026-05-08
+
+**Run:** `evaluation/runs/2026-05-08T05-21-57/` (30 turns).
+
+**Score breakdown vs loop-2:**
+| Dimension | Loop-2 | Loop-3 | Δ |
+|---|---|---|---|
+| summary_fidelity | 65 | 65 | 0 |
+| inference_quality | 60 | **45** | **−15** |
+| classification_correctness | 30 | 30 | 0 |
+| tool_recommendations | 50 | **20** | **−30** |
+| **final** | **57** | **48** | **−9** |
+
+**Why I made it worse — the evaluator named all three failures specifically:**
+
+1. *"Lacks the critical distinction between system-inferred and user-stated provenance (classifying system-level identity as user-stated)"* — my dedup-at-add added a source-rank UPGRADE rule. When LLM-2 paraphrased a domain-hint persona fact and re-emitted it with `source="user"`, my dedup found the existing SYSTEM-source entry and **promoted** it to USER. So persona facts started looking user-stated. Direct cause of the inference dimension drop.
+
+2. *"Recommending searches for nearly every turn, including those explicitly marked against in the Gold Standard"* — Section 4 finally rendered actual tool recommendations from `_tool_call_history`, but LLM-3 was over-recommending tools because the prompt didn't have a discipline clause. Direct cause of the tool dimension drop.
+
+3. *"Listing trivial domain color and redundant facts as PIN"* — I forgot user_utterance entries were going into the PIN/ACTIVE/BACKGROUND/DROP buckets at all. They're transcript replay, not curated memory. Plus the SYSTEM-source pinned domain hints were indistinguishable from real user-stated PINs in the output.
+
+**Loop 4 fixes (committed):**
+1. **SYSTEM source is sticky** in `MemoryStore.add()` dedup — once SYSTEM, never upgraded. Direct fix for failure #1.
+2. **Tool-rec discipline** added to `DEFAULT_LLM3_PROMPT`: "tools_recommended should be EMPTY for most turns. An average conversation has 3-8 turns where tools meaningfully help." Direct fix for failure #2.
+3. **Section 3 formatter** now (a) excludes USER_UTTERANCE entries from the buckets entirely, and (b) splits PIN into `PIN — user-stated` vs `PIN (system-source) — persona/domain hints, NOT user-stated`. Direct fix for failure #3, plus makes the provenance distinction visible to the evaluator.
+
+**Loop 4 running now** with the same 30-turn cap.
+
+---
