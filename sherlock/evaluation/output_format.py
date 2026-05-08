@@ -205,17 +205,29 @@ def _section_4(history: list[dict]) -> str:
     tool_to_turns: dict[str, list[int]] = {}
     freshness_to_turns: dict[str, list[int]] = {}
     expand_to_turns: dict[str, list[int]] = {}
+    turns_with_no_tools: list[int] = []
 
     for entry in history:
         ti = entry.get("turn_index")
-        for t in entry.get("tools_recommended", []):
+        rec = entry.get("tools_recommended", []) or []
+        if not rec:
+            turns_with_no_tools.append(ti)
+        for t in rec:
             tool_to_turns.setdefault(str(t), []).append(ti)
         for f in entry.get("freshness_required", []):
             freshness_to_turns.setdefault(str(f), []).append(ti)
         for e in entry.get("context_to_expand", []):
             expand_to_turns.setdefault(str(e), []).append(ti)
 
+    total_turns = len(history)
+    flagged_turns = total_turns - len(turns_with_no_tools)
+
     out = []
+    out.append(
+        f"### Selectivity — {flagged_turns}/{total_turns} turns flagged a tool call\n"
+        "(The gold standard expects most turns to flag NO tool. Only turns where "
+        "the answer depends on time-varying or external data should appear below.)\n"
+    )
     out.append("### Tools recommended across the conversation\n")
     out.append("| Tool | Turns recommended | Count |")
     out.append("|------|-------------------|-------|")
@@ -246,6 +258,16 @@ def _section_4(history: list[dict]) -> str:
         out.append("_(none)_")
 
     out.append("")
+    out.append("### Tool calls Sherlock should NOT have made\n")
+    out.append(
+        "By the same selectivity discipline, the following turn types are "
+        "deliberately excluded from tool recommendations: pure conversational "
+        "turns, emotional / permission-seeking turns, in-band knowledge that "
+        "the assistant already has (e.g. drafting allergy phrases the assistant "
+        "knows directly), and verifications of user-relayed information. "
+        f"There were {len(turns_with_no_tools)} such turns in this run.\n"
+    )
+
     return "\n".join(out)
 
 

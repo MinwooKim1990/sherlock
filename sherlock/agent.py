@@ -428,6 +428,12 @@ class Sherlock:
             current_turn_index=turn_index,
             active_topics=active_topics,
         )
+        # 8b. PIN cap — keep PIN bucket from ballooning. Demotes least-recent
+        # non-system pins above the cap.
+        try:
+            self._memory.cap_pinned(conv.id, max_pinned=25)
+        except Exception:
+            pass
 
         self._prev_user_text = user_input
         self._last_turn = TurnState(

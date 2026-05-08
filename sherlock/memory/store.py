@@ -189,6 +189,37 @@ class MemoryStore:
             s.add(row)
             s.commit()
 
+    def cap_pinned(self, conversation_id: str, max_pinned: int = 25) -> int:
+        """Hard cap on PIN count per conversation. Demote the least-recently-touched
+        non-system pinned entries first; SYSTEM-source pins are protected. Returns
+        number of items demoted.
+        """
+        from sherlock.memory.entry import MemorySource
+
+        with Session(self._engine) as s:
+            stmt = select(MemoryEntry).where(
+                MemoryEntry.conversation_id == conversation_id,
+                MemoryEntry.pinned == True,  # noqa: E712
+            )
+            pinned = list(s.exec(stmt))
+            if len(pinned) <= max_pinned:
+                return 0
+            # Demote: prefer to demote non-system, lowest-confidence, oldest-touched first.
+            non_system = [p for p in pinned if p.source != MemorySource.SYSTEM]
+            non_system.sort(
+                key=lambda p: (p.confidence, p.last_used_turn_index, p.created_at)
+            )
+            demoted = 0
+            target_demote = len(pinned) - max_pinned
+            for entry in non_system:
+                if demoted >= target_demote:
+                    break
+                entry.pinned = False
+                s.add(entry)
+                demoted += 1
+            s.commit()
+        return demoted
+
     def pin(self, memory_id: str, value: bool = True) -> None:
         with Session(self._engine) as s:
             row = s.get(MemoryEntry, memory_id)
