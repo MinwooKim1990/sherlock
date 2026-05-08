@@ -59,31 +59,55 @@ Preserve specifics — concrete names, numbers, and dates beat abstractions.
 
 
 _FINAL_INFERENCE_PROMPT = """\
-You are LLM-3 producing a consolidated inference report for the entire
+You are LLM-3 producing the consolidated inference report for the entire
 conversation just replayed. Below are the per-turn hypotheses you
-generated during the replay, plus the user-utterance + summary memories.
+produced during the replay (with confidence + evidence + reasoning_type),
+plus the user utterances chronologically.
 
-Produce a markdown report with these subsections:
+Produce a markdown report with these exact subsections:
 
 ### About the user
-- Identity (with confidence + evidence trail). Distinguish facts the USER
-  explicitly stated from facts only present via system-source persona note.
-- Deep wants (the surface questions are usually proxies)
-- Style/tempo preferences
-- What the user avoids
+- Identity (with confidence + evidence trail). **Distinguish facts the
+  USER explicitly stated from facts only present via the system-source
+  persona note.** This distinction is mandatory.
+- Deep wants — the surface questions are usually proxies. Name the
+  underlying ask (permission / reassurance / blame-buffer / validation /
+  procrastination-cover) for each implicit-ask moment you spotted.
+- Style / tempo preferences (lowercase, abbreviations, code-mixing, when
+  the user drops Korean particles, etc.).
+- What the user avoids (asking for premiums, looking flaky, being seen
+  as dramatic, etc.).
 
 ### About the conversation's hidden structure
-- Which topics are deeply connected vs superficially
-- What the user implicitly assumes the assistant remembers
-- Inferences from earlier turns that shape later turns
+- Which topic threads are deeply coupled vs superficially. Name the
+  threads (work / health / trip / family / money are likely candidates).
+- What the user implicitly assumes the assistant remembers across the
+  conversation (so far the system would fail if it did NOT remember
+  these).
+- Inferences from earlier turns that shape later turns — describe the
+  causal chains.
 
 ### Per-turn inferences (≥5 highlights)
-For each, give: turn N, surface, inferred intent (with hypotheses + probabilities + evidence), why-it-matters.
+For each chosen turn, give:
+- **Turn N** — quote the user's surface phrasing.
+- *Surface*: literal reading.
+- *Inferred intent*: the underlying ask, with at least 2-3 candidate
+  hypotheses, each with a probability and a short evidence trail (quote
+  specific words from the turn).
+- *Why it matters later*: what subsequent turn confirms or relies on this
+  inference.
 
-Anchor every claim to specific turns when possible. Confidences below 0.50
-must be surfaced as hypotheses, not stated as prior knowledge. Do not
-confabulate that the user told you something they didn't — distinguish
-provenance.
+Hard rules:
+- Anchor every claim to a specific turn number when possible.
+- Confidences below 0.50 must be surfaced as hypotheses, never stated as
+  prior knowledge.
+- **Provenance discipline:** never confabulate that the user told you
+  something they did not. If the conversation contained a probe like
+  "did I tell you my name?" or "did I ever mention X?", explicitly
+  identify it and answer honestly (user-stated vs system-inferred).
+- Do not pad. If you don't have evidence for a claim, drop the claim.
+
+Output the markdown directly — no fences, no preamble.
 """
 
 
