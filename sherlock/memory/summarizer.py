@@ -127,7 +127,11 @@ class SummarizerEngine:
         # Solves the "massive lists of repetitive low-value facts" failure
         # mode the loop-4 evaluator named.
         existing_pinned = self._store.list(conversation_id=conversation_id, pinned=True)
-        existing_text = "\n".join(f"- {p.content}" for p in existing_pinned[:60])
+        # Cap to 25 most recent pinned facts so LLM-2 prompt stays bounded.
+        existing_pinned = sorted(
+            existing_pinned, key=lambda p: p.last_used_turn_index, reverse=True
+        )[:25]
+        existing_text = "\n".join(f"- {p.content}" for p in existing_pinned)
         if not existing_text:
             existing_text = "(none yet)"
 

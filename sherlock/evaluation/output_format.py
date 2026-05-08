@@ -32,8 +32,9 @@ from sherlock.providers.base import ChatMessage
 
 
 _FINAL_SUMMARY_PROMPT = """\
-You are condensing an entire conversation into a dense, organized prose
-summary. Below you have:
+You are condensing an entire conversation into a TIGHT, organized prose
+summary. Target length: 500-900 words. Density beats completeness.
+Below you have:
 
   (1) per-segment LLM-2 summaries in order,
   (2) pinned facts (decisions, identity facts, dates, allergies, contracts),
@@ -60,9 +61,10 @@ Preserve specifics — concrete names, numbers, and dates beat abstractions.
 
 _FINAL_INFERENCE_PROMPT = """\
 You are LLM-3 producing the consolidated inference report for the entire
-conversation just replayed. Below are the per-turn hypotheses you
-produced during the replay (with confidence + evidence + reasoning_type),
-plus the user utterances chronologically.
+conversation just replayed. **Target length: 700-1200 words. Be tight.**
+Below are the per-turn hypotheses you produced during the replay (with
+confidence + evidence + reasoning_type), plus the user utterances
+chronologically.
 
 Produce a markdown report with these exact subsections:
 
