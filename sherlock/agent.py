@@ -6,13 +6,47 @@ M3: bootstrap-authored companion prompts + LLM-3 inference + web search.
 
 All milestones are wired into a single synchronous turn pipeline. M5
 upgrades the background portion to async.
+
+Companion-call gating (post-2026-05-08 user direction):
+  LLM-1 itself decides when to call LLM-2 (compact) and LLM-3 (infer)
+  by emitting a `<<sherlock-companions: ...>>` tag at the end of its
+  response. Hardcoded periodic-trigger heuristics are used only as a
+  safety net (force one fire on the final turn if LLM-1 never asked).
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+
+_COMPANIONS_TAG_RE = re.compile(
+    r"<<\s*sherlock-companions\s*:\s*([^>]*?)\s*>>",
+    re.IGNORECASE,
+)
+
+
+def _parse_companions_tag(text: str) -> tuple[str, set[str]]:
+    """Strip the trailing <<sherlock-companions: ...>> tag from an LLM-1
+    response and return (cleaned_text, set_of_requested_companions).
+
+    Recognised companion names: 'compact', 'infer'.
+    Returns empty set when no tag is present.
+    """
+    matches = list(_COMPANIONS_TAG_RE.finditer(text or ""))
+    if not matches:
+        return text, set()
+    requested: set[str] = set()
+    for m in matches:
+        body = m.group(1) or ""
+        for token in body.split(","):
+            t = token.strip().lower()
+            if t in {"compact", "infer"}:
+                requested.add(t)
+    cleaned = _COMPANIONS_TAG_RE.sub("", text).rstrip()
+    return cleaned, requested
 
 from sherlock.config import Config
 from sherlock.evolution import PromptVersionStore
@@ -121,6 +155,13 @@ class Sherlock:
         self._persona_seeded = False
         # Cumulative LLM-3 outputs across turns (for Section 4 in eval output).
         self._tool_call_history: list[dict] = []
+        # How many turns LLM-1 has requested any companion call. Used to
+        # trigger the final-turn safety-net force fire when LLM-1 never
+        # asked the whole conversation.
+        self._companion_request_count: int = 0
+        # Set by the replay harness so the agent knows how many turns
+        # remain. 0 means "not in replay mode" → no safety force.
+        self._replay_total_turns: int = 0
 
     @staticmethod
     def _build_optional(model_cfg) -> Optional[BaseProvider]:
@@ -345,49 +386,13 @@ class Sherlock:
         hypotheses: list[dict] = []
         search_results: list[dict] = []
         infer_error: Optional[str] = None
-        # Per SPEC §4.2 LLM-3 is on-demand, not every-turn. Gate the call by
-        # the inferer's should_fire heuristic (cold start + periodic anchors
-        # + topic-changed + implicit-ask triggers).
-        if self._inferer is not None and self._inferer.should_fire(
-            turn_index=turn_index,
-            user_text=user_input,
-            topic_changed=topic_changed,
-        ):
-            try:
-                infer_result = self._inferer.infer(
-                    conversation_id=conv.id,
-                    turn_index=turn_index,
-                    user_text=user_input,
-                    recent_turns=self._format_last_k_turns(conv.id, 3),
-                )
-                hypotheses = infer_result.get("hypotheses", []) or []
-                # Cache the full LLM-3 output per turn for the eval-time Section 4.
-                self._tool_call_history.append({
-                    "turn_index": turn_index,
-                    "user": user_input,
-                    "tools_recommended": infer_result.get("tools_recommended", []) or [],
-                    "freshness_required": infer_result.get("freshness_required", []) or [],
-                    "context_to_expand": infer_result.get("context_to_expand", []) or [],
-                })
-                # Web-search prefetch on freshness_required topics
-                freshness = infer_result.get("freshness_required", []) or []
-                if self._search is not None:
-                    for topic in freshness[:3]:
-                        try:
-                            search_results.extend(self._search.search(topic, max_results=3))
-                        except Exception:
-                            pass
-            except Exception as exc:
-                hypotheses = []
-                infer_error = f"{type(exc).__name__}: {exc}"
-                # First-failure visibility: print once when a turn loses its
-                # inferer to a silent provider error. Loops 8-9 wasted a full
-                # run because rate-limited gemini failures were swallowed.
-                import sys
-                print(
-                    f"  [inferer error turn {turn_index}] {infer_error[:160]}",
-                    file=sys.stderr,
-                )
+        hypotheses = []
+        # NOTE: companion calls (compact/infer) are now gated on LLM-1's
+        # explicit request via the <<sherlock-companions: ...>> tag in its
+        # response. We assemble + call LLM-1 FIRST, then parse the tag, then
+        # fire the requested companions. The slot for THIS turn cannot
+        # benefit from LLM-3's hypotheses (no time travel); LLM-3 fires
+        # POST-response so its output benefits the NEXT turn's slot.
 
         # 4. Retrieve memories (RAG top-K).
         retrieved = self._retrieve_memories(user_input)
@@ -404,40 +409,96 @@ class Sherlock:
         )
         response = self._provider.chat(messages)
 
-        # 6. Persist assistant turn.
+        # 5b. Parse the LLM-1 companions tag — strip it from the visible
+        # response and learn which companions LLM-1 wants to fire.
+        cleaned_text, requested = _parse_companions_tag(response.text)
+        # Replace the response text with the cleaned version so downstream
+        # storage + return value don't show the tag to the user.
+        response = ChatResponse(
+            text=cleaned_text,
+            model=response.model,
+            usage=response.usage,
+            cost_usd=response.cost_usd,
+            raw=response.raw,
+        )
+        if requested:
+            self._companion_request_count += 1
+
+        # Safety net: if LLM-1 has not asked for ANY companion across the
+        # whole conversation and this is the final replay turn, force one
+        # full fire so eval has memory state to score.
+        is_final_safety_force = (
+            getattr(self, "_replay_total_turns", 0) > 0
+            and turn_index >= self._replay_total_turns
+            and self._companion_request_count == 0
+        )
+        if is_final_safety_force:
+            requested = {"compact", "infer"}
+
+        # 6. Persist assistant turn (cleaned text).
         self._storage.add_message(
             conv.id,
             role="assistant",
-            content=response.text,
+            content=cleaned_text,
             model=response.model,
             prompt_tokens=response.usage.prompt_tokens,
             completion_tokens=response.usage.completion_tokens,
             cost_usd=response.cost_usd,
         )
 
-        # 7. Background: LLM-2 summarization cycle.
+        # 7. Companion calls — driven by the LLM-1 tag (or safety-net force).
+
+        # 7a. LLM-3 (Sherlock inference) when requested.
+        infer_result: dict = {}
+        if "infer" in requested and self._inferer is not None:
+            try:
+                infer_result = self._inferer.infer(
+                    conversation_id=conv.id,
+                    turn_index=turn_index,
+                    user_text=user_input,
+                    recent_turns=self._format_last_k_turns(conv.id, 3),
+                )
+                hypotheses = infer_result.get("hypotheses", []) or []
+                self._tool_call_history.append({
+                    "turn_index": turn_index,
+                    "user": user_input,
+                    "tools_recommended": infer_result.get("tools_recommended", []) or [],
+                    "freshness_required": infer_result.get("freshness_required", []) or [],
+                    "context_to_expand": infer_result.get("context_to_expand", []) or [],
+                })
+                freshness = infer_result.get("freshness_required", []) or []
+                if self._search is not None:
+                    for topic in freshness[:3]:
+                        try:
+                            search_results.extend(self._search.search(topic, max_results=3))
+                        except Exception:
+                            pass
+            except Exception as exc:
+                hypotheses = []
+                infer_error = f"{type(exc).__name__}: {exc}"
+                import sys
+                print(
+                    f"  [inferer error turn {turn_index}] {infer_error[:160]}",
+                    file=sys.stderr,
+                )
+
+        # 7b. LLM-2 summarization when requested.
         summary_run = False
-        if self._summarizer is not None:
-            should, _ = self._summarizer.should_run(
-                turn_index=turn_index,
-                prev_user_text=self._prev_user_text,
-                current_user_text=user_input,
-            )
-            if should:
-                try:
-                    self._summarizer.run(
-                        conversation_id=conv.id,
-                        recent_turns=self._format_last_k_turns(conv.id, 5),
-                        turn_index=turn_index,
-                    )
-                    summary_run = True
-                except Exception as exc:
-                    summary_run = False
-                    import sys
-                    print(
-                        f"  [summarizer error turn {turn_index}] {type(exc).__name__}: {exc}"[:160],
-                        file=sys.stderr,
-                    )
+        if "compact" in requested and self._summarizer is not None:
+            try:
+                self._summarizer.run(
+                    conversation_id=conv.id,
+                    recent_turns=self._format_last_k_turns(conv.id, 5),
+                    turn_index=turn_index,
+                )
+                summary_run = True
+            except Exception as exc:
+                summary_run = False
+                import sys
+                print(
+                    f"  [summarizer error turn {turn_index}] {type(exc).__name__}: {exc}"[:160],
+                    file=sys.stderr,
+                )
 
         # 8. Decay pass.
         active_topics = [user_input]
@@ -551,10 +612,13 @@ class Sherlock:
             topic_changed=topic_changed,
         )
         response = await self._provider.achat(messages)
+        cleaned_text, requested = _parse_companions_tag(response.text)
+        if requested:
+            self._companion_request_count += 1
         self._storage.add_message(
             conv.id,
             role="assistant",
-            content=response.text,
+            content=cleaned_text,
             model=response.model,
             prompt_tokens=response.usage.prompt_tokens,
             completion_tokens=response.usage.completion_tokens,

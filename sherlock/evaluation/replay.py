@@ -74,6 +74,9 @@ def replay_dummy_conversation(
     turns = parse_dummy_conversation(dummy_path)
     if max_turns is not None:
         turns = turns[:max_turns]
+    # Tell the agent the total run length so its safety-net force-fire on
+    # the last turn can trigger when LLM-1 never asked for any companion.
+    agent._replay_total_turns = len(turns)
     for i, t in enumerate(turns):
         try:
             agent.chat(t.user)
