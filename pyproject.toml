@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sherlock"
+version = "0.0.0"
+description = "Domain-agnostic context-curation library — main LLM authors its companions, memory fades naturally, intent is inferred."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Minwoo Kim" }]
+# Dependencies grow milestone by milestone (see SPEC.md § 9).
+# M1 will add: anthropic, openai, google-generativeai, pydantic, pyyaml, sqlmodel, typer, structlog.
+# M2 adds: chromadb, sentence-transformers, rank-bm25.
+# Kept empty here so PHASE 0 install is fast and cheap.
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+    "black>=24",
+]
+
+[tool.setuptools.packages.find]
+include = ["sherlock*"]
+exclude = ["tests*", "evaluation*", "logs*", "state*", "prompts*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
