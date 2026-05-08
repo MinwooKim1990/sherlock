@@ -186,3 +186,27 @@ API keys for runtime providers (Anthropic / OpenAI / Gemini) will need to be in 
 **Now running:** 30-turn eval with the new mixed-provider config. Will land a real score and trigger the diagnose-fix-retry Ralph cycle from there.
 
 ---
+
+## Loop 2 — Baseline landed: 57/100 — 2026-05-08
+
+**Run:** `evaluation/runs/2026-05-08T05-06-40/` (30 turns of the dummy, ~13 min wall-clock).
+
+**Score breakdown:**
+| Dimension | Score | Why |
+|---|---|---|
+| summary_fidelity | 65 | Decent prose but missed the Vue-3-not-React correction (T27 was outside the 30-turn cap) and a few specifics. |
+| inference_quality | 60 | Hypotheses with confidence + evidence emerged, but provenance tracking + hidden-structure analysis were thin. |
+| **classification_correctness** | **30** | **Lowest dimension.** "Repetitive, bloated list of facts (many redundant) rather than a structured taxonomy of PIN/ACTIVE/BACKGROUND/DROP." The over-pinning failure mode (LLM-2 re-emitting paraphrases on every cycle, no add-time dedup) blew up. PIN had 70+ entries; gold has 17. |
+| tool_recommendations | 50 | The old formatter's Section 4 only printed hypothesis-counts-by-reasoning-type, not a per-turn tool table. |
+
+**Mid-run incident:** Claude CLI (via wrapper) executed a `Write` tool during turn ~22 and dropped `tokyo_trip_reference.md` into the project root as a side-effect. Removed and added a TEXT-ONLY guard banner to every flattened wrapper prompt to prevent recurrence.
+
+**Diagnosis → Loop 3 plan (all already committed):**
+1. Classification fix: **dedup-at-add** in MemoryStore (when a near-duplicate exists, touch + upgrade pinned/confidence in-place rather than spawn a new row). Should cut PIN bucket from 70+ to ~15-20.
+2. Tool fix: **Section 4** now renders a per-turn-tools table from `agent._tool_call_history` with freshness + context-expand subsections.
+3. Inference fix: tightened **DEFAULT_LLM3_PROMPT** + **META_CONTEXT** to mandate provenance discipline (T76 trap) and an implicit-ask catalog. **Section 2 finalisation prompt** now mandates user-stated vs system-inferred distinction, named-thread coupling analysis, ≥2-3 candidate hypotheses per highlight with quoted evidence.
+4. Summary fix: **Section 1 finalisation prompt** now ingests pinned-facts and chronological user-utterances alongside per-segment summaries (was: only segment summaries). Also demands all pinned facts appear, names the 5 threads, surfaces user corrections explicitly.
+
+**Loop 3 running now:** same 30-turn cap so the comparison is apples-to-apples.
+
+---
