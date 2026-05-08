@@ -2,7 +2,12 @@
 
 Primary: gemini-3.1-flash-lite-preview (per EVALUATION_PROTOCOL.md §3.3).
 If that quota is exhausted, falls through:
-    gemini-3.1-flash → gemini-3.1-pro → gpt-5.4-mini → claude-haiku-4-5
+    gemini-3.0-flash → gpt-5.4-mini → claude-haiku-4-5
+
+Excluded by design: gemini-3.1-pro (and other large models). Reason: a
+sufficiently capable evaluator scores ≥80 trivially even on a mediocre
+candidate, defeating the rubric. The fallback chain stays in the
+small-model regime so each loop's improvement is measurable.
 
 Critical: scores from DIFFERENT evaluator models are not directly
 comparable — each model has its own scoring tendencies. The successful
@@ -19,10 +24,12 @@ from typing import Optional
 
 
 # Fallback chain in priority order. Each tuple is (wrapper-provider, model-id).
+# Per user instruction (small models only — large models trivially hit 80%):
+# - gemini-3.0-flash, NOT 3.1-flash (3.1-flash doesn't exist).
+# - gemini-3.1-pro is EXCLUDED (too capable; would inflate scores).
 EVALUATOR_FALLBACK_CHAIN: list[tuple[str, str]] = [
     ("gemini", "gemini-3.1-flash-lite-preview"),
-    ("gemini", "gemini-3.1-flash"),
-    ("gemini", "gemini-3.1-pro"),
+    ("gemini", "gemini-3.0-flash"),
     ("codex", "gpt-5.4-mini"),
     ("claude", "claude-haiku-4-5"),
 ]
