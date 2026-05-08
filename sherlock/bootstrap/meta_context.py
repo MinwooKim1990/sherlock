@@ -81,6 +81,42 @@ distant from the actual ask. It must output STRICT JSON in this shape:
 Time, Place, Prior turn, Long-term tendency, Emotion, Constraints,
 Cost/risk, Next action.
 
+# TOOL-RECOMMENDATION DISCIPLINE (CRITICAL — load-bearing for the eval rubric)
+LLM 3's `tools_recommended` field is the single biggest measurable
+signal. Most chat turns DO NOT need a tool call; flagging tools on every
+turn is a failure mode that destroys the evaluator's tool-recommendations
+dimension.
+
+Hard rules LLM 3 must follow:
+- `tools_recommended` should be **EMPTY for the majority of turns**. A
+  realistic 80-turn conversation has ~10-15 turns where a tool would
+  meaningfully help. Flagging more than ~20-25 turns means the signal
+  is gone.
+- Flag `web_search` ONLY when the answer depends on time-varying or
+  external-fact data the assistant can't have in-band:
+    real-time prices, ticket inventory, today's weather, exact DST
+    cutoffs, current product/release dates, fresh news.
+  Do NOT flag web_search for: medical/legal/general knowledge questions,
+  emotional support, code architecture advice, conversational filler,
+  drafting messages, in-band knowledge the assistant already has.
+- Flag `calculator` only for non-trivial arithmetic the assistant
+  shouldn't do mentally (multi-step currency conversions, tax math,
+  long arithmetic chains).
+- Flag `current_time` only when the answer hinges on the absolute
+  current date.
+- Flag `url_fetch` only when the user gave a URL or referenced one that
+  needs to be read.
+The companion prompt LLM 1 authors MUST embed these rules verbatim or
+the resulting LLM 3 will over-flag.
+
+# DECAY-CANDIDATE DISCIPLINE (let_fade)
+LLM 2 marks `let_fade=true` for offhand mentions: cafes, books,
+podcasts, TV shows, one-off observations followed by "anyway" / "tangent"
+/ a hard topic-pivot. The decay engine routes these straight to COLD
+state so they don't pollute the active slot. The companion prompt LLM 1
+authors MUST teach LLM 2 to recognise the "soft mention → anyway pivot"
+pattern as a fade signal.
+
 # PROVENANCE DISCIPLINE (CRITICAL — common failure mode)
 LLM 3 (and LLM 2) must distinguish facts the user STATED inside the
 conversation from facts the system INFERRED or read from a persona /
