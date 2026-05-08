@@ -180,11 +180,34 @@ def _section_3(memories: list[MemoryEntry]) -> str:
                 prefix_seen[prefix] = e
         # Use prefix-deduped set, but pick the actual entry by `seen` if both agree.
         unique = list({e.id: e for e in prefix_seen.values()}.values())
-        unique.sort(key=lambda x: (-x.confidence, x.created_at))
+        # Gold-standard ordering: source first (user > inference > system),
+        # then confidence desc.
+        rank = {
+            MemorySource.USER: 0,
+            MemorySource.LLM_INFERENCE: 1,
+            MemorySource.SYSTEM: 2,
+            MemorySource.SEARCH: 3,
+            MemorySource.TOOL: 3,
+        }
+        unique.sort(key=lambda x: (rank.get(x.source, 9), -x.confidence, x.created_at))
         for e in unique[:max_items]:
-            tag = e.source.value
-            conf = f" (conf {e.confidence:.2f})" if e.type == MemoryType.INFERENCE else ""
-            lines.append(f"- {e.content.strip()}{conf} _[source: {tag}, type: {e.type.value}]_")
+            # Compact gold-standard-shaped format: bold key fact, then
+            # source-tag in parens. Match the gold's '*T?* — PIN.' shape
+            # where we can; we don't have explicit turn references stored
+            # so use last_used_turn_index as a proxy.
+            content = e.content.strip()
+            src = {
+                MemorySource.USER: "user-stated",
+                MemorySource.LLM_INFERENCE: "inferred",
+                MemorySource.SYSTEM: "system-source persona note",
+                MemorySource.SEARCH: "search",
+                MemorySource.TOOL: "tool",
+            }.get(e.source, e.source.value)
+            turn_ref = f"~T{e.last_used_turn_index}" if e.last_used_turn_index else "—"
+            conf = ""
+            if e.type == MemoryType.INFERENCE:
+                conf = f", conf {e.confidence:.2f}"
+            lines.append(f"- **{content}** — *{turn_ref}* — _{src}{conf}_")
         if len(unique) > max_items:
             lines.append(f"- … and {len(unique) - max_items} more (truncated)")
         return "\n".join(lines) + "\n"
