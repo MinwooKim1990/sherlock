@@ -25,11 +25,11 @@ from typing import Optional
 
 # Fallback chain in priority order. Each tuple is (wrapper-provider, model-id).
 # Per user instruction (small models only — large models trivially hit 80%):
-# - gemini-3.0-flash, NOT 3.1-flash (3.1-flash doesn't exist).
-# - gemini-3.1-pro is EXCLUDED (too capable; would inflate scores).
+# Verified empirically: gemini-3.0-flash returns model_not_allowed in this
+# wrapper's subscription. gemini-2.5-flash-lite IS hardcoded-available.
 EVALUATOR_FALLBACK_CHAIN: list[tuple[str, str]] = [
     ("gemini", "gemini-3.1-flash-lite-preview"),
-    ("gemini", "gemini-3.0-flash"),
+    ("gemini", "gemini-2.5-flash-lite"),
     ("codex", "gpt-5.4-mini"),
     ("claude", "claude-haiku-4-5"),
 ]
