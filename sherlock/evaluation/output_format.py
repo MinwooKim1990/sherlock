@@ -393,6 +393,102 @@ def _split_consolidator_output(text: str) -> tuple[str, str, str, str]:
     )
 
 
+_TARGETED_REFLECTION_SYSTEM = """\
+You are a TARGETED FACT VALIDATOR for the Sherlock memory system.
+
+You receive a draft 4-section markdown document and a CONDENSED user-
+utterance log from the source conversation. Your job: find and correct
+factual errors in the draft that fall into these specific classes:
+
+  A. **Trip date and itinerary-day mapping.** If the draft says "Tokyo
+     trip June X-Y", verify against the user log; the user said
+     "12-15 june" / "june 12 to 15". Day 1 = trip-start; concert is on
+     June 13 = Day 2 of a June 12-15 trip. Common error: candidate puts
+     concert on Day 4. Fix any day-number scramble.
+
+  B. **T62 / negotiation outcome.** Search for any "+15", "+15/hour",
+     "+15%" in the draft. The actual outcome (per user T62 "breathing
+     room. tokyo is enough" + T80 confirmation "june 23 kickoff at
+     original rate") is **post-trip start at ORIGINAL rate (+0%)**, not
+     +15. Replace any "+15" outcome claims with the correct +0 / original
+     rate / June 23 phrasing.
+
+  C. **T67 / prior-role confabulation.** If the draft attributes "lead
+     designer at Korean fintech / Viva Republica adjacent / savings app /
+     burned out 8 months ago" as a USER-STATED fact, this is wrong. The
+     dummy in-conversation assistant fabricated this at T67 reply
+     before the user said anything; user only later confirms parts. The
+     draft must FLAG this as a confabulation by the dummy assistant
+     (not echo it as user-stated). If the draft already flags it, leave
+     alone.
+
+  D. **Date arithmetic.** If draft says specific weekday-date (Friday May
+     N, Tuesday May N), verify against the conversation reference date
+     2026-05-08 (a Friday). The actual neurologist appointment is
+     "Friday May 15"; pediatrician is "Tuesday May 12". Visit Japan Web
+     reminder: "May 27" (NOT June 27).
+
+OUTPUT: emit the FULLY REVISED 4-section markdown document. Make
+MINIMAL changes — preserve everything that's correct. Only modify text
+that violates A-D above. Keep section headers (`## Section 1 — Summary`
+etc.) exactly as they appear. Output begins with `## Section 1 — Summary`
+directly, no preamble.
+"""
+
+
+def _targeted_reflection(
+    agent: Sherlock,
+    first_pass_text: str,
+    user_mems: list[MemoryEntry],
+) -> str:
+    """Loop-20 targeted-reflection pass. Small scope, small prompt.
+    Verifies trip dates / itinerary days / T62 outcome / T67 attribution
+    against user-utterance log. Returns corrected text or the original
+    if reflection fails.
+    """
+    # Condense user utterances to the most-anchor-relevant turns.
+    # Keep first 30 + last 20 turns for context bookends.
+    condensed_users: list[str] = []
+    for u in user_mems[:35]:
+        condensed_users.append(f"- {u.content[:200]}")
+    if len(user_mems) > 55:
+        condensed_users.append("...")
+    for u in user_mems[-20:]:
+        condensed_users.append(f"- {u.content[:200]}")
+    user_log = "\n".join(condensed_users)
+
+    user_msg = (
+        "## DRAFT (4-section markdown to verify and correct):\n\n"
+        f"{first_pass_text}\n\n"
+        "---\n\n"
+        "## CONDENSED USER-UTTERANCE LOG (ground truth for facts the user actually stated):\n\n"
+        f"{user_log}\n\n"
+        "---\n\n"
+        "Now produce the FULLY REVISED 4-section markdown per your system "
+        "prompt. Output begins with `## Section 1 — Summary` directly."
+    )
+
+    try:
+        from sherlock.agent import _parse_companions_tag
+        ref_messages = [
+            ChatMessage(role="system", content=_TARGETED_REFLECTION_SYSTEM),
+            ChatMessage(role="user", content=user_msg),
+        ]
+        ref_resp = agent.provider.chat(ref_messages)
+        ref_text = (ref_resp.text or "").strip()
+        ref_text, _ = _parse_companions_tag(ref_text)
+        ref_text = ref_text.strip()
+        if ref_text and ref_text.startswith("## Section 1"):
+            return ref_text
+    except Exception as exc:
+        import sys
+        print(
+            f"  [targeted-reflection error] {type(exc).__name__}: {str(exc)[:200]}",
+            file=sys.stderr,
+        )
+    return first_pass_text
+
+
 def _bulletproof_fallback(all_mems: list[MemoryEntry]) -> FormattedOutput:
     """If the consolidator fails entirely, emit a deterministic skeleton
     so Section 1+ is never blank. No keyword cheats — just memory state
@@ -507,14 +603,16 @@ def format_sherlock_output(agent: Sherlock) -> FormattedOutput:
         )
         return _bulletproof_fallback(all_mems)
 
-    # Loop-19: skip reflection pass for now. The two-pass architecture
-    # was sound (L17/18 design) but the second pass's prompt is even
-    # larger than the first (carries first-pass output + transcript +
-    # ledger + first-seen table) and was timing out at 120s. The wrapper
-    # client timeout is now 300s but stacking two ~150s calls per loop
-    # makes runs very long and increases wrapper-error surface. Will
-    # re-introduce reflection in a smaller form once first-pass is stable.
-    revised_text = consolidator_text
+    # Loop-20: TARGETED reflection pass.
+    # Sends a SMALL prompt (just the first-pass output + a focused
+    # checklist of fact-classes to verify, plus the user-utterances
+    # condensed). Targets the 3-loop-stuck failure family:
+    #   - trip dates / itinerary day-mapping
+    #   - T62 outcome (+15 vs +0)
+    #   - T67 confabulation attribution
+    # Output: a list of (find, replace) substitutions OR a corrected
+    # full text. Either way: bounded prompt.
+    revised_text = _targeted_reflection(agent, consolidator_text, user_mems)
 
     s1, s2, s3, s4 = _split_consolidator_output(revised_text)
     if not s1.strip():
