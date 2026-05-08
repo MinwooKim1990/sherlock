@@ -267,3 +267,27 @@ API keys for runtime providers (Anthropic / OpenAI / Gemini) will need to be in 
 **Loop 5 expected runtime:** ~30-35 min. Bigger but the only way to actually exercise the gold standard's hardest probes.
 
 ---
+
+## Loop 5 — full 80 turns: 48/100, same as loop 3 — 2026-05-08
+
+**Run:** `evaluation/runs/2026-05-08T05-52-01/`. 80 turns, ~37 min replay + format + eval.
+
+**Score:** 48 (= loop-3 = below baseline by 9).
+
+**The decisive diagnostic:** the evaluator names the tool-rec failure precisely — *"flagged 54/80 turns when the gold standard identifies only ~10-12 legitimate external lookups"*. Yet I had committed a tool-discipline rule into `DEFAULT_LLM3_PROMPT` before loop 4. Why didn't it stick?
+
+**Root cause finally identified:** when `bootstrap.auto_run_on_init: true` (default in `sherlock.live.yaml`), the **Bootstrap engine calls LLM-1 to author fresh LLM-2 and LLM-3 system prompts at every run**, completely overriding `DEFAULT_*_PROMPT`. So my edits to `DEFAULT_LLM3_PROMPT` from loops 4 and 5 had zero effect on tool-recommendation behavior — the bootstrap-authored prompts simply didn't carry the rule.
+
+This explains the flat trajectory at 48-57 across loops 3-5 despite multiple targeted fixes: the targeted fixes weren't reaching the prompts in flight.
+
+**Loop 6 fix:** the new tool-discipline + let_fade-discipline + (already present) provenance rules now live in `META_CONTEXT`. `META_CONTEXT` is the document LLM-1 reads while *authoring* the companion prompts — it carries discipline forward into whatever LLM-1 produces. The new META_CONTEXT explicitly tells LLM-1 that "the authored LLM-3 prompt MUST embed the verbatim tool-discipline rules" and "the authored LLM-2 prompt MUST teach the let_fade pattern". This is the right level for the rule to live.
+
+**Other loop-6 prep already committed:**
+- Semantic dedup at write time (cosine ≥ 0.92) on top of prefix-60 dedup. Catches "Yujin has soba allergy" / "User's child Yujin is allergic to soba" / "User has 4yo daughter Yujin with buckwheat allergy" as one fact.
+- `let_fade=true` from LLM-2 now lands the entry directly in COLD state (skips FRESH/WARM) and never pins it. The 5 documented decay candidates should now flow into BACKGROUND/DROP.
+- Section 1 length target: 500-900 words. Section 2 target: 700-1200 words. Loop-4 evaluator complained about "thousands of words of noise"; the targets push back.
+- LLM-2 PIN context shown to it capped at 25 most-recent items instead of 60 (smaller prompt, less paraphrase pressure).
+
+**Loop 6 running now** with all of the above active. Expected runtime ~30-35 min.
+
+---
