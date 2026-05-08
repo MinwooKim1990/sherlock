@@ -1,10 +1,13 @@
-"""Gemini-Flash-Lite evaluator via cli-wrapper-unified (DEVIATION-001 path).
+"""Evaluator with a fallback chain across models.
 
-Uses the wrapper's Python import (`from unified_cli import create`) — preferred
-over subprocess for speed. Subprocess form is the documented fallback.
+Primary: gemini-3.1-flash-lite-preview (per EVALUATION_PROTOCOL.md §3.3).
+If that quota is exhausted, falls through:
+    gemini-3.1-flash → gemini-3.1-pro → gpt-5.4-mini → claude-haiku-4-5
 
-Per EVALUATION_PROTOCOL.md §3.4 the rubric is a JSON-only weighted score:
-final = 0.4*A + 0.4*B + 0.1*C + 0.1*D.
+Critical: scores from DIFFERENT evaluator models are not directly
+comparable — each model has its own scoring tendencies. The successful
+model's id is written to `evaluator_output.json` so trajectory analysis
+can group runs by `evaluator_model`.
 """
 from __future__ import annotations
 
@@ -12,9 +15,34 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 
-GEMINI_MODEL_ID = "gemini-3.1-flash-lite-preview"
+# Fallback chain in priority order. Each tuple is (wrapper-provider, model-id).
+EVALUATOR_FALLBACK_CHAIN: list[tuple[str, str]] = [
+    ("gemini", "gemini-3.1-flash-lite-preview"),
+    ("gemini", "gemini-3.1-flash"),
+    ("gemini", "gemini-3.1-pro"),
+    ("codex", "gpt-5.4-mini"),
+    ("claude", "claude-haiku-4-5"),
+]
+
+# Errors that should trigger fallback (vs hard failure):
+_FALLBACK_TRIGGERS = (
+    "rate limit",
+    "quota",
+    "exhaust",
+    "429",
+    "limit reached",
+    "too many requests",
+    "auth_expired",
+    "model_not_allowed",
+    "not available",
+    "unavailable",
+)
+
+
+GEMINI_MODEL_ID = "gemini-3.1-flash-lite-preview"  # legacy alias for back-compat
 
 
 @dataclass
@@ -26,6 +54,8 @@ class EvaluatorScore:
     final_score: int
     notes: str
     raw_response: str
+    evaluator_model: str = ""  # e.g. "gemini/gemini-3.1-flash-lite-preview"
+    evaluator_attempts: list = None  # list of (provider/model, error_msg or "ok")
 
     def to_dict(self) -> dict:
         return {
@@ -35,11 +65,17 @@ class EvaluatorScore:
             "tool_recommendations": self.tool_recommendations,
             "final_score": self.final_score,
             "notes": self.notes,
+            "evaluator_model": self.evaluator_model,
+            "evaluator_attempts": self.evaluator_attempts or [],
         }
 
 
 class GeminiEvaluator:
-    """Compose GOLD + CANDIDATE, send to Gemini Flash Lite via unified_cli, parse score."""
+    """Compose GOLD + CANDIDATE, run through the EVALUATOR_FALLBACK_CHAIN.
+
+    Note the class name is historical — it's no longer Gemini-only. It's
+    the unified evaluator with a model fallback chain.
+    """
 
     def __init__(self, system_prompt_path: str | Path) -> None:
         self._system_prompt = Path(system_prompt_path).read_text(encoding="utf-8")
@@ -47,9 +83,6 @@ class GeminiEvaluator:
     def evaluate(self, gold_md: str, candidate_md: str) -> EvaluatorScore:
         from unified_cli import create  # local import — keeps optional dep clean
 
-        client = create("gemini", model=GEMINI_MODEL_ID)
-        # The wrapper does not expose --system separately; prepend the rubric
-        # inline. Per DEVIATION-001 in INTENT_DEVIATIONS.md.
         prompt = (
             f"{self._system_prompt.strip()}\n\n"
             "----- GOLD -----\n"
@@ -60,20 +93,54 @@ class GeminiEvaluator:
             "----- END CANDIDATE -----\n\n"
             "Output the JSON object described in the rubric. JSON only."
         )
-        try:
-            resp = client.chat(prompt)
-        except Exception as exc:
-            return EvaluatorScore(
-                summary_fidelity=0,
-                inference_quality=0,
-                classification_correctness=0,
-                tool_recommendations=0,
-                final_score=0,
-                notes=f"evaluator call failed: {type(exc).__name__}: {exc}",
-                raw_response="",
-            )
-        text = resp.text or ""
-        return self._parse_score(text)
+
+        attempts: list[dict] = []
+        last_error: Optional[str] = None
+        for provider, model in EVALUATOR_FALLBACK_CHAIN:
+            full_id = f"{provider}/{model}"
+            try:
+                client = create(provider, model=model)
+                resp = client.chat(prompt)
+                text = (resp.text or "").strip()
+                if not text:
+                    attempts.append({"model": full_id, "result": "empty_response"})
+                    last_error = "empty response"
+                    continue
+                score = self._parse_score(text)
+                # Treat all-zero parse failure as a soft fallback trigger only
+                # if the raw response was non-empty (so we know the model
+                # answered but malformed it). Quota/rate failures throw.
+                score.evaluator_model = full_id
+                attempts.append({"model": full_id, "result": "ok"})
+                score.evaluator_attempts = attempts
+                if score.final_score > 0 or score.summary_fidelity > 0:
+                    return score
+                # Score parse failed → still record but try fallback if any.
+                attempts[-1]["result"] = "parse_failed"
+                last_error = score.notes or "parse failed"
+                continue
+            except Exception as exc:  # noqa: BLE001
+                msg = f"{type(exc).__name__}: {exc}"
+                attempts.append({"model": full_id, "result": f"error: {msg}"})
+                last_error = msg
+                # Decide whether to fall through.
+                low = str(exc).lower()
+                if not any(t in low for t in _FALLBACK_TRIGGERS):
+                    # Non-fallback error (e.g. internal bug). Still try next.
+                    pass
+                continue
+
+        return EvaluatorScore(
+            summary_fidelity=0,
+            inference_quality=0,
+            classification_correctness=0,
+            tool_recommendations=0,
+            final_score=0,
+            notes=f"all evaluator models exhausted. last error: {last_error}",
+            raw_response="",
+            evaluator_model="(none)",
+            evaluator_attempts=attempts,
+        )
 
     def _parse_score(self, text: str) -> EvaluatorScore:
         parsed = _extract_json_object(text)

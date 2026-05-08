@@ -214,7 +214,13 @@ def evaluate(
         json.dumps({**score.to_dict(), "raw_response": score.raw_response}, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    (run_dir / "score.txt").write_text(str(score.final_score) + "\n", encoding="utf-8")
+    # score.txt now records evaluator model alongside the number so trajectory
+    # analysis can group by model class (rule: do not compare scores across
+    # different evaluator models).
+    (run_dir / "score.txt").write_text(
+        f"{score.final_score}\nevaluator_model={score.evaluator_model}\n",
+        encoding="utf-8",
+    )
     (run_dir / "comparison_input.md").write_text(
         f"# GOLD\n\n{gold_md}\n\n---\n\n# CANDIDATE\n\n{output.to_markdown()}",
         encoding="utf-8",
@@ -222,7 +228,8 @@ def evaluate(
 
     console.print(
         Panel.fit(
-            f"[bold]Final: {score.final_score}/100[/bold]\n"
+            f"[bold]Final: {score.final_score}/100[/bold]   "
+            f"[dim]evaluator: {score.evaluator_model}[/dim]\n"
             f"  summary_fidelity:           {score.summary_fidelity}\n"
             f"  inference_quality:          {score.inference_quality}\n"
             f"  classification_correctness: {score.classification_correctness}\n"
