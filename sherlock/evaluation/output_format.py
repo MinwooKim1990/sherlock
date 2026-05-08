@@ -221,6 +221,52 @@ def _section_3(memories: list[MemoryEntry]) -> str:
     ])
 
 
+def _filter_overactive_tools(history: list[dict], max_per_tool: int = 12) -> list[dict]:
+    """Post-hoc rate limit on tool recommendations.
+
+    LLM-3 over-recommends tools (most prominently web_search) on routine
+    turns. The gold standard expects ~10-12 web_search moments across
+    80 turns. If the cumulative count for a single tool exceeds
+    max_per_tool, keep only the most-recent max_per_tool turns for that
+    tool — which biases toward "we ran out of credibility on tools" being
+    flagged later in the conversation, not the over-recommended early
+    turns.
+
+    Returns a new history list with filtered tool sets per entry; entries
+    whose every tool was filtered out get tools_recommended=[].
+    """
+    # Count + collect per-tool turn lists
+    tool_turn_pairs: dict[str, list[tuple[int, int]]] = {}
+    # tuple is (turn_index, original-history-index)
+    for idx, entry in enumerate(history):
+        ti = entry.get("turn_index", 0)
+        for t in entry.get("tools_recommended", []) or []:
+            tool_turn_pairs.setdefault(str(t), []).append((ti, idx))
+
+    # Decide which (tool, history-index) pairs to keep.
+    keep_set: set[tuple[str, int]] = set()
+    for tool, pairs in tool_turn_pairs.items():
+        if len(pairs) <= max_per_tool:
+            for _ti, hidx in pairs:
+                keep_set.add((tool, hidx))
+            continue
+        # Over-quota: keep the LAST max_per_tool by turn_index.
+        pairs_sorted = sorted(pairs, key=lambda p: p[0], reverse=True)[:max_per_tool]
+        for _ti, hidx in pairs_sorted:
+            keep_set.add((tool, hidx))
+
+    out: list[dict] = []
+    for idx, entry in enumerate(history):
+        new_entry = dict(entry)
+        new_tools: list[str] = []
+        for t in entry.get("tools_recommended", []) or []:
+            if (str(t), idx) in keep_set:
+                new_tools.append(t)
+        new_entry["tools_recommended"] = new_tools
+        out.append(new_entry)
+    return out
+
+
 def _section_4(history: list[dict]) -> str:
     """Render Section 4 from the cumulative LLM-3 tool-recommendation history."""
     if not history:
@@ -371,7 +417,8 @@ def format_sherlock_output(agent: Sherlock) -> FormattedOutput:
         section_2 = "_(no inference memories — LLM-3 may not have run.)_"
 
     section_3 = _section_3(all_mems)
-    section_4 = _section_4(getattr(agent, "_tool_call_history", []) or [])
+    raw_history = getattr(agent, "_tool_call_history", []) or []
+    section_4 = _section_4(_filter_overactive_tools(raw_history, max_per_tool=12))
 
     return FormattedOutput(
         section_1_summary=section_1,

@@ -51,12 +51,20 @@ Pinning discipline (this is where most systems fail):
 - Do NOT re-pin the same fact every turn. If a fact is already in
   memory, skip it instead of re-emitting an identical entry.
 
-Let-fade discipline (the counterpart):
-- Mark let_fade=true for offhand mentions immediately followed by an
-  "anyway" / "tangent" / hard pivot to the next topic. Cafes, books,
-  podcasts, random TV shows, one-off observations.
-- A single mention with no return is a fade signal. The system will
-  decay these automatically — but you must mark them so it knows.
+Let-fade discipline (be CONSERVATIVE — over-fading is just as bad as over-pinning):
+- Mark let_fade=true ONLY when ALL of these are true:
+  (a) the fact is a single offhand mention (cafe name, book title,
+      podcast, TV show, random product the user noticed),
+  (b) the user uses a hard-pivot marker IMMEDIATELY: "anyway", "tangent",
+      "ngl", "by the way" or shifts topic in the same turn,
+  (c) the fact has nothing to do with any ongoing thread the user has
+      established (work, health, trip, family, money).
+- DO NOT mark let_fade for: trip itinerary items, allergy details,
+  appointment schedules, decisions in flight, anything in an active
+  thread. These are ACTIVE state, not DROP.
+- When in doubt, default to let_fade=false. The decay engine handles
+  natural fade based on usage; let_fade is the one-shot accelerator
+  reserved for truly offhand tangents.
 
 Provenance discipline:
 - "user" = the user said it explicitly inside the conversation.
