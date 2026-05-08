@@ -35,7 +35,29 @@ _CONSOLIDATOR_SYSTEM = """\
 You are the FINAL CONSOLIDATOR for the Sherlock memory-curation system.
 Your job: read the full conversation transcript + Sherlock's accumulated
 memory state + the provenance ledger, and produce a single Markdown
-document with EXACTLY four sections in this order:
+document with EXACTLY four sections in this order.
+
+**HARD RULE — VERBATIM QUOTATION:**
+When you discuss a specific T-numbered turn (per-turn highlights, T76 probe,
+T67 trap, etc.), you MUST quote the user or assistant text verbatim from
+the FULL CONVERSATION TRANSCRIPT below — find the line beginning with
+"### Turn N" and copy the exact words. Do NOT paraphrase. Do NOT
+reconstruct from memory. If you cannot find the turn in the transcript,
+say so explicitly rather than invent text.
+
+**HARD RULE — CONFABULATION DETECTION:**
+The dummy in-conversation assistant occasionally fabricates facts —
+asserts things the USER never said. To detect: when you write a fact
+about the user (their identity, prior role, location, etc.), check
+the FACT-FIRST-APPEARANCE TABLE below. If a fact's first appearance is
+in an ASSISTANT turn (not a user turn) AND no preceding user turn
+contains the supporting information, that fact is a CONFABULATION by
+the dummy assistant. Flag it (not echo it as truth).
+
+Examples of confabulation patterns: assistant claims user "left a
+fintech eight months ago" when no user turn says fintech, eight
+months, or left. Assistant says "you introduced yourself as Jiwon
+yesterday" when no user turn introduces a name.
 
 ## Section 1 — Summary
 A dense, organized prose summary of the entire conversation (target
@@ -158,7 +180,11 @@ class FormattedOutput:
 
 
 def _build_transcript(agent: Sherlock) -> str:
-    """Render the full conversation as T-numbered markdown."""
+    """Render the full conversation as T-numbered markdown.
+    Loop-16: assistant content no longer truncated at 600 chars — the
+    verbatim-quote rule needs full text for the consolidator to quote
+    correctly (esp. T76 trap and itinerary-day specifics).
+    """
     if agent.conversation_id is None:
         return "(no conversation)"
     msgs = agent._storage.list_messages(agent.conversation_id)
@@ -171,8 +197,63 @@ def _build_transcript(agent: Sherlock) -> str:
             lines.append(f"### Turn {turn}")
             lines.append(f"**User:** {m.content}")
         else:
-            lines.append(f"**Assistant:** {m.content[:600]}")
+            # No truncation. The consolidator needs the actual reply text
+            # to verbatim-quote when discussing specific turns.
+            lines.append(f"**Assistant:** {m.content}")
             lines.append("")
+    return "\n".join(lines)
+
+
+def _build_first_appearance_table(agent: Sherlock) -> str:
+    """Loop-16 confabulation-detection primitive.
+    For each significant noun phrase that recurs in the conversation,
+    record its FIRST appearance turn-number AND speaker (user vs
+    assistant). The consolidator uses this to detect when a 'fact'
+    about the user was first asserted by the assistant without any
+    preceding user statement — that's the canonical confabulation
+    pattern (T67 'fintech eight months ago', T76 'introduced yourself').
+
+    Implementation: tokenize each turn into proper-noun-style tokens,
+    record first-seen by turn ordering. Simple word-level scan; no
+    NER needed — the consolidator does the semantic interpretation.
+    """
+    if agent.conversation_id is None:
+        return "(no conversation)"
+    import re as _re
+
+    msgs = agent._storage.list_messages(agent.conversation_id)
+    non_sys = [m for m in msgs if m.role != "system"]
+    # Significant tokens: capitalised words ≥4 chars, or numeric date/price patterns.
+    cap_token = _re.compile(r"\b[A-Z][a-z]{3,}\b")
+    date_token = _re.compile(r"\b(?:20\d\d|June|July|August|January|February|March|April|May)\b", _re.I)
+    price_token = _re.compile(r"[¥₩$]\s?[\d,]+|₩?\s?[\d,]+\s?(?:KRW|JPY|USD)")
+
+    first_seen: dict[str, tuple[int, str]] = {}  # token -> (turn, role)
+    turn = 0
+    for m in non_sys:
+        if m.role == "user":
+            turn += 1
+        for tok in set(cap_token.findall(m.content) + date_token.findall(m.content) + price_token.findall(m.content)):
+            tok_norm = tok.strip().lower()
+            if tok_norm in {"the", "this", "that", "user", "you", "yes", "well"}:
+                continue
+            if tok_norm not in first_seen:
+                first_seen[tok_norm] = (turn, m.role)
+
+    # Format. Highlight assistant-first appearances (potential confabulations).
+    user_first = [(tok, t) for tok, (t, role) in first_seen.items() if role == "user"]
+    asst_first = [(tok, t) for tok, (t, role) in first_seen.items() if role == "assistant"]
+    user_first.sort(key=lambda p: p[1])
+    asst_first.sort(key=lambda p: p[1])
+
+    lines = ["FACT-FIRST-APPEARANCE TABLE", "",
+             "Tokens whose FIRST appearance is in a USER turn (user-stated facts; safe to echo):"]
+    for tok, t in user_first[:80]:
+        lines.append(f"  T{t} (user): {tok}")
+    lines.append("")
+    lines.append("Tokens whose FIRST appearance is in an ASSISTANT turn (POTENTIAL CONFABULATIONS — verify against transcript before echoing as fact):")
+    for tok, t in asst_first[:60]:
+        lines.append(f"  T{t} (assistant-first): {tok}")
     return "\n".join(lines)
 
 
@@ -320,20 +401,26 @@ def format_sherlock_output(agent: Sherlock) -> FormattedOutput:
     transcript = _build_transcript(agent)
     ledger = _build_provenance_ledger(all_mems)
     memory_state = _build_memory_state(all_mems)
+    first_seen = _build_first_appearance_table(agent)
 
     user_msg = (
-        "## FULL CONVERSATION TRANSCRIPT (ground truth)\n\n"
+        "## FULL CONVERSATION TRANSCRIPT (ground truth — quote verbatim when discussing turns)\n\n"
         f"{transcript}\n\n"
         "---\n\n"
-        "## PROVENANCE LEDGER (use this to attribute facts correctly)\n\n"
+        "## PROVENANCE LEDGER (USER-STATED vs SYSTEM-PERSONA)\n\n"
         f"{ledger}\n\n"
         "---\n\n"
-        "## SHERLOCK'S ACCUMULATED MEMORY STATE (draft scratchpad)\n\n"
+        "## FACT-FIRST-APPEARANCE TABLE (for confabulation detection)\n\n"
+        f"{first_seen}\n\n"
+        "---\n\n"
+        "## SHERLOCK'S ACCUMULATED MEMORY STATE (draft scratchpad — transcript overrides on conflict)\n\n"
         f"{memory_state}\n\n"
         "---\n\n"
         "Now produce the consolidated Markdown document with all four "
         "sections per your system prompt. Output begins with "
-        "`## Section 1 — Summary` directly — no preamble."
+        "`## Section 1 — Summary` directly — no preamble. "
+        "Reminder: when discussing T76, T67, or any specific turn, QUOTE "
+        "the transcript text verbatim — do NOT reconstruct from memory."
     )
 
     consolidator_text = ""
