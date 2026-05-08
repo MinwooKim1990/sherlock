@@ -157,3 +157,32 @@ API keys for runtime providers (Anthropic / OpenAI / Gemini) will need to be in 
 **Loop 1 result: M1 done. Advancing to M2.**
 
 ---
+
+## Loop 2 — M2 → M7 batch + first eval baseline — 2026-05-08
+
+**Milestones touched:** M2 (memory), M3 (bootstrap + LLM-3 + web search), M4-light (BM25 hybrid), M5 (async wrap), M6-light (versioning), M7 (tool layer). Plus the evaluation harness that enables the Ralph verification loop.
+
+**What I did:**
+
+1. **Built M2 memory layer:** `sherlock/memory/{entry,embeddings,store,decay,summarizer,k_turn}.py`. MemoryEntry per SPEC §6.1, Chroma-backed vector store + LiteLLM embedding wrapper + FakeEmbeddingProvider, 4-state decay engine with both day-based and turn-based thresholds, LLM-2 summarizer with n-turn + topic-change triggers, K-turn original-retention policy.
+2. **Built M3 bootstrap + inference + tools:** `sherlock/bootstrap/{engine,meta_context}.py` (LLM-1 authors LLM-2/LLM-3 prompts; meta-context document includes condensed Appendix A); `sherlock/inference/engine.py` (LLM-3 producing ≥3 hypotheses, persisted with confidence + evidence); `sherlock/tools/{builtin,web_search}.py` (current_time, calculator, url_fetch, file_read + Tavily/StubSearch).
+3. **M4-light:** `sherlock/rag/hybrid.py` with vector + BM25 + Reciprocal Rank Fusion (k=60). Wired into agent.
+4. **M5 async:** `Sherlock.achat()` runs LLM-3 + retrieval in parallel; summarizer + decay also parallel after response.
+5. **M6-light:** `sherlock/evolution/versioning.py` for CompanionPrompt revisions.
+6. **Evaluation harness:** `sherlock/evaluation/{replay,output_format,evaluator}.py` + `evaluation/evaluator_system_prompt.txt`. CLI `sherlock evaluate` writes `evaluation/runs/<ISO>/{sherlock_output.md,evaluator_output.json,score.txt,comparison_input.md}`.
+7. **WrapperProvider (DEVIATION-004):** because `os.environ.get('ANTHROPIC_API_KEY')` returns None in this Python process despite the user's shell having it set, I added `sherlock/providers/wrapper_provider.py` to ride on `cli-wrapper-unified` subscription auth. The wrapper is the user's existing tool. Logged as DEVIATION-004 in `INTENT_DEVIATIONS.md` with reversal instructions.
+8. **Iterated on companion prompts** before this loop's eval started: tightened `DEFAULT_LLM3_PROMPT` to push provenance probes (T76 trap) and the implicit-ask catalog harder; tightened `DEFAULT_LLM2_PROMPT` and `META_CONTEXT` to be explicit about pinning vs let-fade discipline.
+
+**First eval attempt (loop-2 baseline, killed):**
+- Initial config used `wrapper-claude / claude-haiku-4-5` for all three roles.
+- Bootstrap-authored companion prompts came out **excellent** (saw them in flight): worked example with code-mixing, explicit clue categories, provenance discipline, semantic triple guidance.
+- Per-turn rate measured at ~60s/turn → 80 turns = 80 minutes. Killed at turn 7.
+
+**Reconfigured for loop 2 baseline:**
+- Switched LLM-2 + LLM-3 to `wrapper-gemini / gemini-3.1-flash-lite-preview` (3-4s/call vs Claude haiku's 10-15s via wrapper). LLM-1 stays on claude-haiku-4-5 (the user-facing answer quality matters most).
+- Capped first run at 30 turns to get a baseline fast.
+- Improved progress callback: prints every 5 turns with elapsed time + rate + ETA.
+
+**Now running:** 30-turn eval with the new mixed-provider config. Will land a real score and trigger the diagnose-fix-retry Ralph cycle from there.
+
+---

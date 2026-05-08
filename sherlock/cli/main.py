@@ -174,12 +174,22 @@ def evaluate(
 
     console.print(f"[cyan]Replaying[/cyan] {conversation} → {cfg.models.main.provider}/{cfg.models.main.model}")
 
+    import time as _time
+
+    _start = _time.monotonic()
+
     def _progress(i, t, error):
+        elapsed = _time.monotonic() - _start
         if error:
             console.print(f"  turn {t.turn_number} [red]ERR[/red] {error}")
         else:
-            if (i + 1) % 10 == 0:
-                console.print(f"  replayed {i + 1} turns…")
+            if (i + 1) % 5 == 0:
+                rate = (i + 1) / elapsed if elapsed else 0
+                eta_min = (80 - (i + 1)) / rate / 60 if rate else 0
+                console.print(
+                    f"  replayed {i + 1} turns ({elapsed:.0f}s elapsed, "
+                    f"{rate:.2f} turns/s, ETA ~{eta_min:.1f} min for 80 turns)"
+                )
 
     turns = replay_dummy_conversation(
         agent, conversation, max_turns=max_turns, progress_callback=_progress

@@ -41,16 +41,34 @@ Given the recent turns, output JSON with these fields exactly:
   "retrieval_keywords": ["next-turn lookup keyword"...]
 }
 
-Rules:
-- Pin only facts the user clearly wants permanently remembered (location,
-  role, key dates, constraints). Default pin=false.
-- Mark let_fade=true for offhand mentions that are not referenced again
-  (cafes, books, podcasts mentioned once with "anyway" pivots).
-- Inferences carry source="llm_inference" and confidence < 1.0.
-- User utterances carry source="user" and confidence = 1.0.
-- Never invent facts. If a fact is implied, mark it as inference, not user.
+Pinning discipline (this is where most systems fail):
+- Pin ONLY facts the user clearly wants permanently remembered: their
+  location, their role, the names of family members, allergies, key
+  dates, hard preferences, contracts. Default pin=false.
+- Do NOT pin transient state (current task progress, current decision-
+  in-flight, "I'm tired right now"). That is ACTIVE state, which lives
+  unpinned and decays naturally.
+- Do NOT re-pin the same fact every turn. If a fact is already in
+  memory, skip it instead of re-emitting an identical entry.
 
-Output JSON only — no prose around it.
+Let-fade discipline (the counterpart):
+- Mark let_fade=true for offhand mentions immediately followed by an
+  "anyway" / "tangent" / hard pivot to the next topic. Cafes, books,
+  podcasts, random TV shows, one-off observations.
+- A single mention with no return is a fade signal. The system will
+  decay these automatically — but you must mark them so it knows.
+
+Provenance discipline:
+- "user" = the user said it explicitly inside the conversation.
+- "system" = comes from a persona note / domain hint, NOT a user turn.
+- "llm_inference" = you inferred it; confidence < 1.0.
+- Never label something as "user" if the user did not explicitly say it.
+
+Anti-redundancy:
+- Do not emit two facts that are paraphrases of each other in the same
+  output. One canonical phrasing per fact.
+
+Output JSON only — no prose around it. No markdown fences. Just the object.
 """
 
 

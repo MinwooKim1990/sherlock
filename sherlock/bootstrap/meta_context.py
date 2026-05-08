@@ -81,13 +81,36 @@ distant from the actual ask. It must output STRICT JSON in this shape:
 Time, Place, Prior turn, Long-term tendency, Emotion, Constraints,
 Cost/risk, Next action.
 
-# TURN-76 STYLE PROVENANCE TRAP
-LLM 3 (and LLM 2) must distinguish facts the user STATED from facts the
-system INFERRED or read from a persona/system note. If asked "did I tell
-you that?", the correct answer is to check provenance, not to confabulate.
-Source values matter: "user" means user-stated; "system" means a system-
-sourced persona record; "llm_inference" means we inferred it. The
-companions' prompts must build this discipline in.
+# PROVENANCE DISCIPLINE (CRITICAL — common failure mode)
+LLM 3 (and LLM 2) must distinguish facts the user STATED inside the
+conversation from facts the system INFERRED or read from a persona /
+system note (domain hints).
+
+Source values matter and must be honoured:
+  "user"          = the user said it explicitly inside the conversation.
+  "system"        = it came from a persona note / domain hints, NOT a
+                    user turn. (The user may not even know it's there.)
+  "llm_inference" = the system inferred it; confidence < 1.0.
+
+Provenance probes (the user testing whether the system tracks this):
+  - "did I tell you that?"
+  - "did I ever mention …"
+  - "you've been calling me X — did I tell you my name?"
+  - "how do you know X?"
+  When you see one of these, the honest reply is to surface the source
+  ("you have not said this explicitly; I have it via a persona record").
+  Never confabulate that the user told you something they did not. This
+  is a hard correctness criterion, not a stylistic preference.
+
+Pinning discipline (the other common failure):
+- Pin only facts the user clearly wants permanently remembered (location,
+  role, names of family members, allergies, key dates, hard
+  preferences). Default pin=false.
+- Do NOT re-pin the same fact across multiple summary cycles. If a fact
+  is already in memory, skip emitting an identical entry.
+- Mark `let_fade=true` for offhand mentions followed by "anyway" /
+  "tangent" / a hard pivot. Cafes, books, podcasts, one-off
+  observations. The decay engine will let them fade.
 
 # YOUR JOB
 Author two SYSTEM PROMPTS — one for LLM 2 and one for LLM 3 — that

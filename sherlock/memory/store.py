@@ -72,7 +72,46 @@ class MemoryStore:
         evidence: str = "",
         tags: str = "",
         semantic_triple: Optional[tuple[str, str, str]] = None,
+        dedup: bool = True,
     ) -> MemoryEntry:
+        # Dedup-at-add: collapse re-emitted facts (LLM-2 tends to re-emit the
+        # same pinned fact on every summary cycle). When an existing entry
+        # has the same conversation_id + type + normalised content, just
+        # touch + (optionally) upgrade pinned/confidence and return it.
+        if dedup and content.strip():
+            norm = " ".join(content.strip().lower().split())
+            with Session(self._engine) as s:
+                stmt = select(MemoryEntry).where(
+                    MemoryEntry.conversation_id == conversation_id,
+                    MemoryEntry.type == type,
+                )
+                for existing in s.exec(stmt):
+                    enorm = " ".join((existing.content or "").strip().lower().split())
+                    if enorm and (enorm == norm or (len(enorm) > 30 and enorm[:60] == norm[:60])):
+                        # Touch in-place; upgrade pinned/confidence if higher.
+                        existing.use_count += 1
+                        existing.last_used_at = _utcnow()
+                        existing.last_used_turn_index = max(
+                            existing.last_used_turn_index, last_used_turn_index
+                        )
+                        if pinned and not existing.pinned:
+                            existing.pinned = True
+                        if confidence > existing.confidence:
+                            existing.confidence = confidence
+                        # Source upgrade: user > inference > system; never demote.
+                        rank = {
+                            MemorySource.USER: 4,
+                            MemorySource.SEARCH: 3,
+                            MemorySource.TOOL: 3,
+                            MemorySource.LLM_INFERENCE: 2,
+                            MemorySource.SYSTEM: 1,
+                        }
+                        if rank.get(source, 0) > rank.get(existing.source, 0):
+                            existing.source = source
+                        s.add(existing)
+                        s.commit()
+                        s.refresh(existing)
+                        return existing
         st_subject, st_relation, st_object = (None, None, None)
         if semantic_triple:
             st_subject, st_relation, st_object = semantic_triple
