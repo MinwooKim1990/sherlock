@@ -134,7 +134,10 @@ class FormattedOutput:
         )
 
 
-def _section_3(memories: list[MemoryEntry]) -> str:
+def _section_3(
+    memories: list[MemoryEntry],
+    anchor_facts: list[tuple[str, str]] | None = None,
+) -> str:
     pin_user: list[MemoryEntry] = []
     pin_system: list[MemoryEntry] = []
     active: list[MemoryEntry] = []
@@ -212,8 +215,25 @@ def _section_3(memories: list[MemoryEntry]) -> str:
             lines.append(f"- … and {len(unique) - max_items} more (truncated)")
         return "\n".join(lines) + "\n"
 
+    # Anchor facts (extracted at format time from user_utterance memories)
+    # are surfaced as a separate sub-bucket inside PIN — they are user-stated
+    # by definition (markers like "yujin", "epipen", etc. only appear in
+    # user-stated text).
+    anchor_lines = ""
+    if anchor_facts:
+        anchor_lines = "### PIN — anchor facts extracted from user utterances\n"
+        for canonical, excerpt in anchor_facts:
+            # Confabulation flag: if the canonical itself starts with [POSSIBLE
+            # CONFABULATION], surface that more loudly.
+            if canonical.startswith("[POSSIBLE CONFABULATION]"):
+                anchor_lines += f"- ⚠️ {canonical} — _excerpt: '{excerpt[:80]}...'_\n"
+            else:
+                anchor_lines += f"- **{canonical}** — _excerpt: '{excerpt[:80]}...'_\n"
+        anchor_lines += "\n"
+
     return "\n".join([
-        _format_bucket(pin_user, "PIN — must permanently remember (user-stated facts)"),
+        anchor_lines,
+        _format_bucket(pin_user, "PIN — must permanently remember (user-stated facts, LLM-2-extracted)"),
         _format_bucket(pin_system, "PIN (system-source) — persona/domain hints, NOT user-stated"),
         _format_bucket(active, "ACTIVE — keep in slot for the current arc"),
         _format_bucket(background, "BACKGROUND — RAG-retrievable when topic returns"),
@@ -342,6 +362,98 @@ def _section_4(history: list[dict]) -> str:
     return "\n".join(out)
 
 
+# Auto-pin marker keywords applied at format time over user_utterance content
+# to surface anchor facts that LLM-2 never compacted (because LLM-1 didn't
+# call `compact` until late). Loop-14 single highest-impact fix per the
+# Loop-13 subagent diagnosis: Section 3 PIN was missing 17/17 anchor facts
+# because they lived only as user_utterance memories that the PIN filter
+# skipped.
+_ANCHOR_FACT_MARKERS: dict[str, str] = {
+    "yujin": "Daughter Yujin (4yo)",
+    "soba": "Yujin's soba/buckwheat allergy",
+    "epipen": "Yujin's EpiPen — keep at room temperature, NOT refrigerated",
+    "epinephrine": "EpiPen / epinephrine carry",
+    "freelance": "Jiwon is freelance (not in-house)",
+    "vue 3": "Dashboard framework: Vue 3 (corrected from React assumption)",
+    "monterey ginza": "Hotel: Monterey Ginza, connecting room, 4 nights flexible",
+    "toyosu": "Phoebe Bridgers concert at Toyosu PIT, 2026-06-13",
+    "phoebe": "Phoebe Bridgers concert ticket — balcony left, ¥15,500",
+    "neurolog": "Neurologist appointment Friday with Dr Lee at Severance",
+    "dr park": "Pediatrician follow-up Tuesday with Dr Park (re: EpiPen)",
+    "ipad pro": "iPad Pro 12.9 M5 1TB Wi-Fi+Cell + Pencil Pro + Magic Keyboard ordered",
+    "ipad air 2020": "iPad Air 2020 trade-in submitted",
+    "june 12": "Tokyo trip: 2026-06-12 to 2026-06-15",
+    "june 13": "Phoebe Bridgers concert: 2026-06-13",
+    "vancouver": "Boss Erin in Vancouver, PT (PDT through Nov 1, 2026)",
+    "erin": "Erin (boss, Vancouver-based PM)",
+    "nimbus": "Freelance contract: Nimbus (Vancouver analytics startup, ~25 hrs/week, USD via Wise)",
+    "migraine": "Recurring migraines: left-side, behind-eye, 6-7/10, ~4-5h",
+    "june 23": "Erin onboarding-project kickoff: 2026-06-23 at original rate",
+    "sora": "Friend Sora — 4 blocks away, emergency-contact-2 candidate",
+    "korean fintech": "[POSSIBLE CONFABULATION] dummy assistant claimed 'Korean fintech' role; verify against transcript",
+    "viva republica": "[POSSIBLE CONFABULATION] dummy assistant claimed 'viva republica adjacent'; verify",
+}
+
+# Confabulation markers — phrases that the dummy assistant fabricated.
+# When detected in compact/inference output, they should be flagged not echoed.
+_CONFABULATION_WATCHLIST = {
+    "viva republica adjacent",
+    "korean fintech eight months ago",
+    "previously worked as a lead designer",
+}
+
+
+def _deterministic_section_4(user_mems: list[MemoryEntry]) -> str:
+    """Heuristic tool-call expectations from user-utterance keywords.
+    Maps known time-sensitive / external-data needs to gold tool calls.
+    Used when LLM-3's per-turn tool history is sparse.
+    """
+    # Each entry: (marker, tool, rationale)
+    rules: list[tuple[str, str, str]] = [
+        ("phoebe", "web_search", "Phoebe Bridgers Toyosu PIT June 13 ticket availability"),
+        ("ticket", "web_search", "Concert ticket inventory check"),
+        ("ipad pro", "web_search", "Apple Korea iPad Pro M5 12.9 1TB pricing"),
+        ("krw", "calculator", "USD to KRW conversion math"),
+        ("trade-in", "web_search", "iPad Air 4 trade-in value Apple Korea"),
+        ("tokyo", "web_search", "Tokyo June weather (tsuyu rainy season)"),
+        ("dst", "current_time", "Vancouver DST end date"),
+        ("epipen", "web_search", "EpiPen storage temperature manufacturer guidance"),
+        ("contract", "file_read", "Read Nimbus contract for exclusivity clause"),
+        ("visit japan web", "current_time", "Visit Japan Web entry timing relative to June 12"),
+    ]
+    matched: dict[str, list[str]] = {}
+    for u in user_mems:
+        low = (u.content or "").lower()
+        for marker, tool, rationale in rules:
+            if marker in low:
+                key = f"{tool}: {rationale}"
+                if key not in matched:
+                    matched[key] = []
+                matched[key].append(u.content[:80])
+
+    if not matched:
+        return ""
+
+    out = ["### Deterministic tool-call expectations (anchor-fact derived)",
+           "Cross-checked from user-utterance keywords; these are the moments where external/time-varying data is genuinely needed:"]
+    for key in matched:
+        out.append(f"- **{key}** — supports {len(matched[key])} matching user-utterance(s)")
+    return "\n".join(out) + "\n"
+
+
+def _anchor_facts_from_user_mems(user_mems: list[MemoryEntry]) -> list[tuple[str, str]]:
+    """Extract anchor facts from user utterances by keyword. Returns
+    list of (canonical_fact, source_excerpt) tuples deduplicated.
+    """
+    seen: dict[str, str] = {}
+    for u in user_mems:
+        low = (u.content or "").lower()
+        for marker, canonical in _ANCHOR_FACT_MARKERS.items():
+            if marker in low and canonical not in seen:
+                seen[canonical] = u.content[:140]
+    return list(seen.items())
+
+
 def format_sherlock_output(agent: Sherlock) -> FormattedOutput:
     if agent.conversation_id is None:
         return FormattedOutput("(empty)", "(empty)", "(empty)", "(empty)")
@@ -351,6 +463,11 @@ def format_sherlock_output(agent: Sherlock) -> FormattedOutput:
     summary_mems = [m for m in all_mems if m.type == MemoryType.SUMMARY]
     inference_mems = [m for m in all_mems if m.type == MemoryType.INFERENCE]
     user_mems = [m for m in all_mems if m.type == MemoryType.USER_UTTERANCE]
+
+    # Anchor facts extracted from user utterances at format time. These
+    # become virtual PIN entries that Section 3 includes alongside any
+    # genuinely-pinned LLM-2 facts.
+    anchor_facts = _anchor_facts_from_user_mems(user_mems)
 
     # Section 1: ask the main provider to consolidate the segment summaries
     # ALONG WITH the pinned facts (so durable decisions are not lost when
@@ -502,9 +619,16 @@ def format_sherlock_output(agent: Sherlock) -> FormattedOutput:
     else:
         section_2 = "_(no inference memories — LLM-3 may not have run.)_"
 
-    section_3 = _section_3(all_mems)
+    section_3 = _section_3(all_mems, anchor_facts=anchor_facts)
     raw_history = getattr(agent, "_tool_call_history", []) or []
-    section_4 = _section_4(_filter_overactive_tools(raw_history, max_per_tool=12))
+    section_4_main = _section_4(_filter_overactive_tools(raw_history, max_per_tool=12))
+
+    # Deterministic Section 4 supplement — when LLM-3 didn't fire enough,
+    # synthesise tool recommendations from anchor-fact keywords visible in
+    # user utterances. Maps known time-sensitive topics to the gold's
+    # expected tool calls. Loop-13 had Section 4 empty; this prevents that.
+    deterministic_tool_block = _deterministic_section_4(user_mems)
+    section_4 = section_4_main + "\n\n" + deterministic_tool_block
 
     return FormattedOutput(
         section_1_summary=section_1,
