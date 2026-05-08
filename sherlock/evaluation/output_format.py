@@ -610,9 +610,8 @@ def format_sherlock_output(agent: Sherlock) -> FormattedOutput:
     #   - trip dates / itinerary day-mapping
     #   - T62 outcome (+15 vs +0)
     #   - T67 confabulation attribution
-    # Output: a list of (find, replace) substitutions OR a corrected
-    # full text. Either way: bounded prompt.
-    revised_text = _targeted_reflection(agent, consolidator_text, user_mems)
+    user_mems_for_reflection = [m for m in all_mems if m.type == MemoryType.USER_UTTERANCE]
+    revised_text = _targeted_reflection(agent, consolidator_text, user_mems_for_reflection)
 
     s1, s2, s3, s4 = _split_consolidator_output(revised_text)
     if not s1.strip():
