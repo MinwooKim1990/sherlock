@@ -429,9 +429,10 @@ class Sherlock:
             active_topics=active_topics,
         )
         # 8b. PIN cap — keep PIN bucket from ballooning. Demotes least-recent
-        # non-system pins above the cap.
+        # non-system pins above the cap. Lowered from 25→18 to align with the
+        # gold standard's 17-PIN target.
         try:
-            self._memory.cap_pinned(conv.id, max_pinned=25)
+            self._memory.cap_pinned(conv.id, max_pinned=18)
         except Exception:
             pass
 
