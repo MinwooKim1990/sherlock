@@ -85,7 +85,18 @@ class WrapperProvider(BaseProvider):
 
     @staticmethod
     def _flatten(messages: list[ChatMessage]) -> str:
-        parts: list[str] = []
+        # Hard guard against the wrapper's underlying CLI invoking tools
+        # (WebFetch / Write / Edit) — we want a TEXT-ONLY response. The
+        # subscription-auth claude/codex CLIs ship with tool access on by
+        # default; this banner sits at the top of every flattened prompt.
+        guard = (
+            "[SYSTEM — SHERLOCK WRAPPER GUARD]\n"
+            "Respond with TEXT ONLY. Do not invoke any tools. Do not "
+            "create, edit, or write any files on the filesystem. Do not "
+            "fetch URLs. Do not search the web. Just produce the answer "
+            "as plain text or strict JSON depending on the role's prompt."
+        )
+        parts: list[str] = [guard]
         for m in messages:
             role_label = {
                 "system": "[SYSTEM]",
