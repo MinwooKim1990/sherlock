@@ -1,0 +1,41 @@
+# Example Sherlock config (M1 surface).
+# Copy to sherlock.yaml and edit. M2+ fields can be omitted; defaults apply.
+
+project: sherlock_default
+
+main_system_prompt:
+  path: ./prompts/main_system_prompt.md
+  domain_hints:
+    - "casual conversational assistant"
+    - "user mixes Korean and English"
+
+models:
+  main:
+    provider: anthropic
+    model: claude-haiku-4-5-20251001
+    api_key_env: ANTHROPIC_API_KEY
+
+  # Background companions are wired in M3+. Declared here so swap is config-only.
+  background_summary:
+    provider: anthropic
+    model: claude-haiku-4-5-20251001
+    api_key_env: ANTHROPIC_API_KEY
+  background_inference:
+    provider: openai
+    model: gpt-5.4-mini
+    api_key_env: OPENAI_API_KEY
+
+storage:
+  sqlite_path: ./sherlock.db
+  vector_db: chroma
+  vector_path: ./sherlock_vectors
+
+memory:
+  k_turn_min: 3
+  k_turn_max_adaptive: true
+
+execution:
+  parallel_when_possible: true
+  max_concurrent_background_tasks: 3
+  cost_cap_per_turn_usd: 0.50
+  fallback_to_sequential_on_local: true

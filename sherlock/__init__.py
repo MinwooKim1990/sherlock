@@ -1,7 +1,15 @@
 """Project Sherlock — domain-agnostic context-curation library.
 
-This package is initially empty. Modules are added milestone by milestone
-per SPEC.md § 9 starting with M1 (provider abstraction + config + bare chat).
+M1 exposes the minimum public surface required by SPEC.md § 8.1:
+
+    from sherlock import Sherlock, Config
+    config = Config.from_yaml("sherlock.yaml")
+    agent = Sherlock(config)
+    response = agent.chat("user input")
 """
 
-__version__ = "0.0.0"
+from sherlock.agent import Sherlock, TurnState
+from sherlock.config import Config
+
+__version__ = "0.1.0"
+__all__ = ["Config", "Sherlock", "TurnState", "__version__"]

@@ -90,3 +90,26 @@ Trivial — single edit to `bootstrap.sh` if the user prefers a different priori
 
 **User action requested (optional):**
 None.
+
+## 2026-05-08 — DEVIATION-003: M1 provider abstraction uses `litellm` rather than hand-rolled per-provider SDKs
+
+**Loop / milestone:** loop 1, M1
+**Spec reference:** SPEC.md § 9 M1 ("consider `litellm` for the unified path"), SPEC.md § 11 (open questions: "litellm adoption vs hand-rolled provider abstraction (decide in M1)")
+**What the spec says (or implies):**
+The spec explicitly leaves this as a TBD for M1: list six providers (Anthropic, OpenAI, Gemini, xAI, Ollama, LM Studio) with `litellm` as a "consider" option. § 10.7 also mitigates provider-API-drift risk via litellm.
+
+**What I did instead:**
+Adopted `litellm` as the M1 provider abstraction. All six target providers go through `litellm.acompletion` / `litellm.completion`. `sherlock/providers/base.py` defines a thin ABC; the concrete implementation `LiteLLMProvider` is the only runtime provider for M1. A separate `FakeProvider` exists for unit tests so the test suite is hermetic.
+
+**Why:**
+- Single dependency covers all six target providers in one shot, including model-list discovery for several of them.
+- Built-in retry/fallback chain matches SPEC § 10.7 mitigation directly.
+- Async support lines up with M5's parallel pipeline requirement without re-architecture.
+- Drastically smaller surface to maintain than six bespoke wrappers.
+- The ABC is preserved so a hand-rolled provider can be slotted in later if litellm causes pain.
+
+**Reversibility:**
+Easy to medium. The ABC means a hand-rolled `AnthropicProvider`, `OpenAIProvider`, etc. can replace `LiteLLMProvider` without touching call sites. Cost is one provider class per target.
+
+**User action requested (optional):**
+None.

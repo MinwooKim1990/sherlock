@@ -118,3 +118,42 @@ Enter **PHASE 3 / M1** — Core skeleton per `SPEC.md` § 9. Expected M1 compone
 API keys for runtime providers (Anthropic / OpenAI / Gemini) will need to be in env vars when M1 integration tests run. M1 development can proceed with mock-provider fallback when keys are not present.
 
 ---
+
+## Loop 1 — M1 build complete — 2026-05-08
+
+**Milestone:** M1 (Core skeleton)
+**Status:** all unit + integration tests pass (16 pass / 1 skipped); CLI smoke (`sherlock chat --one-shot`) returns conversation; provider-switch test passes. **Exit criteria met.**
+
+**What I did:**
+
+1. Adopted **litellm** as the M1 provider backend per `SPEC.md` § 11 TBD. Logged as `INTENT_DEVIATIONS.md` DEVIATION-003.
+2. Added M1 dependencies: `litellm`, `pydantic`, `pyyaml`, `sqlmodel`, `typer`, `structlog`, `rich`. Plus dev: `pytest`, `pytest-asyncio`, `ruff`, `black`.
+3. Built the package surface:
+   - `sherlock/config.py` — pydantic models for the M1-relevant subset of `SPEC.md` § 8.3 YAML schema. Validates path existence; resolves relative paths against the YAML file's directory; surfaces `litellm_model_id()` so the same `ModelConfig` works across all six provider families (anthropic / openai / gemini / xai / ollama / lm_studio).
+   - `sherlock/providers/base.py` — thin `BaseProvider` ABC + `ChatMessage` / `ChatResponse` dataclasses. The ABC keeps the door open to swap litellm for hand-rolled SDKs later (per DEVIATION-003 reversibility note).
+   - `sherlock/providers/litellm_provider.py` — concrete provider wrapping `litellm.completion` / `litellm.acompletion`, including cost extraction and api-base support for Ollama/LM Studio.
+   - `sherlock/providers/fake.py` — deterministic in-process provider for hermetic tests. Echoes the last user message; supports a canned reply.
+   - `sherlock/storage/db.py` — SQLite via sqlmodel with `Conversation` + `Message` tables; foreign-keys enabled. M2's memory-entry model lands separately.
+   - `sherlock/agent.py` — `Sherlock` class with `chat()`, `messages()`, `inspect_last_turn()` per `SPEC.md` § 8.1 M1 surface. Persists every turn to SQLite before the LLM call (crash-safe).
+   - `sherlock/cli/main.py` — typer CLI with `chat` (interactive REPL or `--one-shot`), `config validate`, `config show`, `models`. `[project.scripts] sherlock = ...` wires the binary.
+   - `prompts/main_system_prompt.md` — generic test prompt for M1.
+   - `sherlock.example.yaml` — example config for users to copy.
+4. Tests:
+   - `tests/unit/test_config.py` — 6 tests covering YAML loading, relative-path resolution, missing-prompt validation, litellm model id routing, env-var key resolution.
+   - `tests/unit/test_providers.py` — 4 tests for FakeProvider behavior, build_provider dispatch, async fallback.
+   - `tests/unit/test_storage.py` — 2 tests for conversation/message CRUD + persistence.
+   - `tests/integration/test_m1_chat.py` — 5 tests: chat persists messages, **provider switch is config-only**, multi-turn history preserved, inspect_last_turn returns state, optional live Anthropic smoke (skipped without `ANTHROPIC_API_KEY` in process env).
+5. Test outcome: **16 passed / 1 skipped** in 7s. Live Anthropic smoke is gated on env var being readable from pytest subprocess.
+6. CLI end-to-end: `sherlock --help` lists `chat` / `models` / `config`; `sherlock config validate` confirms a YAML; `sherlock chat --one-shot "hello from CLI"` returns the FakeProvider echo; `sherlock models` lists configured models.
+
+**M1 exit criteria (SPEC.md § 9):**
+- ✅ `sherlock chat` produces conversation — verified via CLI smoke + integration test.
+- ✅ Provider can be switched via config without code change — verified by `test_provider_switch_is_config_only`.
+
+**Open notes for next milestones:**
+- Live provider smoke is skipping because `ANTHROPIC_API_KEY` isn't propagating to pytest's subprocess in this shell. Code path is wired correctly (litellm reads canonical env vars); should work when run from a shell with `export ANTHROPIC_API_KEY=...` properly inherited.
+- M2 (memory layer) is the next loop. Will add chromadb + sentence-transformers + LLM-2 summarization cycle + 4-state decay + K-turn original retention.
+
+**Loop 1 result: M1 done. Advancing to M2.**
+
+---
