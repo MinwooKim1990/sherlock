@@ -708,6 +708,134 @@ class Sherlock:
                 pass
         return agent
 
+    @classmethod
+    def with_callable(
+        cls,
+        main_chat,
+        *,
+        system_prompt: str,
+        summary_chat=None,
+        inference_chat=None,
+        project: str = "sherlock_app",
+        domain_hints: list[str] | None = None,
+        storage_dir: str | Path | None = None,
+        model_id: str = "callable/user",
+    ) -> "Sherlock":
+        """Bring-your-own-LLM constructor.
+
+        Pass a callable (sync or async) that takes a list of message dicts
+        (`{"role": "...", "content": "..."}`) and returns either a string
+        or a `ChatResponse`. Sherlock manages history, compaction, and
+        Sherlock-style inference around it.
+
+        Minimal example:
+            from sherlock import Sherlock
+
+            def my_llm(messages):
+                # call any LLM you want — anthropic, openai, ollama, ...
+                return reply_text
+
+            agent = Sherlock.with_callable(
+                main_chat=my_llm,
+                system_prompt="You are a helpful assistant.",
+            )
+            print(agent.chat("Hi"))
+
+        Args:
+            main_chat: Required. The chat callable for LLM-1 (the model
+                that talks to the user).
+            system_prompt: The text that drives LLM-1's behaviour.
+                Sherlock automatically appends a small instruction so
+                LLM-1 knows how to signal background-companion calls.
+            summary_chat: Optional callable for LLM-2 (memory compaction).
+                Defaults to `main_chat`.
+            inference_chat: Optional callable for LLM-3 (Sherlock-style
+                inference). Defaults to `main_chat`.
+            project: Logical project name for the SQLite store.
+            domain_hints: Optional list of persona / domain context
+                strings that ride alongside the system prompt.
+            storage_dir: Where to put `sherlock.db` and `sherlock_vectors/`.
+                Defaults to a fresh temp directory (state is ephemeral
+                between processes).
+            model_id: Cosmetic identifier recorded in usage logs.
+        """
+        import tempfile
+
+        from sherlock.config import (
+            BootstrapConfig,
+            Config,
+            EmbeddingConfig,
+            InferenceConfig,
+            MainPromptConfig,
+            MemoryConfig,
+            ModelConfig,
+            ModelsConfig,
+            SearchConfig,
+            StorageConfig,
+        )
+        from sherlock.inference.engine import DEFAULT_LLM3_PROMPT
+        from sherlock.memory.summarizer import DEFAULT_LLM2_PROMPT
+        from sherlock.providers import CallableProvider
+
+        # Storage: temp dir by default so the user doesn't need to wire paths.
+        if storage_dir is None:
+            storage_dir = Path(tempfile.mkdtemp(prefix="sherlock-"))
+        else:
+            storage_dir = Path(storage_dir)
+            storage_dir.mkdir(parents=True, exist_ok=True)
+
+        # System prompt: write to a file so Config's path-existence
+        # validator stays happy. Inline-string support is the trade-off
+        # for keeping the existing config schema untouched.
+        prompt_path = storage_dir / "main_system_prompt.md"
+        prompt_path.write_text(system_prompt, encoding="utf-8")
+
+        cfg = Config(
+            project=project,
+            main_system_prompt=MainPromptConfig(
+                path=prompt_path,
+                domain_hints=list(domain_hints or []),
+            ),
+            models=ModelsConfig(
+                main=ModelConfig(provider="callable", model=model_id),
+                background_summary=ModelConfig(provider="callable", model=model_id),
+                background_inference=ModelConfig(provider="callable", model=model_id),
+            ),
+            storage=StorageConfig(
+                sqlite_path=storage_dir / "sherlock.db",
+                vector_db="chroma",
+                vector_path=storage_dir / "sherlock_vectors",
+                embedding=EmbeddingConfig(provider="fake", model="fake-embedding"),
+            ),
+            memory=MemoryConfig(),
+            search=SearchConfig(provider="stub", always_on=False),
+            inference=InferenceConfig(cold_start_turns=10),
+            bootstrap=BootstrapConfig(auto_run_on_init=False),
+        )
+
+        main_provider = CallableProvider(main_chat, model_id=model_id)
+        summary_provider = (
+            CallableProvider(summary_chat, model_id=model_id)
+            if summary_chat is not None
+            else main_provider
+        )
+        inference_provider = (
+            CallableProvider(inference_chat, model_id=model_id)
+            if inference_chat is not None
+            else main_provider
+        )
+
+        agent = cls(
+            cfg,
+            provider=main_provider,
+            background_summary_provider=summary_provider,
+            background_inference_provider=inference_provider,
+        )
+        agent.install_companion_prompts(
+            DEFAULT_LLM2_PROMPT, DEFAULT_LLM3_PROMPT, version=0
+        )
+        return agent
+
     def _maybe_bootstrap(self) -> None:
         """Run Bootstrap if companion prompts haven't been installed yet."""
         if self._llm2_prompt and self._llm3_prompt:
