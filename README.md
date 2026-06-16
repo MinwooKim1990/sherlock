@@ -367,7 +367,23 @@ When a question needs real depth, LLM-1 *proposes*
      only the NEW fragments + a compact digest of confirmed facts and
      open gaps, and answers in terse JSON. LLM-3 (from round 3) reads
      ONLY the digest — never raw pages — to generate the next round's
-     meta-questions. Nothing is ever re-paid for.
+     meta-questions. The *running loop* never re-pays for old fragments.
+   - **Collect raw → reconstruct (v1.4, the recovery layer)** — every
+     round's raw fragments (snippets + the relevant fetched excerpts) are
+     KEPT per sub-topic, not discarded. The final synthesis re-reads each
+     section's raw bucket (deduped by URL, char-capped) *alongside* the
+     extracted facts — so a concrete detail a round's terse extraction
+     missed (an event name, a date, a venue) is recovered at the end
+     instead of lost forever. Facts stay the verified spine; raw is the
+     recovery layer; a requested sub-topic is never silently dropped (it
+     gets an honest "not confirmed" note rather than vanishing). *Measured*:
+     on a 5-city Japan-events query with a real engine (Brave) + a small
+     worker (gemini-flash-lite), this turned a city that previously came
+     back "no events" into three real, cited events — while still flagging
+     dates not yet officially announced. Behind
+     `search.deep_research_reconstruct_from_raw` (default on); a per-sub-topic
+     "what's worth knowing" checklist + coverage-gated stopping push the
+     small model to keep drilling until every requested part is covered.
    - **Triangulation** — the same fact found via different
      domains/source types (community / news / official / blog)
      accumulates corroboration; `[corroborated ×N]` facts rank first and
@@ -409,7 +425,7 @@ budgets; whatever remains goes to the raw-turn tail, which accumulates
 ```
 [TIER 1 — GROUND TRUTH]      sherlock_system + tool_prompt + user_system
 [TIER 2 — SYSTEM-TRACKED]    pinned + persona_summary + compacted highlights
-[TIER 3 — SPECULATIVE]       inference hypotheses + web search results
+[TIER 3 — ACTIVE ANALYSIS]   this-turn inference hypotheses + fresh search results
 [TIER 4 — ACTIVE CONTEXT]    last N raw turns (dynamic, walk-backward)
 ```
 
@@ -423,6 +439,36 @@ print(state.slot_budget)
 print(state.k_turn_turns_used, state.k_turn_tokens_used)
 print("hypotheses:", state.hypotheses)
 ```
+
+### How history is stored (saving the context window)
+
+Raw turns are never the only copy of what was said, and they don't grow the
+prompt forever:
+
+- **Compaction (LLM-2).** In the background — every
+  `summarize_every_n_turns`, or on a topic change — LLM-2 distills recent
+  turns into durable memory: **pinned facts with provenance** (`(user t12)`,
+  newer wins on conflict), a **rolling persona summary**, and append-only
+  highlights. Facts must be grounded in a transcript quote; ungrounded ones
+  are confidence-capped and can never be pinned. A `corrections` operator lets
+  a later turn supersede an earlier pinned fact non-destructively.
+- **Frontier eviction (the "infinite memory" mechanism).** Once turns are
+  summarized, their *raw* copies are evicted from the TIER-4 tail (the last
+  few turns always stay raw), but the rows remain in SQLite and are reachable
+  on demand via the memory tool (`memory timeline` / `lookup`). So the
+  per-turn prompt size **plateaus** as a conversation grows instead of climbing
+  linearly with turn count — curated TIER-2 memory carries forward what
+  matters, not the whole transcript.
+- **Absolute budgets.** Each tier has a hard token ceiling; the raw tail takes
+  the leftover but is itself capped (`k_turn_max_fraction`, default 0.5 of the
+  window) so a large context window can't let raw history crowd out
+  compaction.
+
+That is the mechanism behind "save the context window." Honest caveat: the
+*crossover* — where Sherlock's curated prompt becomes **cheaper per turn** than
+re-sending the full transcript — shows up on long, multi-topic sessions; on
+short exchanges the curation overhead means Sherlock spends *more*, not less
+(see **Cost vs. benefit** below).
 
 ### Prompt layering
 
@@ -488,7 +534,7 @@ sherlock evaluate --config sherlock.yaml --conversation evaluation/dummy_convers
       --config sherlock.live.yaml --report logs/probe.json
   ```
 
-- The full pytest suite (356 tests) runs hermetically — scripted
+- The full pytest suite (367 tests) runs hermetically — scripted
   callables + fake engines, no network or keys needed: `pytest -q`.
 - **Measure it yourself**: the playground's A/B mode runs every prompt
   against the same model with and without Sherlock (the baseline gets the
@@ -496,6 +542,43 @@ sherlock evaluate --config sherlock.yaml --conversation evaluation/dummy_convers
   latency and token counts. We'd rather you compare than take our word.
 - Public memory benchmarks (LongMemEval/LoCoMo-style) are on the roadmap
   (`docs/ROADMAP.md`, R28) — we don't publish numbers we haven't run.
+
+### Cost vs. benefit — what we actually measured
+
+Sherlock is not free, and we won't pretend otherwise. From our own A/B runs
+(same model on both sides; worker = gemini-2.5-flash-lite, a deliberately small
+model):
+
+- **Short chats (2–7 turns), full history still fits** — Sherlock and a bare
+  model both pass the rubric (a *tie* on quality) and Sherlock spends **more**
+  tokens (curation overhead). Here a bare model is simply cheaper; use Sherlock
+  for the *behaviors* (provenance, honesty, inference), not for savings.
+- **Where Sherlock earns its tokens:**
+  - *Long, multi-topic sessions* — compaction + frontier eviction hold the
+    per-turn prompt roughly flat while a "re-send everything" prompt grows
+    without bound, and curated recall survives past the raw-tail window. The
+    exact token-crossover point is traffic-dependent — measure it with the A/B
+    mode; we don't quote a number we haven't run on a public benchmark.
+  - *Multi-part deep research* — with a real engine (Brave), the
+    collect-raw→reconstruct loop beat a strong one-shot RAG baseline on the
+    same search: it surfaced real, cited events for cities the baseline returned
+    "no info" on, while both stayed honest about dates not yet announced. It
+    costs roughly an order of magnitude more tokens/latency than one-shot — a
+    *user-invoked* depth feature, priced accordingly.
+  - *Honesty under junk search* — with a broken free engine (DuckDuckGo
+    returning irrelevant pages), Sherlock degrades to an honest, source-labeled
+    answer (`verified` vs `general knowledge — not verified`) instead of
+    fabricating; a bare small model tends to assert stale or invented specifics.
+- **A failure we fixed:** a small worker used to *defer* on rich context (ask
+  for details it didn't need) because the inference layer over-read plain
+  requests as hidden asks. Fixed with a null-hypothesis brake + an answer-first
+  consumption rule — the model now answers from the context it already has
+  (3/3 vs 1/3 on the smoke that exposed it).
+
+Bottom line: on short, well-fitting conversations a bare model is cheaper and
+just as good; Sherlock pays off on **length, multi-part research, and honesty**.
+The framing is "spend tokens to be *right and complete*", not "spend fewer
+tokens" — except on long sessions, where curation also wins on raw cost.
 
 ## Limits
 
@@ -513,6 +596,34 @@ caching, deep-research trust, memory reconciliation — lives in
 **[docs/ROADMAP.md](docs/ROADMAP.md)** (R1–R35, evidence-linked).
 
 ## Changelog highlights
+
+### v1.4 — deep research that doesn't forget; small models answer-first
+- **Collect raw → reconstruct**: each round's raw fragments are kept per
+  sub-topic and **re-read at synthesis** (facts = verified spine, raw =
+  recovery layer), so a concrete detail a round under-extracted is recovered
+  instead of lost. Requested sub-topics are never silently dropped; a
+  per-sub-topic "what's worth knowing" checklist and coverage-gated stopping
+  push a small model to keep drilling until every part is covered. All behind
+  config kill-switches (off = exact prior behavior). *Live-verified* on
+  gemini-flash-lite + Brave: a city that returned "no events" now surfaces real
+  cited events, beating a one-shot RAG baseline.
+- **Answer-first inference**: the inference layer no longer makes a small model
+  defer on rich context — a null-hypothesis brake stops it reading plain
+  requests as hidden asks, and the consumption rule leads with the answer
+  (then addresses the implied chain), never replacing the answer with a
+  clarifying question.
+- **Method, not coercion**: research/strategy prompts that said "you MUST …"
+  are rewritten as guidance — hard mandates stall small models.
+- 367 hermetic tests; new deterministic proofs for raw-recovery, coverage
+  gating, and the deferral fix.
+
+### v1.2–1.3 — live-feedback hardening
+- TODAY date injected into every research prompt (fixed "this December"
+  resolving to last year); implied-chain inference (`really_asking` + prepared
+  next answers) carried into LLM-1's next-turn slot; citation **pairing**
+  verification; A/B mode + per-turn markdown export in the playground; a
+  **fair** baseline (same search engine + today's date); semantic-novelty
+  convergence so reworded conclusions don't burn research rounds.
 
 ### v1.1 — the whole roadmap, shipped
 - **Small-model reliability**: one-shot examples anchor LLM-2/LLM-3 JSON
