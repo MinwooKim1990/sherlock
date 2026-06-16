@@ -101,10 +101,13 @@ class SlotBudget:
     rag_max: int = 8_000  # Tier 3 — RAG retrieval + cached search
     output_reserve: int = 30_000  # response space (max_tokens upper bound)
     floor_k_turn_budget: int = 8_000  # never let K-turn dip below this
-    # v1.2: cap the raw K-turn tail at this fraction of the context window so a
-    # large window can't let raw history crowd out compaction (the user's
-    # "fixed blocks + variable x% tail" design). 0.5 = tail ≤ half the window.
-    k_turn_max_fraction: float = 0.5
+    # v1.4: SAFETY ceiling on the raw K-turn tail, as a fraction of the window.
+    # The primary bound is now the fill-ratio compaction trigger
+    # (MemoryConfig.compact_at_fill_ratio, default 0.80): the tail grows
+    # append-only and compaction fires at ~80% fill — BEFORE this hard cap would
+    # slide-drop a turn. Kept strictly ABOVE compact_at_fill_ratio so compaction
+    # always runs before any turn is dropped unsummarized.
+    k_turn_max_fraction: float = 0.85
 
     def total_reserved(self) -> int:
         return (

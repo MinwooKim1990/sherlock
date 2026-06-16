@@ -23,8 +23,11 @@ def test_with_callable_sync_echo(tmp_path):
     reply_1 = agent.chat("hi")
     reply_2 = agent.chat("again")
 
-    assert "echo: hi" in reply_1
-    assert "echo: again" in reply_2
+    # v1.4: the user's words now ride at the end of the final user message, under
+    # the "THE USER'S ACTUAL MESSAGE" boundary, so the echo contains them (no
+    # longer immediately after "echo: ").
+    assert "echo: " in reply_1 and reply_1.rstrip().endswith("hi")
+    assert reply_2.rstrip().endswith("again")
     # Persistence
     msgs = agent.messages()
     assert [m.role for m in msgs] == ["system", "user", "assistant", "user", "assistant"]
@@ -169,4 +172,4 @@ async def test_with_callable_async(tmp_path):
         storage_dir=tmp_path,
     )
     reply = await agent.achat("hi")
-    assert "async-echo: hi" in reply
+    assert "async-echo: " in reply and reply.rstrip().endswith("hi")

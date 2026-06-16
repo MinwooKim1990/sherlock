@@ -10,31 +10,28 @@ from sherlock import Sherlock
 
 
 def test_timestamp_not_in_tier1_prefix(tmp_path):
-    """The stable prefix (everything up to TIER 3) must be byte-identical
-    across turns so prompt caching survives. The timestamp lives in the
-    volatile TIER 3 zone.
+    """v1.4: the system message is now FULLY stable (cacheable) — the volatile
+    timestamp lives in the FINAL user message, never in the system prefix, and
+    the whole system message is byte-identical across turns so caching survives.
     """
     systems: list[str] = []
+    finals: list[str] = []
 
     def llm(messages):
         if messages and messages[0]["role"] == "system":
             systems.append(messages[0]["content"])
+            finals.append(messages[-1]["content"])
         return "ok."
 
     agent = Sherlock.with_callable(main_chat=llm, system_prompt="ROLE: x", storage_dir=tmp_path)
     agent.chat("a")
     agent.chat("b")
-    sys_msg = systems[-1]
-    # Timestamp appears, but AFTER the TIER 3 marker — never in TIER 1.
-    assert "CURRENT TIME" in sys_msg
-    tier1_region = sys_msg.split("TIER 3")[0]
-    assert "CURRENT TIME" not in tier1_region, "timestamp leaked into stable prefix"
-    # The TIER-1 region itself must be identical across the two turns
-    # (same system prompt, no pinned/persona yet).
-    t1_a = systems[0].split("═══ TIER", 2)
-    t1_b = systems[1].split("═══ TIER", 2)
-    # TIER 1 block (index 1 after split on the marker) identical:
-    assert t1_a[1] == t1_b[1], "TIER 1 prefix changed between turns"
+    # Timestamp rides the volatile final user message, NOT the stable system msg.
+    assert "CURRENT TIME" in finals[-1]
+    assert "CURRENT TIME" not in systems[-1], "timestamp leaked into the stable system prefix"
+    # With no pinned/persona yet the whole system message must be byte-identical
+    # across turns — the cacheable prefix is stable.
+    assert systems[0] == systems[1], "stable system prefix changed between turns"
 
 
 # ── P0-2: a giant system prompt cannot overflow the context window ───────

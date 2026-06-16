@@ -53,10 +53,11 @@ Three LLM roles, all wired by you (they can be one function or three):
             ┌────────────────────────────────────────────────┐
  user ──────►  LLM-1 · main chat                              │
             │  answers using the assembled context slot:      │
-            │  [TIER 1] your system prompt + Sherlock protocol│
-            │  [TIER 2] pinned facts · persona · highlights   │
-            │  [TIER 3] hypotheses · fresh search results     │
-            │  [TIER 4] last N raw turns (dynamic budget)     │
+            │  system msg: your prompt + protocol + pinned    │
+            │     facts · persona · highlights  ── cached ──┐  │
+            │  + prior conversation (verbatim turns) ──cached┘ │
+            │  + final user msg: THIS-turn hypotheses ·       │
+            │     fresh search · the user's question (volatile)│
             └───────┬────────────────────────────┬───────────┘
                     │ background                  │ background
             ┌───────▼──────────┐         ┌───────▼──────────┐
@@ -423,11 +424,23 @@ budgets; whatever remains goes to the raw-turn tail, which accumulates
 *whole turns* walking backward (a turn either fits whole or stays out):
 
 ```
-[TIER 1 — GROUND TRUTH]      sherlock_system + tool_prompt + user_system
-[TIER 2 — SYSTEM-TRACKED]    pinned + persona_summary + compacted highlights
-[TIER 3 — ACTIVE ANALYSIS]   this-turn inference hypotheses + fresh search results
-[TIER 4 — ACTIVE CONTEXT]    last N raw turns (dynamic, walk-backward)
+SYSTEM MESSAGE  (fully stable → cached)
+  [TIER 1 — GROUND TRUTH]    sherlock_system + tool_prompt + user_system
+  [TIER 2 — SYSTEM-TRACKED]  pinned + persona_summary + compacted highlights
+  [TIER 4 — trailer]         marks where the conversation begins
+HISTORY MESSAGES (append-only, stable → cached)   ← last N raw turns
+FINAL USER MESSAGE (volatile → uncached)
+  ═ SYSTEM ANALYSIS FOR THIS TURN ═  this-turn inference + fresh search + fill%
+  ═ THE USER'S ACTUAL MESSAGE ═      the user's question (always last)
 ```
+
+> **v1.4 — cache-optimal ordering.** The volatile this-turn block (inference +
+> search) used to sit inside the system message, which broke prompt caching for
+> all the conversation that followed. It now rides the *final* user message, so
+> the system message + the whole conversation history form one **cacheable
+> prefix** and only the last message (analysis + the new question) pays full
+> price. Region headers keep a small model from confusing protocol, prior
+> conversation, this-turn system analysis, and the user's actual words.
 
 Profiles auto-select by model context window
 (`MemoryConfig.slot_budget_profile`: `auto`/`default`/`small`/`off`,
@@ -445,9 +458,9 @@ print("hypotheses:", state.hypotheses)
 Raw turns are never the only copy of what was said, and they don't grow the
 prompt forever:
 
-- **Compaction (LLM-2).** In the background — every
-  `summarize_every_n_turns`, or on a topic change — LLM-2 distills recent
-  turns into durable memory: **pinned facts with provenance** (`(user t12)`,
+- **Compaction (LLM-2).** In the background — when the assembled prompt reaches
+  `memory.compact_at_fill_ratio` of the model window (default 0.80), on a topic
+  change, or when LLM-1 asks — LLM-2 distills recent turns into durable memory: **pinned facts with provenance** (`(user t12)`,
   newer wins on conflict), a **rolling persona summary**, and append-only
   highlights. Facts must be grounded in a transcript quote; ungrounded ones
   are confidence-capped and can never be pinned. A `corrections` operator lets
@@ -596,6 +609,22 @@ caching, deep-research trust, memory reconciliation — lives in
 **[docs/ROADMAP.md](docs/ROADMAP.md)** (R1–R35, evidence-linked).
 
 ## Changelog highlights
+
+### v1.4 — cache-optimal slot, fill-based compaction, companion cascade
+- **Cache-optimal reordering**: the volatile this-turn block (inference + search)
+  moved out of the system message to the *final* user message, so the system
+  message + the whole conversation history are one cacheable prefix — on a
+  caching provider, a long conversation re-pays only for the newest message.
+  Explicit region headers keep a small model from confusing protocol / prior
+  conversation / this-turn analysis / the user's actual words.
+- **Fill-based compaction**: LLM-2 auto-compacts when the prompt reaches
+  `memory.compact_at_fill_ratio` of the window (default 0.80) instead of a fixed
+  turn cadence — below it the conversation grows append-only and caching keeps
+  the cost down; the live context-fill % is surfaced to LLM-1.
+- **Companion cascade & ordering**: LLM-2 runs before LLM-3 (so inference reasons
+  over freshly-compacted memory), and when LLM-2 surfaces `worth_digging` threads
+  it triggers LLM-3 itself — frequent light inference (LLM-1-driven) + occasional
+  deeper inference (LLM-2-driven). Deep-research LLM-3 persona is now cached.
 
 ### v1.4 — deep research that doesn't forget; small models answer-first
 - **Collect raw → reconstruct**: each round's raw fragments are kept per

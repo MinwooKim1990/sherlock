@@ -26,7 +26,9 @@ def test_tier_labels_appear_in_order(tmp_path):
     assert captured, "system message never reached the callable"
     sys_msg = captured[0]
     assert "TIER 1: GROUND TRUTH" in sys_msg
-    assert "TIER 4: ACTIVE CONTEXT" in sys_msg
+    # v1.4: TIER 4 trailer renamed (the prior conversation rides as separate
+    # messages after the system message).
+    assert "TIER 4: PRIOR CONVERSATION" in sys_msg
     # Ordering check:
     assert sys_msg.index("TIER 1") < sys_msg.index("TIER 4")
 
@@ -125,11 +127,17 @@ def test_k_turn_never_splits_mid_message(tmp_path):
     agent.chat("world")
     # All forwarded user/assistant messages should match a stored msg.
     msgs = {m.content for m in agent.messages()}
+    boundary = "═══ THE USER'S ACTUAL MESSAGE (answer THIS) ═══\n"
     for call in sent:
         for m in call:
             if m["role"] in {"user", "assistant"}:
+                content = m["content"]
                 # The agent may inject a synthesised tool-result user
                 # message — those start with the tool block header.
-                if m["content"].startswith("[SHERLOCK TOOL RESULTS"):
+                if content.startswith("[SHERLOCK TOOL RESULTS"):
                     continue
-                assert m["content"] in msgs
+                # v1.4: the FINAL user message wraps the question in a this-turn
+                # analysis region — unwrap to the raw question before matching.
+                if boundary in content:
+                    content = content.split(boundary, 1)[1]
+                assert content in msgs

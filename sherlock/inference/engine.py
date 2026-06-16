@@ -478,7 +478,11 @@ class InferenceEngine:
             parsed, _resp = chat_json_with_retry(
                 self._provider,
                 [
-                    ChatMessage(role="system", content=RESEARCH_DIRECTOR_PERSONA),
+                    ChatMessage(
+                        role="system",
+                        content=RESEARCH_DIRECTOR_PERSONA,
+                        cache_stable_prefix_chars=len(RESEARCH_DIRECTOR_PERSONA),
+                    ),
                     ChatMessage(role="user", content=prompt),
                 ],
                 want=dict,
@@ -550,7 +554,11 @@ class InferenceEngine:
             parsed, _resp = chat_json_with_retry(
                 self._provider,
                 [
-                    ChatMessage(role="system", content=RESEARCH_DIRECTOR_PERSONA),
+                    ChatMessage(
+                        role="system",
+                        content=RESEARCH_DIRECTOR_PERSONA,
+                        cache_stable_prefix_chars=len(RESEARCH_DIRECTOR_PERSONA),
+                    ),
                     ChatMessage(role="user", content=prompt),
                 ],
                 want=None,
@@ -621,7 +629,11 @@ class InferenceEngine:
             parsed, _resp = chat_json_with_retry(
                 self._provider,
                 [
-                    ChatMessage(role="system", content=RESEARCH_DIRECTOR_PERSONA),
+                    ChatMessage(
+                        role="system",
+                        content=RESEARCH_DIRECTOR_PERSONA,
+                        cache_stable_prefix_chars=len(RESEARCH_DIRECTOR_PERSONA),
+                    ),
                     ChatMessage(role="user", content=prompt),
                 ],
                 want=None,

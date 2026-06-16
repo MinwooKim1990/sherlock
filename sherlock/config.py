@@ -98,6 +98,13 @@ class MemoryConfig(BaseModel):
     decay: DecayPolicyConfig = Field(default_factory=DecayPolicyConfig)
     topic_cluster: TopicClusterConfig = Field(default_factory=TopicClusterConfig)
     summarize_every_n_turns: int = 3
+    # v1.4: the AUTO compaction trigger is fill-based, not turn-based — LLM-2
+    # auto-compacts only when the assembled LLM-1 prompt reaches this fraction of
+    # the model context window (e.g. 0.80 = 80% full). Below it, the conversation
+    # grows append-only and prompt caching keeps the cost low; at it, compaction
+    # evicts summarized turns. LLM-1's explicit <<sherlock-companions: compact>>
+    # tag still fires compaction anytime. 0.0 disables the auto trigger.
+    compact_at_fill_ratio: float = 0.80
     topic_change_similarity_threshold: float = 0.4
     rag_top_k: int = 5
 

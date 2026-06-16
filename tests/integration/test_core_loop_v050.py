@@ -57,7 +57,10 @@ def test_hypotheses_carry_forward_to_next_turn_slot(tmp_path):
         # Only capture LLM-1 slots (they carry the TIER header). The
         # summary companion also routes through main_chat here.
         if messages and messages[0]["role"] == "system" and "TIER 1" in messages[0]["content"]:
-            systems.append(messages[0]["content"])
+            # v1.4: inference/active-intent now rides the FINAL user message, not
+            # the system message — capture that (the system TIER-1 gate identifies
+            # an LLM-1 call).
+            systems.append(messages[-1]["content"])
         if calls["n"] == 1:
             return "first reply.\n<<sherlock-companions: infer>>"
         return "second reply."
@@ -94,7 +97,10 @@ def test_pending_consumed_once(tmp_path):
             messages and messages[0]["role"] == "system" and "TIER 1" in messages[0]["content"]
         )
         if is_llm1:
-            systems.append(messages[0]["content"])
+            # v1.4: inference/active-intent now rides the FINAL user message, not
+            # the system message — capture that (the system TIER-1 gate identifies
+            # an LLM-1 call).
+            systems.append(messages[-1]["content"])
         # Only the FIRST LLM-1 turn emits infer; later LLM-1 turns are plain.
         if is_llm1 and len([s for s in systems]) == 1:
             return "ok.\n<<sherlock-companions: infer>>"
@@ -190,11 +196,11 @@ def test_current_user_input_not_duplicated_in_slot(tmp_path):
         main_chat=main, system_prompt="x", storage_dir=tmp_path, background=False
     )
     agent.chat("alpha unique phrase")
-    assert captured[-1].count("alpha unique phrase") == 1, captured[-1]
+    assert sum(c.count("alpha unique phrase") for c in captured[-1]) == 1, captured[-1]
     agent.chat("beta unique phrase")
     # prior turn (alpha) is legit history; current (beta) must appear once.
-    assert captured[-1].count("beta unique phrase") == 1, captured[-1]
-    assert captured[-1].count("alpha unique phrase") == 1, captured[-1]
+    assert sum(c.count("beta unique phrase") for c in captured[-1]) == 1, captured[-1]
+    assert sum(c.count("alpha unique phrase") for c in captured[-1]) == 1, captured[-1]
 
 
 async def test_achat_current_input_not_duplicated(tmp_path):
@@ -209,7 +215,7 @@ async def test_achat_current_input_not_duplicated(tmp_path):
         main_chat=main, system_prompt="x", storage_dir=tmp_path, background=False
     )
     await agent.achat("gamma unique phrase")
-    assert captured[-1].count("gamma unique phrase") == 1, captured[-1]
+    assert sum(c.count("gamma unique phrase") for c in captured[-1]) == 1, captured[-1]
 
 
 def test_auto_infer_fires_without_tag(tmp_path, monkeypatch):

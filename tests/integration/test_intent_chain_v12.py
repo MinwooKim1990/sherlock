@@ -56,7 +56,8 @@ def test_chain_rides_to_next_turn_slot(tmp_path):
     )
     agent.chat("그 날은 평일이잖아?")  # turn 1: infer runs in post-response
     agent.chat("그래서?")  # turn 2: carry-forward injected
-    sys_msg = agent.inspect_last_turn().messages_passed_to_llm1[0].content
+    # v1.4: inference / active-intent now rides the FINAL user message.
+    sys_msg = agent.inspect_last_turn().messages_passed_to_llm1[-1].content
     assert "REALLY ASKING" in sys_msg
     assert "can I delay buying the JR pass" in sys_msg
     assert "that day is a weekday -> so people are working" in sys_msg
@@ -112,7 +113,8 @@ def test_legacy_llm3_without_chain_unchanged(tmp_path):
     )
     agent.chat("hi")
     agent.chat("again")
-    sys_msg = agent.inspect_last_turn().messages_passed_to_llm1[0].content
+    # v1.4: inference / active-intent now rides the FINAL user message.
+    sys_msg = agent.inspect_last_turn().messages_passed_to_llm1[-1].content
     assert "INFERENCE HYPOTHESES" in sys_msg
     assert "REALLY ASKING" not in sys_msg
 

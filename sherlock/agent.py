@@ -942,6 +942,9 @@ class Sherlock:
         self._bg_future = None  # in-flight background task, if any
         # Turn index of the last compaction (for the real-usage fallback).
         self._last_compact_turn: int = 0
+        # v1.4: fraction of the model window the last assembled prompt occupied —
+        # drives the fill-based compaction trigger + the LLM-1 context-fill line.
+        self._last_fill_ratio: float = 0.0
         # v0.5.0 Phase 4: per-conversation cumulative tool-call counter
         # (on top of the 3-rounds-per-turn cap). Resets on session change.
         self._conv_tool_calls: int = 0
@@ -3375,7 +3378,42 @@ class Sherlock:
         """
         hypotheses: list[dict] = []
 
-        # 7a. LLM-3 inference when requested.
+        # 7a. LLM-2 compaction FIRST (v1.4 ordering) — so LLM-3 below reasons over
+        # the freshly-compacted memory/persona, not the previous turn's snapshot.
+        summary_run = False
+        summary_result = None
+        if "compact" in requested and self._summarizer is not None:
+            try:
+                summary_result = self._summarizer.run(
+                    conversation_id=conv_id,
+                    # v1.0 B4: cover the FULL since-last-compaction span — the
+                    # frontier must never evict a never-summarized turn.
+                    recent_turns=self._format_last_k_turns(
+                        conv_id, max(5, turn_index - self._last_compact_turn)
+                    ),
+                    turn_index=turn_index,
+                )
+                summary_run = True
+                self._last_compact_turn = turn_index
+                if isinstance(summary_result, dict):
+                    self._emit("compact.done", "llm2", dict(summary_result))
+            except Exception as exc:
+                import sys
+
+                print(
+                    f"  [summarizer error turn {turn_index}] {type(exc).__name__}: {exc}"[:160],
+                    file=sys.stderr,
+                )
+
+        # v1.4 LLM-2 → LLM-3 cascade: if compaction surfaced forward-looking
+        # threads (worth_digging / predicted_directions), LLM-2 itself TRIGGERS an
+        # inference over the fresh memory — even if LLM-1 didn't request one.
+        if isinstance(summary_result, dict) and (
+            summary_result.get("worth_digging") or summary_result.get("predicted_directions")
+        ):
+            requested = set(requested) | {"infer"}
+
+        # 7b. LLM-3 inference when requested (now over freshly-compacted memory).
         if "infer" in requested and self._inferer is not None:
             try:
                 llm2_preds = self._fetch_recent_llm2_predictions(conv_id, limit=5)
@@ -3416,31 +3454,6 @@ class Sherlock:
 
                 print(
                     f"  [inferer error turn {turn_index}] {type(exc).__name__}: {exc}"[:160],
-                    file=sys.stderr,
-                )
-
-        # 7b. LLM-2 compaction when requested.
-        summary_run = False
-        if "compact" in requested and self._summarizer is not None:
-            try:
-                summary_result = self._summarizer.run(
-                    conversation_id=conv_id,
-                    # v1.0 B4: cover the FULL since-last-compaction span — the
-                    # frontier must never evict a never-summarized turn.
-                    recent_turns=self._format_last_k_turns(
-                        conv_id, max(5, turn_index - self._last_compact_turn)
-                    ),
-                    turn_index=turn_index,
-                )
-                summary_run = True
-                self._last_compact_turn = turn_index
-                if isinstance(summary_result, dict):
-                    self._emit("compact.done", "llm2", dict(summary_result))
-            except Exception as exc:
-                import sys
-
-                print(
-                    f"  [summarizer error turn {turn_index}] {type(exc).__name__}: {exc}"[:160],
                     file=sys.stderr,
                 )
 
@@ -3916,36 +3929,27 @@ class Sherlock:
         system_sections = ["\n".join(tier1_parts)]
         if tier2_text:
             system_sections.append("═══ TIER 2: SYSTEM-TRACKED ═══\n" + tier2_text)
-        # v1.0 B5: everything appended SO FAR is the byte-stable prefix.
-        stable_section_count = len(system_sections)
-        if tier3_text or retrieved_block:
-            speculative = []
-            if tier3_text:
-                speculative.append(tier3_text)
-            if retrieved_block:
-                speculative.append(retrieved_block)
-            system_sections.append(
-                "═══ TIER 3: ACTIVE ANALYSIS — this turn's inference + fresh data; "
-                "use it to inform your answer ═══\n" + "\n\n".join(speculative)
-            )
-        system_sections.append("═══ TIER 4: ACTIVE CONTEXT — primary source ═══")
-        composite_system = "\n\n".join(system_sections)
-        # v1.0 B5: TIER 1+2 form the byte-stable prefix (protocol + user
-        # prompt + pinned/persona/highlights change rarely); TIER 3 (datetime,
-        # hypotheses, search) is volatile. Mark the cache breakpoint there —
-        # providers that support prompt caching split on it, everyone else
-        # ignores it. Truncation (below) invalidates the offset, so it's
-        # cleared in that branch.
-        stable_len = len("\n\n".join(system_sections[:stable_section_count]))
-        cache_split: int | None = (
-            stable_len if len(system_sections) > stable_section_count else None
+        # v1.4: TIER 3 (this-turn inference + search) NO LONGER lives in the system
+        # message — it moves to the FINAL user message so the system message stays
+        # fully STABLE and [system + conversation history] form one cacheable
+        # prefix. This trailer tells LLM-1 the verbatim turns that follow (as
+        # separate messages) are the prior conversation.
+        system_sections.append(
+            "═══ TIER 4: PRIOR CONVERSATION — the verbatim turns below this system "
+            "message are the conversation so far (oldest→newest) ═══"
         )
-        # R11: a second zone boundary at the end of TIER 1 — pinned-fact churn
-        # then only invalidates the TIER-2 block's cache, not the protocol's.
-        cache_bps: tuple[int, ...] | None = None
-        if cache_split is not None:
-            tier1_len = len(system_sections[0])
-            cache_bps = (tier1_len, cache_split) if stable_section_count > 1 else (cache_split,)
+        composite_system = "\n\n".join(system_sections)
+        # v1.4: the WHOLE system message is now byte-stable (protocol + pinned/
+        # persona/highlights + the TIER-4 trailer); nothing volatile remains in it.
+        # Cache all of it — with no volatile content before the history messages,
+        # the provider reuses [system + history] as one growing cached prefix. Two
+        # breakpoints: end of TIER 1 (protocol) and end of the system message, so
+        # pinned-fact churn invalidates only TIER 2, never the protocol cache.
+        cache_split: int | None = len(composite_system)
+        tier1_len = len(system_sections[0])
+        cache_bps: tuple[int, ...] | None = (
+            (tier1_len, cache_split) if len(system_sections) > 1 else (cache_split,)
+        )
 
         # --- K-turn tail ------------------------------------------------
         if budget is not None:
@@ -3953,7 +3957,11 @@ class Sherlock:
             # current user turn) must fit ctx_window minus the output
             # reserve. No floor is allowed to push us over — if there's no
             # room, the tail is empty rather than overflowing.
-            user_tokens = count_tokens(user_text) + 8
+            # v1.4: the final user message also carries the volatile this-turn
+            # block (inference + search + region labels), so reserve room for it —
+            # not just the bare question — or the tail could push the prompt over.
+            volatile_tokens = count_tokens(tier3_text) + count_tokens(retrieved_block) + 120
+            user_tokens = count_tokens(user_text) + volatile_tokens + 8
             # Hard-cap the system message itself so it can never alone
             # exceed the window (e.g. enormous pinned memory).
             sys_ceiling = max(
@@ -3963,6 +3971,7 @@ class Sherlock:
             if count_tokens(composite_system) > sys_ceiling:
                 composite_system = self._truncate_to_tokens(composite_system, sys_ceiling)
                 cache_split = None  # offsets no longer valid after truncation
+                cache_bps = None  # v1.4: null BOTH — a stale offset would mis-cache
             sys_tokens = count_tokens(composite_system)
             k_pool = self._ctx_window - budget.output_reserve - sys_tokens - user_tokens
             # v1.2: cap the raw tail at a fraction of the window so a huge context
@@ -3987,6 +3996,38 @@ class Sherlock:
             self._last_k_turn_tokens_used = sum(count_tokens(m.content) for m in tail)
             self._last_k_turn_turns_used = len(tail)
 
+        # v1.4: the volatile THIS-TURN block (was TIER 3 inside the system message)
+        # now rides at the very end, clearly fenced so a small LLM-1 never confuses
+        # system-provided analysis with the user's real words — and so the cacheable
+        # [system + history] prefix has nothing volatile in front of it.
+        volatile_parts = []
+        if tier3_text:
+            volatile_parts.append(tier3_text)
+        if retrieved_block:
+            volatile_parts.append(retrieved_block)
+        analysis_block = (
+            "═══ SYSTEM ANALYSIS FOR THIS TURN (system-provided context — NOT the "
+            "user's words; use it to inform your answer) ═══\n\n" + "\n\n".join(volatile_parts)
+            if volatile_parts
+            else ""
+        )
+        question_block = "═══ THE USER'S ACTUAL MESSAGE (answer THIS) ═══\n" + user_text
+        # Fill ratio = full assembled prompt / window — drives the compaction
+        # trigger and the line below. Computed from system + history + this-turn
+        # block + question, excluding the tiny fill line itself (no self-reference).
+        _body = "\n\n".join(b for b in (analysis_block, question_block) if b)
+        self._last_fill_ratio = (
+            count_tokens(composite_system) + self._last_k_turn_tokens_used + count_tokens(_body)
+        ) / max(1, self._ctx_window)
+        fill_line = (
+            f"[CONTEXT FILL: {int(round(self._last_fill_ratio * 100))}% of the model "
+            "window used — at ≥85% you may emit <<sherlock-companions: compact>> to "
+            "compress older memory]"
+        )
+        final_user_content = "\n\n".join(
+            b for b in (analysis_block, fill_line, question_block) if b
+        )
+
         messages: list[ChatMessage] = [
             ChatMessage(
                 role="system",
@@ -3996,7 +4037,7 @@ class Sherlock:
             )
         ]
         messages.extend(tail)
-        messages.append(ChatMessage(role="user", content=user_text))
+        messages.append(ChatMessage(role="user", content=final_user_content))
         try:
             self._emit(
                 "slot.assembled",
@@ -4465,15 +4506,19 @@ class Sherlock:
             cost_usd=response.cost_usd,
         )
 
-        # 6b. Real-usage companion fallback: ensure memory/inference never
-        # starve if LLM-1 under-emits tags. `compact` auto-fires every N turns;
-        # `infer` auto-fires selectively (see MemoryConfig.auto_infer) so the
-        # psychological/rhetorical read is never fully dormant.
-        every_n = max(1, getattr(self.config.memory, "summarize_every_n_turns", 5))
+        # 6b. Real-usage companion fallback: ensure memory/inference never starve
+        # if LLM-1 under-emits tags. v1.4: `compact` auto-fires when the assembled
+        # prompt reaches memory.compact_at_fill_ratio of the window (NOT a fixed
+        # turn cadence) — below it the conversation grows append-only and prompt
+        # caching keeps the cost low; at it, compaction evicts summarized turns.
+        # LLM-1's explicit compact tag still fires anytime. `infer` auto-fires
+        # selectively (see MemoryConfig.auto_infer).
+        fill_threshold = float(getattr(self.config.memory, "compact_at_fill_ratio", 0.80) or 0.0)
         if (
             "compact" not in requested
             and self._summarizer is not None
-            and (turn_index - self._last_compact_turn) >= every_n
+            and fill_threshold > 0.0
+            and self._last_fill_ratio >= fill_threshold
         ):
             requested = set(requested) | {"compact"}
         requested = self._maybe_auto_infer(requested, turn_index, topic_changed)
@@ -4726,14 +4771,16 @@ class Sherlock:
                 for r in item.get("results") or []:
                     search_results.append(r)
 
-        # 6b. Real-usage companion fallback (parity with sync chat()):
-        # auto-compact every N turns + selective auto-infer so async memory
-        # and inference never starve when LLM-1 under-emits tags.
-        every_n = max(1, getattr(self.config.memory, "summarize_every_n_turns", 5))
+        # 6b. Real-usage companion fallback (parity with sync chat()): v1.4
+        # auto-compact when the assembled prompt reaches compact_at_fill_ratio of
+        # the window (not a fixed turn cadence) + selective auto-infer, so async
+        # memory and inference never starve when LLM-1 under-emits tags.
+        fill_threshold = float(getattr(self.config.memory, "compact_at_fill_ratio", 0.80) or 0.0)
         if (
             "compact" not in requested
             and self._summarizer is not None
-            and (turn_index - self._last_compact_turn) >= every_n
+            and fill_threshold > 0.0
+            and self._last_fill_ratio >= fill_threshold
         ):
             requested = set(requested) | {"compact"}
         requested = self._maybe_auto_infer(requested, turn_index, topic_changed)

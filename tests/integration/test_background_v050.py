@@ -93,7 +93,8 @@ def test_background_pending_carries_after_drain(tmp_path):
     def main(messages):
         calls["n"] += 1
         if messages and messages[0]["role"] == "system" and "TIER 1" in messages[0]["content"]:
-            systems.append(messages[0]["content"])
+            # v1.4: the carried hypothesis rides the FINAL user message now.
+            systems.append(messages[-1]["content"])
         # First LLM-1 turn requests infer.
         if calls["n"] == 1:
             return "r1.\n<<sherlock-companions: infer>>"

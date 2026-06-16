@@ -66,7 +66,8 @@ def _slot_with_chain(tmp_path):
     )
     agent.chat("부모님 모시고 나들이 가려고")  # turn 1: infer runs post-response
     agent.chat("그럼 토요일에 어디로 가는 게 좋을까?")  # turn 2: chain carried forward
-    return agent.inspect_last_turn().messages_passed_to_llm1[0].content
+    # v1.4: the inference / active-intent block now rides the FINAL user message.
+    return agent.inspect_last_turn().messages_passed_to_llm1[-1].content
 
 
 # ---- Fix B: the consumption rule must lead with ANSWER, not defer ----------
@@ -100,7 +101,9 @@ def test_inference_label_is_defanged(tmp_path):
     sys_msg = _slot_with_chain(tmp_path)
     assert "SPECULATIVE" not in sys_msg
     assert "verify before relying" not in sys_msg
-    assert "ACTIVE ANALYSIS" in sys_msg  # new TIER-3 label
+    # v1.4: the volatile block now rides the final user message under this fence
+    # (replaced the in-system "TIER 3: ACTIVE ANALYSIS" header).
+    assert "SYSTEM ANALYSIS FOR THIS TURN" in sys_msg
     # provenance is preserved — it's still "not a fact you quote", just usable.
     assert "INFERENCE HYPOTHESES" in sys_msg
     assert "do NOT quote it back as fact" in sys_msg
