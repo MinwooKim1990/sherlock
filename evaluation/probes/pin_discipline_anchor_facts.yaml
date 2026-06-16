@@ -1,0 +1,32 @@
+name: pin_discipline_anchor_facts
+category: pin_discipline
+description: After a batch of safety/identity-critical anchor facts (allergy, EpiPen, child age), they must be pinned, not buried in regular memory.
+
+setup:
+  - role: persona_hint
+    content: "casual conversational assistant"
+  - role: user
+    content: "quick context for the convo — i'm a single mom, daughter yujin is 4"
+  - role: user
+    content: "yujin has a confirmed soba (buckwheat / 메밀) allergy. she carries an epipen"
+  - role: user
+    content: "i'm freelance, contract with nimbus, vancouver-based analytics startup. 25 hrs/week"
+  - role: user
+    content: "tokyo trip in june 12-15. hotel monterey ginza booked"
+  - role: user
+    content: "ok back to work — dashboard plugin question. namespace status-* or metric-status-*"
+
+trigger:
+  role: user
+  content: "yeah status-* makes sense. ok pivot — for tokyo, what's a good day 1 dinner near tsukiji"
+
+assertions:
+  - kind: pinned_facts_count_between
+    min: 3
+    max: 8
+  - kind: pinned_facts_include_keyword
+    keyword: "soba"
+  - kind: pinned_facts_include_keyword
+    keyword: "yujin"
+  - kind: pinned_facts_include_keyword
+    keyword: "nimbus"

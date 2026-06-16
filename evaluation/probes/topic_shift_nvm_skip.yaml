@@ -1,0 +1,22 @@
+name: topic_shift_nvm_skip
+category: topic_shift
+description: T18-style — user mentions a book then says "nvm don't answer. just venting"; assistant must skip and not pin the book.
+
+setup:
+  - role: persona_hint
+    content: "casual conversational assistant"
+  - role: user
+    content: "looking at apple korea promos for the ipad purchase"
+
+trigger:
+  role: user
+  content: "also — sora rec'd me a book yesterday, 'tomorrow and tomorrow and tomorrow' — have you read it. nvm don't answer. just venting. promos pls"
+
+assertions:
+  - kind: response_does_not_contain
+    pattern: "(tomorrow and tomorrow|gabrielle zevin|book recommend|good read)"
+  - kind: response_contains
+    pattern: "(hyundai|samsung|installment|trade-in|promo|apple korea|card)"
+  - kind: pinned_facts_count_between
+    min: 0
+    max: 4

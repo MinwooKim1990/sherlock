@@ -3,6 +3,7 @@
 M1 scope: just enough to persist a conversation and its turns. The
 memory-entry model (SPEC.md § 6.1) lands in M2 alongside the vector layer.
 """
+
 from __future__ import annotations
 
 import uuid
@@ -34,6 +35,9 @@ class Message(SQLModel, table=True):
     conversation_id: str = Field(foreign_key="conversation.id", index=True)
     role: str  # "system" | "user" | "assistant"
     content: str
+    # v1.0 B4: which turn this message belongs to (None on pre-v1.0 rows —
+    # those are never evicted by the compaction frontier).
+    turn_index: Optional[int] = Field(default=None, index=True)
     model: Optional[str] = None
     prompt_tokens: int = 0
     completion_tokens: int = 0
@@ -51,6 +55,42 @@ def _enable_sqlite_fk(dbapi_connection, _connection_record) -> None:  # pragma: 
         pass
 
 
+def run_migrations(engine) -> list[str]:
+    """v0.5.0 lightweight migration: add columns present in the SQLModel
+    metadata but missing from an existing table (SQLite ``create_all`` only
+    creates *missing tables*, never alters existing ones). New columns get
+    NULL for existing rows; the model's python default applies to new rows.
+
+    Returns the list of "table.column" additions made (for logging/tests).
+    """
+    from sqlalchemy import inspect as _inspect, text as _text
+
+    added: list[str] = []
+    try:
+        insp = _inspect(engine)
+        existing_tables = set(insp.get_table_names())
+        for table in SQLModel.metadata.sorted_tables:
+            if table.name not in existing_tables:
+                continue  # create_all handles brand-new tables
+            db_cols = {c["name"] for c in insp.get_columns(table.name)}
+            for col in table.columns:
+                if col.name in db_cols:
+                    continue
+                try:
+                    coltype = col.type.compile(dialect=engine.dialect)
+                except Exception:
+                    coltype = "TEXT"
+                with engine.begin() as conn:
+                    conn.execute(
+                        _text(f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" {coltype}')
+                    )
+                added.append(f"{table.name}.{col.name}")
+    except Exception:
+        # Migration is best-effort; never block startup.
+        pass
+    return added
+
+
 class Storage:
     """Thin wrapper around the SQLite engine + session lifecycle."""
 
@@ -62,6 +102,7 @@ class Storage:
             connect_args={"check_same_thread": False},
         )
         SQLModel.metadata.create_all(self.engine)
+        run_migrations(self.engine)  # v0.5.0: add any newly-introduced columns
 
     def session(self) -> Session:
         return Session(self.engine)
@@ -86,11 +127,13 @@ class Storage:
         prompt_tokens: int = 0,
         completion_tokens: int = 0,
         cost_usd: float | None = None,
+        turn_index: int | None = None,
     ) -> Message:
         msg = Message(
             conversation_id=conversation_id,
             role=role,
             content=content,
+            turn_index=turn_index,
             model=model,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
@@ -110,3 +153,47 @@ class Storage:
                 .order_by(Message.created_at, Message.id)
             )
             return list(s.exec(stmt))
+
+    # --- session management (v0.4.0) -------------------------------------
+
+    def list_conversations(self, project: str | None = None) -> list[Conversation]:
+        """Return every persisted conversation, optionally filtered by project."""
+        with self.session() as s:
+            stmt = select(Conversation)
+            if project:
+                stmt = stmt.where(Conversation.project == project)
+            stmt = stmt.order_by(Conversation.created_at)
+            return list(s.exec(stmt))
+
+    def get_conversation(self, conversation_id: str) -> Conversation | None:
+        with self.session() as s:
+            return s.get(Conversation, conversation_id)
+
+    def count_messages(self, conversation_id: str) -> int:
+        with self.session() as s:
+            stmt = select(Message).where(Message.conversation_id == conversation_id)
+            return len(list(s.exec(stmt)))
+
+    def latest_message_at(self, conversation_id: str) -> datetime | None:
+        msgs = self.list_messages(conversation_id)
+        if not msgs:
+            return None
+        return msgs[-1].created_at
+
+    def delete_conversation(self, conversation_id: str) -> int:
+        """Delete a conversation and ALL its messages.
+
+        Returns the number of messages removed. NOTE: callers should also
+        delete the conversation's memory entries via :meth:`MemoryStore`;
+        this method only handles the storage tables.
+        """
+        with self.session() as s:
+            # Delete messages first to honour FK constraint.
+            msgs = list(s.exec(select(Message).where(Message.conversation_id == conversation_id)))
+            for m in msgs:
+                s.delete(m)
+            conv = s.get(Conversation, conversation_id)
+            if conv is not None:
+                s.delete(conv)
+            s.commit()
+            return len(msgs)

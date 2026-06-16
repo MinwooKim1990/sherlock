@@ -13,6 +13,7 @@ Transitions:
   forgotten → hard delete: after forgotten_after_days
   pinned items skip all transitions.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -83,6 +84,10 @@ class DecayEngine:
 
         for entry in self._store.all_for_conversation(conversation_id):
             if entry.pinned:
+                continue
+            # v1.0: superseded rows are frozen — they neither decay nor get
+            # hard-deleted; they exist purely as a correction audit trail.
+            if entry.superseded_by:
                 continue
             gap_turns = self._gap_turns(entry, current_turn_index)
             gap_days = self._gap_days(entry)

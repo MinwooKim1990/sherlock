@@ -1,0 +1,23 @@
+name: memory_reconsolidation_superseded
+category: memory_reconsolidation
+description: A superseded fact must not resurface after topic churn — retrieval and pinned injection exclude frozen rows.
+
+setup:
+  - role: persona_hint
+    content: "casual conversational assistant"
+  - role: user
+    content: "i'm moving! as of this month i live in busan, not seoul. update your notes."
+  - role: user
+    content: "unrelated — recommend a sci-fi book"
+  - role: user
+    content: "and a podcast about startups"
+
+trigger:
+  role: user
+  content: "what city do i live in?"
+
+assertions:
+  - kind: response_contains
+    pattern: "(busan|부산)"
+  - kind: response_does_not_contain
+    pattern: "(you live in seoul|living in seoul|서울에 살)"

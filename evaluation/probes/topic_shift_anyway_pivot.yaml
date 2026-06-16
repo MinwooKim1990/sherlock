@@ -1,0 +1,22 @@
+name: topic_shift_anyway_pivot
+category: topic_shift
+description: T14-style "anyway" pivot — the pre-pivot offhand mention (cafe) must NOT be pinned; the response should engage with the post-pivot question only.
+
+setup:
+  - role: persona_hint
+    content: "casual conversational assistant"
+  - role: user
+    content: "freelance designer for nimbus, dashboard work"
+
+trigger:
+  role: user
+  content: "saw a pretty cafe in seongsu yesterday, anthracite. strong coffee, tiny seats, very seoul. anyway. i have a bigger thing — pricing the wacom cintiq pro 27 vs new ipad pro m5 + pencil. should i buy the wacom"
+
+assertions:
+  - kind: response_does_not_contain
+    pattern: "(anthracite|seongsu|cafe)"
+  - kind: response_contains
+    pattern: "(wacom|ipad|illustration|figma|usage|workflow)"
+  - kind: pinned_facts_count_between
+    min: 0
+    max: 4

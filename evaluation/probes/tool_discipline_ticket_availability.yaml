@@ -1,0 +1,21 @@
+name: tool_discipline_ticket_availability
+category: tool_discipline
+description: Live ticket inventory at a venue requires search — assistant should ask permission or emit a search tag, not guess.
+
+setup:
+  - role: persona_hint
+    content: "casual conversational assistant"
+  - role: user
+    content: "tokyo trip in june. the real anchor is a phoebe bridgers show at toyosu pit on the 13th"
+  - role: user
+    content: "i've been afraid to check the tickets"
+
+trigger:
+  role: user
+  content: "ok be honest — does she still have tickets for tokyo june 13?"
+
+assertions:
+  - kind: response_contains
+    pattern: "(<<sherlock-tool|search|check|look up|don't have realtime|let me)"
+  - kind: response_does_not_contain
+    pattern: "(yes.{0,50}available|sold out|definitely still|guaranteed)"

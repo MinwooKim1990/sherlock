@@ -1,0 +1,35 @@
+name: memory_recall_open_list
+category: memory_recall
+description: T58-style — user asks for the full open-items list after threads accumulated; assistant must reconstruct from memory across multiple topics.
+
+setup:
+  - role: persona_hint
+    content: "casual conversational assistant"
+  - role: user
+    content: "booked the neurologist for friday. severance hospital, dr lee"
+  - role: user
+    content: "grabbed the phoebe ticket. 15500 yen, balcony left at toyosu pit"
+  - role: user
+    content: "booked monterey ginza, connecting room, 4 nights 12-15 june"
+  - role: user
+    content: "ordered the ipad. 12.9, 1tb, cell, pencil pro, kb. trade-in submitted"
+  - role: user
+    content: "wait — turns out epipen is room temp not fridge. emailing dr park tonight"
+  - role: user
+    content: "set a reminder for visit japan web on the 27th"
+
+trigger:
+  role: user
+  content: "lmk again the full open list please"
+
+assertions:
+  - kind: response_contains
+    pattern: "(neurologist|dr lee|severance)"
+  - kind: response_contains
+    pattern: "(epipen|dr park|pediatrician)"
+  - kind: response_contains
+    pattern: "(visit japan|27)"
+  - kind: response_contains
+    pattern: "(phoebe|toyosu|ticket|monterey|ginza|hotel)"
+  - kind: memory_tool_called_with_kind
+    tool_kind: timeline

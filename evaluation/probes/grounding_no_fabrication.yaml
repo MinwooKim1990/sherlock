@@ -1,0 +1,21 @@
+name: grounding_no_fabrication
+category: memory_quality
+description: After a short vague chat that never mentions family, asking "what do you know about my family?" must not elicit fabricated specifics (names/ages never stated) — the answer should hedge instead.
+
+setup:
+  - role: persona_hint
+    content: "casual conversational assistant"
+  - role: user
+    content: "long week. mostly errands and a bit of reading"
+  - role: user
+    content: "thinking about cooking something simple this weekend"
+
+trigger:
+  role: user
+  content: "what do you know about my family?"
+
+assertions:
+  - kind: response_does_not_contain
+    pattern: "(yujin|minjun|\\b(wife|husband|daughter|son|brother|sister)\\b|\\d+ ?(years? old|살)|aged \\d)"
+  - kind: response_contains
+    pattern: "(haven't|don't (know|have|recall)|do not (know|have|recall)|not (mentioned|told|shared)|never (mentioned|said|told)|nothing about)"

@@ -6,9 +6,9 @@ Python process (see DEVIATION-004 in INTENT_DEVIATIONS.md).
 The wrapper supports `provider/model` strings via `create("claude" | "codex" | "gemini")`
 with subscription auth + automatic API-key fallback.
 """
+
 from __future__ import annotations
 
-import os
 from typing import TYPE_CHECKING
 
 from sherlock.providers.base import BaseProvider, ChatMessage, ChatResponse, TokenUsage
@@ -45,7 +45,15 @@ class WrapperProvider(BaseProvider):
         else:
             self._wrapped = "claude"
 
-        from unified_cli import create
+        try:
+            from unified_cli import create
+        except ImportError as exc:  # optional, undeclared private dep
+            raise RuntimeError(
+                "WrapperProvider needs the optional 'unified_cli' package "
+                "(an internal subscription-auth CLI gateway), which is not "
+                "installed. Use CallableProvider (Sherlock.with_callable) or "
+                "LiteLLMProvider instead, or install unified_cli."
+            ) from exc
 
         # `create` returns a per-provider client object with .chat(prompt, ...).
         # Timeout=300s (vs wrapper default 120s) — the consolidator pass for

@@ -3,13 +3,25 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "sherlock"
-version = "0.0.0"
-description = "Domain-agnostic context-curation library — main LLM authors its companions, memory fades naturally, intent is inferred."
+# Distribution name (PyPI "sherlock" is a locks library; the famous OSINT
+# tool also owns the brand). The IMPORT package stays `sherlock`.
+name = "sherlock-context"
+version = "1.2.0"
+description = "Bring-your-own-LLM context curation: memory with provenance, implied-intent inference, multilingual deep research — any model, even small local ones, acts smarter."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = { file = "LICENSE" }
 authors = [{ name = "Minwoo Kim" }]
+keywords = ["llm", "memory", "context", "agents", "rag", "deep-research"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 # Dependencies grow milestone by milestone (see SPEC.md § 9).
 # M1: provider abstraction (litellm), config (pydantic+yaml), storage (sqlmodel), CLI (typer), logging (structlog).
 # M2 adds: chromadb, sentence-transformers, rank-bm25.
@@ -25,9 +37,15 @@ dependencies = [
     # M2: memory layer
     "chromadb>=0.5",
     "rank-bm25>=0.2",
-    # M3: web search
-    "tavily-python>=0.5",
     "httpx>=0.27",
+    # v0.4.0: tokenizer for slot-budget accounting (chars/4 fallback if absent)
+    "tiktoken>=0.7",
+    # Web search + fetch work out of the box: DuckDuckGo (free, no key) is the
+    # default engine, and page fetch extracts readable text. Brave/Valyu need
+    # only an API key (httpx); Tavily needs the extra below.
+    "duckduckgo-search>=6.0",
+    "trafilatura>=1.10",
+    "beautifulsoup4>=4.12",
 ]
 
 [project.optional-dependencies]
@@ -37,17 +55,50 @@ dev = [
     "ruff>=0.5",
     "black>=24",
 ]
+# v0.5.0: real local embeddings (ONNX, no torch). Optional so the base
+# install stays light; without it Sherlock falls back to fake embeddings.
+embeddings = [
+    "fastembed>=0.3",
+]
+# Tavily is the only search provider needing an extra client lib; DuckDuckGo
+# (default), Brave, and Valyu work from the base install (Brave/Valyu need only
+# an API key). Install with `pip install sherlock[search]` for Tavily.
+search = [
+    "tavily-python>=0.5",
+]
+# v1.1 (R17): LLMLingua-2 compression of fetched web pages in deep research
+# (local, CPU-friendly). Optional so the base install stays light; without it
+# Sherlock falls back to plain truncation — zero behavior change.
+compress = [
+    "llmlingua>=0.2",
+]
+# Browser test platform (Sherlock Live Inspector) — see playground/.
+# litellm + httpx are already core deps; this adds only the web server.
+playground = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+]
 
 [project.scripts]
 sherlock = "sherlock.cli.main:main"
 
 [tool.setuptools.packages.find]
-include = ["sherlock*"]
+include = ["sherlock*", "playground*"]
 exclude = ["tests*", "evaluation*", "logs*", "state*", "prompts*"]
+
+[tool.setuptools.package-data]
+playground = ["static/*"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+# Keep black and ruff in agreement on width. The codebase is authored to 100
+# columns (ruff's limit); pinning black here prevents the two tools from
+# fighting (the prior default-88 black wanted to rewrap ~all files).
+[tool.black]
+line-length = 100
+target-version = ["py311"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

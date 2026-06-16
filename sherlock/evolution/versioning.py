@@ -1,4 +1,5 @@
 """Companion-prompt version persistence + rollback (SPEC §5.3 minimum surface)."""
+
 from __future__ import annotations
 
 import uuid
@@ -36,7 +37,9 @@ class PromptVersionStore:
         self._engine = engine
         SQLModel.metadata.create_all(self._engine)
 
-    def save(self, *, project: str, role: str, content: str, rationale: str = "") -> CompanionPrompt:
+    def save(
+        self, *, project: str, role: str, content: str, rationale: str = ""
+    ) -> CompanionPrompt:
         with Session(self._engine) as s:
             # Deactivate prior active for the same role+project.
             stmt = select(CompanionPrompt).where(

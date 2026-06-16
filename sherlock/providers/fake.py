@@ -3,6 +3,7 @@
 The fake echoes the last user message with a small annotation so tests can
 verify message-routing without hitting any external API.
 """
+
 from __future__ import annotations
 
 from sherlock.providers.base import BaseProvider, ChatMessage, ChatResponse, TokenUsage

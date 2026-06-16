@@ -10,6 +10,7 @@ own assistant reply (Sherlock generates its own). The point of the replay
 is to populate the memory store so the post-replay summary+inference
 output can be scored against the gold standard.
 """
+
 from __future__ import annotations
 
 import re
@@ -18,9 +19,10 @@ from pathlib import Path
 
 from sherlock.agent import Sherlock
 
-
 _TURN_HEADER_RE = re.compile(r"^###\s+Turn\s+(\d+)\s*$", re.MULTILINE)
-_USER_RE = re.compile(r"^\*\*User:\*\*\s*(.*?)(?=^\*\*Assistant:\*\*|^###\s+Turn|\Z)", re.MULTILINE | re.DOTALL)
+_USER_RE = re.compile(
+    r"^\*\*User:\*\*\s*(.*?)(?=^\*\*Assistant:\*\*|^###\s+Turn|\Z)", re.MULTILINE | re.DOTALL
+)
 
 
 @dataclass

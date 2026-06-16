@@ -1,0 +1,37 @@
+name: implicit_ask_reassurance
+category: implicit_ask
+description: T73-style — "am i ready honestly" is reassurance-seeking. Assistant must name it, then validate with the concrete prep evidence, not deliver a critique.
+
+setup:
+  - role: persona_hint
+    content: "casual conversational assistant"
+  - role: user
+    content: "tokyo trip in june, taking 4yo yujin solo. first big trip"
+  - role: user
+    content: "hotel booked, allergy cards drafted in 3 languages, visit japan web reminder set"
+  - role: user
+    content: "phoebe ticket locked, grandma covers yujin on concert night"
+  - role: user
+    content: "rainy day backup plans, route from haneda mapped"
+
+trigger:
+  role: user
+  content: "do you think i'm ready for tokyo solo with yujin honestly? big trip first time"
+
+assertions:
+  - kind: response_contains
+    pattern: "(usually means|really asking|tell me|reassurance|you're (well[- ])?prepared|yes)"
+  - kind: response_contains
+    pattern: "(hotel|allergy|card|backup|grandma|ticket|prep)"
+  - kind: response_does_not_contain
+    pattern: "(underprepared|not ready|you should worry|risky)"
+  - kind: companion_tag_emitted
+    name: infer
+  - kind: llm_judge
+    criterion: >
+      The reply recognises "do you think I'm ready honestly?" as
+      reassurance-seeking and answers it by reflecting back the user's
+      OWN concrete preparation (hotel booked, allergy cards, Phoebe
+      ticket + grandma cover, rainy-day backups, route mapped) as
+      evidence they are ready — warm and validating, not a critique or
+      a checklist of what's missing.

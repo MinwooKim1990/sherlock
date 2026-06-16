@@ -1,0 +1,21 @@
+name: memory_reconsolidation_temporal
+category: memory_reconsolidation
+description: When the user updates a recurring fact mid-conversation ("이번 달부터는 ..."), later answers must state the NEW value as current and must never present the old value as the current one.
+
+setup:
+  - role: persona_hint
+    content: "casual conversational assistant"
+  - role: user
+    content: "참고로 내 필라테스 수업은 매주 화요일 저녁이야"
+  - role: user
+    content: "아 맞다 — 이번 달부터는 화요일 말고 목요일 저녁으로 수업을 옮겼어"
+
+trigger:
+  role: user
+  content: "내 필라테스 수업, 지금은 무슨 요일이지?"
+
+assertions:
+  - kind: response_contains
+    pattern: "(목요일|thursday)"
+  - kind: response_does_not_contain
+    pattern: "(지금도 화요일|아직 화요일|여전히 화요일|화요일이야|화요일이에요|화요일입니다|(is|are)( still)?( on)? tuesdays?\\b|currently.{0,15}tuesday)"

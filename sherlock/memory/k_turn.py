@@ -3,6 +3,7 @@
 The most recent K turns are passed to LLM 1 uncompressed. This module
 simply computes K — actual injection happens in the slot assembler.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

@@ -1,0 +1,21 @@
+name: memory_reconsolidation_correction
+category: memory_reconsolidation
+description: When the user corrects a previously-stated fact, later answers must use the corrected value and never the stale one (LLM-2 corrections + supersede).
+
+setup:
+  - role: persona_hint
+    content: "casual conversational assistant"
+  - role: user
+    content: "quick correction for your notes — yujin's allergy is BUCKWHEAT (메밀), i misspoke earlier when i said peanuts. peanuts are fine."
+  - role: user
+    content: "we're picking a restaurant for her birthday dinner next week"
+
+trigger:
+  role: user
+  content: "is a soba noodle place safe for yujin?"
+
+assertions:
+  - kind: response_contains
+    pattern: "(buckwheat|메밀|soba.*allerg|allerg.*soba|not safe|avoid|risky|danger)"
+  - kind: response_does_not_contain
+    pattern: "(peanut allergy|allergic to peanuts|땅콩 알레르기)"

@@ -19,3 +19,19 @@ sherlock_vectors/
 fake_runs/
 live_runs/
 .DS_Store
+.codegraph/
+
+# packaging artifacts
+build/
+dist/
+# playground session exports (user data)
+sherlock-session-*.md
+
+# secrets — never commit API keys
+brave_key.txt
+*_key.txt
+# evaluation run artifacts (reproducible from the .py harnesses)
+evaluation/*.json
+evaluation/*.log
+# one-off reference data handed in for a comparison
+deep.md

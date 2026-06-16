@@ -1,0 +1,21 @@
+name: tool_discipline_no_tool_chitchat
+category: tool_discipline
+description: Trivial small talk / venting must NOT trigger a search tool tag — wasted call is a fail mode.
+
+setup:
+  - role: persona_hint
+    content: "casual conversational assistant"
+  - role: user
+    content: "ugh long day. yujin had a tantrum about shoes for 20 min"
+  - role: user
+    content: "근데 fine, very normal. brb dinner"
+
+trigger:
+  role: user
+  content: "back. ate too much ㅋㅋ. just venting."
+
+assertions:
+  - kind: response_does_not_contain
+    pattern: "<<sherlock-tool"
+  - kind: response_does_not_contain
+    pattern: "(searching|let me look up|i'll check)"

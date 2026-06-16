@@ -6,6 +6,7 @@ be switched via config without code change.
 This test exercises both halves with the FakeProvider (hermetic) and a
 flag-gated live provider call when API keys exist in env.
 """
+
 from __future__ import annotations
 
 import os
@@ -13,10 +14,12 @@ from pathlib import Path
 
 import pytest
 
-from sherlock import Config, Sherlock
+from sherlock import Sherlock
 
 
-def _write_yaml(yaml_path: Path, prompt_path: Path, db_path: Path, *, provider: str, model: str) -> None:
+def _write_yaml(
+    yaml_path: Path, prompt_path: Path, db_path: Path, *, provider: str, model: str
+) -> None:
     yaml_path.write_text(
         f"""
 project: m1_test

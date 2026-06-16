@@ -1,0 +1,21 @@
+name: memory_reconsolidation_korean_recall
+category: memory_reconsolidation
+description: Korean agglutinated forms must still hit memory (Hangul bigram BM25) — a fact stated with one particle form is retrieved when asked with another.
+
+setup:
+  - role: persona_hint
+    content: "casual conversational assistant"
+  - role: user
+    content: "참고로 유진이는 메밀 알레르기가 있어서 소바는 절대 안 돼"
+  - role: user
+    content: "주말에 가족 외식 장소 알아보는 중이야"
+
+trigger:
+  role: user
+  content: "유진이가 못 먹는 음식이 뭐였지?"
+
+assertions:
+  - kind: response_contains
+    pattern: "(메밀|소바|buckwheat|soba)"
+  - kind: response_does_not_contain
+    pattern: "(모르겠|기억이 안|말씀 안 하셨)"

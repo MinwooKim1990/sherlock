@@ -1,0 +1,26 @@
+name: pin_discipline_no_overpin
+category: pin_discipline
+description: Casual/decoy facts (cafe, book rec, podcast tangent) following the "anyway"-pivot pattern must NOT get pinned.
+
+setup:
+  - role: persona_hint
+    content: "casual conversational assistant"
+  - role: user
+    content: "saw a pretty cafe in seongsu yesterday, anthracite. strong coffee, tiny seats. anyway."
+  - role: user
+    content: "sora rec'd me a book yesterday 'tomorrow and tomorrow and tomorrow' — nvm, skipping it. just venting"
+  - role: user
+    content: "sora sent me a podcast about notion's company structure last week, was kinda interesting. tangent."
+  - role: user
+    content: "yujin's been asking about alphablocks on netflix. is that show actually any good"
+
+trigger:
+  role: user
+  content: "ok pivoting — i need to draft a counter-offer to my boss erin about a project. she runs a vancouver analytics startup and i'm a freelance designer for them"
+
+assertions:
+  - kind: pinned_facts_count_between
+    min: 0
+    max: 3
+  - kind: response_does_not_contain
+    pattern: "(anthracite|alphablocks|tomorrow and tomorrow)"

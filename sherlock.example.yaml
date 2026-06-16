@@ -29,10 +29,44 @@ storage:
   sqlite_path: ./sherlock.db
   vector_db: chroma
   vector_path: ./sherlock_vectors
+  embedding:
+    # Real semantic memory. `local` = on-device multilingual embedder
+    # (fastembed, no API key, Korean+English). REQUIRES the extra:
+    #   pip install sherlock[embeddings]
+    # If fastembed/the model is unavailable it falls back to `fake` with a
+    # stderr warning. `fake` is a deterministic hash embedder — fine for
+    # tests, but NOT semantic (recall/decay are meaningless). For hosted
+    # embeddings set provider: openai|voyage|cohere + api_key_env.
+    provider: local
+    # model: paraphrase-multilingual-MiniLM-L12-v2   # default for `local`
 
 memory:
   k_turn_min: 3
   k_turn_max_adaptive: true
+
+# Web search (v0.3.0 — multi-provider).
+search:
+  provider: duckduckgo          # default, no API key needed
+  # api_key: ...                # set if you switch to a keyed provider
+  # api_key_env: TAVILY_API_KEY # or pull the key from an env var
+
+  always_on: true
+  inject_datetime: true
+
+  # Optional per-role overrides. When unset, both roles inherit `provider`
+  # above. Use this when, e.g., you want LLM-3 to run cross-verification
+  # against a paid engine but LLM-1's quick lookups can stay free.
+  # main_provider: brave
+  # main_api_key: BSA-xxxxxxxxxxxx
+  # inference_provider: tavily
+  # inference_api_key_env: TAVILY_API_KEY
+
+  # Optional (R17): LLMLingua-2 compression of fetched page text before it
+  # enters deep-research prompts. Quality-preserving — drops boilerplate
+  # tokens inside each page, never restricts which results/pages are used.
+  # Requires `pip install "sherlock[compress]"`; without the extra installed
+  # Sherlock falls back to plain truncation (zero behavior change).
+  # compress_fetched: true
 
 execution:
   parallel_when_possible: true

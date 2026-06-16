@@ -1,8 +1,8 @@
 """Top-level `sherlock` CLI."""
+
 from __future__ import annotations
 
 import json
-import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -23,7 +23,9 @@ app = typer.Typer(
 )
 
 console = Console()
-config_app = typer.Typer(name="config", help="Inspect/validate the YAML config.", no_args_is_help=True)
+config_app = typer.Typer(
+    name="config", help="Inspect/validate the YAML config.", no_args_is_help=True
+)
 app.add_typer(config_app)
 
 
@@ -53,7 +55,10 @@ def chat(
     """Start an interactive chat (or one-shot when --one-shot is given)."""
     cfg_path = _resolve_config(config)
     cfg = Config.from_yaml(cfg_path)
-    agent = Sherlock(cfg)
+    # v0.5.0: use from_yaml so companions (LLM-2/LLM-3) + search are wired.
+    # The bare `Sherlock(cfg)` ctor leaves _summarizer/_inferer/_search = None,
+    # i.e. the CLI would run LLM-1 only (the "half-off" bug).
+    agent = Sherlock.from_yaml(cfg_path)
 
     if one_shot is not None:
         reply = agent.chat(one_shot)
@@ -72,11 +77,19 @@ def chat(
         try:
             user = console.input("[bold cyan]you ›[/bold cyan] ").strip()
         except (EOFError, KeyboardInterrupt):
+            try:
+                agent.drain()
+            except Exception:
+                pass
             console.print("\n[dim]bye[/dim]")
             return
         if not user:
             continue
         if user.lower() in {"/exit", "/quit"}:
+            try:
+                agent.drain()
+            except Exception:
+                pass
             console.print("[dim]bye[/dim]")
             return
         try:
@@ -155,8 +168,12 @@ def evaluate(
         "--runs",
         help="Directory under which the timestamped run is written.",
     ),
-    max_turns: int | None = typer.Option(None, "--max-turns", help="Cap turns for fast smoke runs."),
-    skip_score: bool = typer.Option(False, "--skip-score", help="Replay + format only; don't call the evaluator."),
+    max_turns: int | None = typer.Option(
+        None, "--max-turns", help="Cap turns for fast smoke runs."
+    ),
+    skip_score: bool = typer.Option(
+        False, "--skip-score", help="Replay + format only; don't call the evaluator."
+    ),
 ) -> None:
     """Replay the dummy conversation through Sherlock and score against the gold standard."""
     from sherlock.evaluation import format_sherlock_output, replay_dummy_conversation
@@ -172,7 +189,9 @@ def evaluate(
     run_dir = runs_root / ts
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    console.print(f"[cyan]Replaying[/cyan] {conversation} → {cfg.models.main.provider}/{cfg.models.main.model}")
+    console.print(
+        f"[cyan]Replaying[/cyan] {conversation} → {cfg.models.main.provider}/{cfg.models.main.model}"
+    )
 
     import time as _time
 
@@ -211,7 +230,9 @@ def evaluate(
 
     eval_json = run_dir / "evaluator_output.json"
     eval_json.write_text(
-        json.dumps({**score.to_dict(), "raw_response": score.raw_response}, ensure_ascii=False, indent=2),
+        json.dumps(
+            {**score.to_dict(), "raw_response": score.raw_response}, ensure_ascii=False, indent=2
+        ),
         encoding="utf-8",
     )
     # score.txt now records evaluator model alongside the number so trajectory

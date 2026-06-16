@@ -1,0 +1,29 @@
+name: memory_recall_yujin_gender_correction
+category: memory_recall
+description: After a user correction ("*she*. yujin is a girl"), subsequent references must use correct pronouns — the correction itself must be remembered, not just the original fact.
+
+setup:
+  - role: persona_hint
+    content: "casual conversational assistant"
+  - role: user
+    content: "yujin is my 4 year old. soba allergy"
+  - role: user
+    content: "tokyo trip in june, taking yujin"
+  - role: user
+    content: "the assistant earlier referred to yujin as 'he' — *she*. yujin is a girl"
+  - role: user
+    content: "ok onto the dashboard plugin — six metric card variants"
+  - role: user
+    content: "later — for the trip, day 1 we land haneda 4pm"
+
+trigger:
+  role: user
+  content: "for the kaiten sushi place — will yujin enjoy it?"
+
+assertions:
+  - kind: response_contains
+    pattern: "\\b(she|her)\\b"
+  - kind: response_does_not_contain
+    pattern: "\\b(he|his|him)\\b"
+  - kind: memory_tool_called_with_kind
+    tool_kind: entity

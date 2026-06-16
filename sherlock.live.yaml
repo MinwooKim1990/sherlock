@@ -41,12 +41,17 @@ storage:
   vector_db: chroma
   vector_path: ./live_runs/sherlock_vectors
   embedding:
-    provider: fake
-    model: fake-embedding
-    # To use real embeddings instead, swap to:
+    # v0.5.0: real local embeddings by default (fastembed, multilingual,
+    # no API key). Falls back to fake with a warning if fastembed/model
+    # is unavailable. Install: pip install sherlock[embeddings]
+    provider: local
+    model: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+    # For a keyed provider instead:
     # provider: openai
     # model: text-embedding-3-small
     # api_key_env: OPENAI_API_KEY
+    # For hermetic offline tests:
+    # provider: fake
 
 memory:
   k_turn_min: 3
@@ -64,10 +69,18 @@ memory:
     forgotten_after_turns: 24
 
 search:
-  provider: tavily
-  api_key_env: TAVILY_API_KEY
+  # v0.3.0: multi-provider. Default is DuckDuckGo (no key needed).
+  # Switch to a keyed provider (tavily/brave/valyu) when you want
+  # higher-quality results or per-engine extract endpoints.
+  provider: duckduckgo
+  # api_key: ...
+  # api_key_env: TAVILY_API_KEY
   always_on: true
   inject_datetime: true
+  # Optional per-role split — see sherlock.example.yaml for details.
+  # main_provider: duckduckgo
+  # inference_provider: tavily
+  # inference_api_key_env: TAVILY_API_KEY
 
 inference:
   # SPEC §10.4: LLM-3 dormant first N turns to avoid uninformed inference.

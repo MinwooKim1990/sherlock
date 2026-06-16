@@ -1,0 +1,32 @@
+name: implicit_ask_should_i_buy
+category: implicit_ask
+description: T14-style — "should i buy X" is rarely a permission question; assistant must name the underlying regret-anxiety, not give a yes/no.
+
+setup:
+  - role: persona_hint
+    content: "casual conversational assistant"
+  - role: user
+    content: "freelance designer, mostly figma + tailwind. light illustration as a hobby"
+  - role: user
+    content: "been pricing the wacom cintiq pro 27 (~$2.5k) vs ipad pro M5 + pencil (~$1.8k)"
+
+trigger:
+  role: user
+  content: "should i buy the wacom?"
+
+assertions:
+  - kind: response_contains
+    pattern: "(real(ly)? asking|underneath|actual question|regret|locked|portab|usage)"
+  - kind: response_does_not_contain
+    pattern: "^(yes|no)[,.]"
+  - kind: response_contains
+    pattern: "(figma|illustration|workflow|color|pressure|how (much|often))"
+  - kind: companion_tag_emitted
+    name: infer
+  - kind: llm_judge
+    criterion: >
+      The reply reframes "should I buy the wacom?" as a decision about
+      fit/regret (how the user actually works — figma/tailwind, hobby
+      illustration, portability, the $2.5k vs $1.8k tradeoff) rather than
+      giving a bare yes/no verdict. It surfaces the real decision factors
+      and helps the user decide, instead of deciding for them.

@@ -22,14 +22,14 @@ Kept (genuine architectural primitives):
   - Bulletproof Section 1 fallback when consolidator fails
   - Companion-tag stripping (so LLM-1 leak doesn't pollute output)
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 from sherlock.agent import Sherlock
-from sherlock.memory.entry import MemoryEntry, MemorySource, MemoryState, MemoryType
+from sherlock.memory.entry import MemoryEntry, MemorySource, MemoryType
 from sherlock.providers.base import ChatMessage
-
 
 _REFLECTION_SYSTEM = """\
 You are the REFLECTION VALIDATOR for the Sherlock memory-curation system.
@@ -252,7 +252,9 @@ def _build_transcript(agent: Sherlock, *, assistant_cap: int = 1200) -> str:
             lines.append(f"### Turn {turn}")
             lines.append(f"**User:** {m.content}")
         else:
-            content = m.content if len(m.content) <= assistant_cap else m.content[:assistant_cap] + "…"
+            content = (
+                m.content if len(m.content) <= assistant_cap else m.content[:assistant_cap] + "…"
+            )
             lines.append(f"**Assistant:** {content}")
             lines.append("")
     return "\n".join(lines)
@@ -279,7 +281,9 @@ def _build_first_appearance_table(agent: Sherlock) -> str:
     non_sys = [m for m in msgs if m.role != "system"]
     # Significant tokens: capitalised words ≥4 chars, or numeric date/price patterns.
     cap_token = _re.compile(r"\b[A-Z][a-z]{3,}\b")
-    date_token = _re.compile(r"\b(?:20\d\d|June|July|August|January|February|March|April|May)\b", _re.I)
+    date_token = _re.compile(
+        r"\b(?:20\d\d|June|July|August|January|February|March|April|May)\b", _re.I
+    )
     price_token = _re.compile(r"[¥₩$]\s?[\d,]+|₩?\s?[\d,]+\s?(?:KRW|JPY|USD)")
 
     first_seen: dict[str, tuple[int, str]] = {}  # token -> (turn, role)
@@ -287,7 +291,11 @@ def _build_first_appearance_table(agent: Sherlock) -> str:
     for m in non_sys:
         if m.role == "user":
             turn += 1
-        for tok in set(cap_token.findall(m.content) + date_token.findall(m.content) + price_token.findall(m.content)):
+        for tok in set(
+            cap_token.findall(m.content)
+            + date_token.findall(m.content)
+            + price_token.findall(m.content)
+        ):
             tok_norm = tok.strip().lower()
             if tok_norm in {"the", "this", "that", "user", "you", "yes", "well"}:
                 continue
@@ -300,12 +308,17 @@ def _build_first_appearance_table(agent: Sherlock) -> str:
     user_first.sort(key=lambda p: p[1])
     asst_first.sort(key=lambda p: p[1])
 
-    lines = ["FACT-FIRST-APPEARANCE TABLE", "",
-             "Tokens whose FIRST appearance is in a USER turn (user-stated facts; safe to echo):"]
+    lines = [
+        "FACT-FIRST-APPEARANCE TABLE",
+        "",
+        "Tokens whose FIRST appearance is in a USER turn (user-stated facts; safe to echo):",
+    ]
     for tok, t in user_first[:80]:
         lines.append(f"  T{t} (user): {tok}")
     lines.append("")
-    lines.append("Tokens whose FIRST appearance is in an ASSISTANT turn (POTENTIAL CONFABULATIONS — verify against transcript before echoing as fact):")
+    lines.append(
+        "Tokens whose FIRST appearance is in an ASSISTANT turn (POTENTIAL CONFABULATIONS — verify against transcript before echoing as fact):"
+    )
     for tok, t in asst_first[:60]:
         lines.append(f"  T{t} (assistant-first): {tok}")
     return "\n".join(lines)
@@ -317,7 +330,8 @@ def _build_provenance_ledger(all_mems: list[MemoryEntry]) -> str:
     """
     user_mems = [m for m in all_mems if m.type == MemoryType.USER_UTTERANCE]
     system_pinned = [
-        m for m in all_mems
+        m
+        for m in all_mems
         if m.source == MemorySource.SYSTEM and m.type != MemoryType.USER_UTTERANCE
     ]
     user_block = "\n".join(f"- {u.content[:200]}" for u in user_mems[:50]) or "(none)"
@@ -344,14 +358,17 @@ def _build_memory_state(all_mems: list[MemoryEntry]) -> str:
     for m in all_mems:
         state_by_state[m.state.value] = state_by_state.get(m.state.value, 0) + 1
     summ_block = "\n\n".join(f"- {s.content}" for s in summaries[:25]) or "(none)"
-    fact_block = "\n".join(
-        f"- ({m.source.value}) {m.content[:200]}" for m in facts[:25]
-    ) or "(none)"
-    inf_block = "\n\n".join(
-        f"- (conf {m.confidence:.2f}, {m.tags or 'na'}) {m.content[:200]}\n"
-        f"    evidence={m.evidence[:200]}"
-        for m in inferences[:25]
-    ) or "(none)"
+    fact_block = (
+        "\n".join(f"- ({m.source.value}) {m.content[:200]}" for m in facts[:25]) or "(none)"
+    )
+    inf_block = (
+        "\n\n".join(
+            f"- (conf {m.confidence:.2f}, {m.tags or 'na'}) {m.content[:200]}\n"
+            f"    evidence={m.evidence[:200]}"
+            for m in inferences[:25]
+        )
+        or "(none)"
+    )
     return (
         f"Memory state at end of replay: {len(all_mems)} entries; "
         f"pinned={len(pinned)}; states={state_by_state}\n\n"
@@ -494,6 +511,7 @@ def _targeted_reflection(
 
     try:
         from sherlock.agent import _parse_companions_tag
+
         ref_messages = [
             ChatMessage(role="system", content=_TARGETED_REFLECTION_SYSTEM),
             ChatMessage(role="user", content=user_msg),
@@ -506,6 +524,7 @@ def _targeted_reflection(
             return ref_text
     except Exception as exc:
         import sys
+
         print(
             f"  [targeted-reflection error] {type(exc).__name__}: {str(exc)[:200]}",
             file=sys.stderr,
@@ -524,7 +543,12 @@ def _bulletproof_fallback(all_mems: list[MemoryEntry]) -> FormattedOutput:
     user_pins = [p for p in pinned if p.source != MemorySource.SYSTEM]
     sys_pins = [p for p in pinned if p.source == MemorySource.SYSTEM]
 
-    s1_lines: list[str] = ["## Section 1 — Summary", "", "_(consolidator unavailable; deterministic fallback)_", ""]
+    s1_lines: list[str] = [
+        "## Section 1 — Summary",
+        "",
+        "_(consolidator unavailable; deterministic fallback)_",
+        "",
+    ]
     if user_pins:
         s1_lines.append("**Anchor facts:**")
         for p in sorted(user_pins, key=lambda x: -x.confidence)[:25]:
@@ -535,7 +559,12 @@ def _bulletproof_fallback(all_mems: list[MemoryEntry]) -> FormattedOutput:
         for s in sorted(summaries, key=lambda x: x.created_at):
             s1_lines.append(f"- {s.content.strip()}")
 
-    s2_lines = ["## Section 2 — Inference", "", "_(consolidator unavailable; raw inference dump below)_", ""]
+    s2_lines = [
+        "## Section 2 — Inference",
+        "",
+        "_(consolidator unavailable; raw inference dump below)_",
+        "",
+    ]
     for m in inferences[:20]:
         s2_lines.append(f"- (conf {m.confidence:.2f}) {m.content}")
 
@@ -551,8 +580,11 @@ def _bulletproof_fallback(all_mems: list[MemoryEntry]) -> FormattedOutput:
     s3_lines.append("### ACTIVE / BACKGROUND / DROP")
     s3_lines.append("_(consolidator unavailable; non-pinned classification skipped)_")
 
-    s4_lines = ["## Section 4 — Tool calls Sherlock should have made",
-                "", "_(consolidator unavailable)_"]
+    s4_lines = [
+        "## Section 4 — Tool calls Sherlock should have made",
+        "",
+        "_(consolidator unavailable)_",
+    ]
 
     return FormattedOutput(
         "\n".join(s1_lines),
@@ -574,7 +606,6 @@ def format_sherlock_output(agent: Sherlock) -> FormattedOutput:
     all_mems = agent.memory.list(conversation_id=agent.conversation_id)
     transcript = _build_transcript(agent)
     ledger = _build_provenance_ledger(all_mems)
-    memory_state = _build_memory_state(all_mems)
     first_seen = _build_first_appearance_table(agent)
 
     # Loop-19: drop memory_state from consolidator prompt (it duplicates
@@ -609,10 +640,12 @@ def format_sherlock_output(agent: Sherlock) -> FormattedOutput:
         text = (resp.text or "").strip()
         # Strip any companion tag the main model may have leaked.
         from sherlock.agent import _parse_companions_tag
+
         text, _ = _parse_companions_tag(text)
         consolidator_text = text.strip()
     except Exception as exc:
         import sys
+
         print(
             f"  [consolidator pass-1 error] {type(exc).__name__}: {str(exc)[:200]}",
             file=sys.stderr,
@@ -621,6 +654,7 @@ def format_sherlock_output(agent: Sherlock) -> FormattedOutput:
 
     if not consolidator_text:
         import sys
+
         print(
             f"  [consolidator pass-1 returned empty; user_msg size = {len(user_msg)} chars]",
             file=sys.stderr,

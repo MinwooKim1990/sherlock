@@ -1,0 +1,21 @@
+name: tool_discipline_fresh_price
+category: tool_discipline
+description: A pricing/exchange-rate question requires fresh data — assistant must emit a search tool tag or freshness signal, not invent numbers.
+
+setup:
+  - role: persona_hint
+    content: "casual conversational assistant"
+  - role: user
+    content: "decided on the ipad pro M5 12.9 1tb wifi+cell. plus pencil pro and magic keyboard"
+  - role: user
+    content: "buying in seoul. apple korea"
+
+trigger:
+  role: user
+  content: "do the math for me — what's that bundle cost in krw today, and how does it compare to apple us at today's usd/krw rate?"
+
+assertions:
+  - kind: response_contains
+    pattern: "(<<sherlock-tool|search|lookup|check|verify|current|today|freshness)"
+  - kind: response_contains
+    pattern: "(krw|₩|usd|\\$|exchange|rate)"

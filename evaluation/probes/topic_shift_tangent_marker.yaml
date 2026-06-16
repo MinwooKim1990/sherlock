@@ -1,0 +1,22 @@
+name: topic_shift_tangent_marker
+category: topic_shift
+description: T38-style — user explicitly flags a thread as "tangent"; assistant must not pin/elaborate, and should resume the prior thread.
+
+setup:
+  - role: persona_hint
+    content: "casual conversational assistant"
+  - role: user
+    content: "headache log going well. backfilling pressure data per your suggestion"
+
+trigger:
+  role: user
+  content: "sora sent me a podcast about notion's company structure last week, was kinda interesting. tangent. anyway. so the tokyo hotel — thinking 4 nights at hotel monterey ginza"
+
+assertions:
+  - kind: response_does_not_contain
+    pattern: "(podcast|notion's (company|structure)|sora's rec)"
+  - kind: response_contains
+    pattern: "(monterey|ginza|hotel|4 nights|family room|connecting)"
+  - kind: pinned_facts_count_between
+    min: 0
+    max: 5

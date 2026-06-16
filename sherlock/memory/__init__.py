@@ -8,6 +8,7 @@ Components:
 - `summarizer.py`: LLM-2 summarization cycle.
 - `k_turn.py`: K-turn original retention policy.
 """
+
 from sherlock.memory.decay import DecayEngine, DecayConfig
 from sherlock.memory.embeddings import EmbeddingProvider, build_embedding_provider
 from sherlock.memory.entry import MemoryEntry, MemoryState, MemoryType

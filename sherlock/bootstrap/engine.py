@@ -1,4 +1,5 @@
 """Bootstrap engine. Calls LLM-1 to author LLM-2 and LLM-3 system prompts."""
+
 from __future__ import annotations
 
 import json
@@ -63,7 +64,9 @@ class BootstrapEngine:
         for key in ("llm2_system_prompt", "llm3_system_prompt"):
             v = parsed[key]
             if not isinstance(v, str) or len(v) < 100:
-                raise ValueError(f"Bootstrap field {key} too short: {len(v) if isinstance(v, str) else type(v).__name__}")
+                raise ValueError(
+                    f"Bootstrap field {key} too short: {len(v) if isinstance(v, str) else type(v).__name__}"
+                )
         return BootstrapResult(
             llm2_system_prompt=parsed["llm2_system_prompt"],
             llm3_system_prompt=parsed["llm3_system_prompt"],

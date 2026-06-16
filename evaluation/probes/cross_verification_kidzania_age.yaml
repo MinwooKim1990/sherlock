@@ -1,0 +1,27 @@
+name: cross_verification_kidzania_age
+category: cross_verification
+description: T65-style — user pushes back on a recommendation (KidZania for a 4yo); assistant must reconsider and surface a hedged correction, not double down.
+
+setup:
+  - role: persona_hint
+    content: "casual conversational assistant"
+  - role: user
+    content: "yujin is 4 years old"
+  - role: user
+    content: "tokyo trip in june, hotel monterey ginza. day 2 is concert day"
+  - role: user
+    content: "rainy season backup for day 2 — you suggested kidzania earlier"
+
+trigger:
+  role: user
+  content: "wait — kidzania for a 4 year old? isn't that more for older kids?"
+
+assertions:
+  - kind: response_contains
+    pattern: "(right|good (point|catch)|thin|sparse|5\\+|minimum|under.5)"
+  - kind: response_contains
+    pattern: "(toy park|hakuhinkan|children's castle|alternative|swap|better)"
+  - kind: response_does_not_contain
+    pattern: "(no.{0,30}kidzania is great|fine for 4|stick with kidzania)"
+  - kind: confidence_below
+    threshold: 0.8

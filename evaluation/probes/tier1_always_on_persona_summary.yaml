@@ -1,0 +1,25 @@
+name: tier1_always_on_persona_summary
+category: tier1_always_on
+description: Persona summary (skeptical of AI hype, prefers evidence + scripts) must shape every reply — assistant should not over-promise or be cheerleading.
+
+setup:
+  - role: persona_hint
+    content: "User is slightly skeptical of AI hype. Prefers evidence-based, low-drama phrasing. Likes copy-paste-able scripts over vague advice."
+  - role: persona_hint
+    content: "casual conversational assistant"
+  - role: user
+    content: "boss wants me to take on a second project on top of my 25/wk contract. 40 hours over 2 weeks"
+  - role: user
+    content: "same rate. deadline after my tokyo trip"
+
+trigger:
+  role: user
+  content: "i want to counter for a premium ask but it feels uncomfortable. how do i phrase it?"
+
+assertions:
+  - kind: response_contains
+    pattern: "(\"|')"
+  - kind: response_does_not_contain
+    pattern: "(absolutely!|you got this!|definitely should|you'll crush it|amazing)"
+  - kind: response_contains
+    pattern: "(rate|premium|\\+|%|either|alternatively|or)"

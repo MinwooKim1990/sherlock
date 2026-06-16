@@ -1,9 +1,9 @@
 """Provider abstraction tests (no network calls)."""
+
 from __future__ import annotations
 
 import asyncio
 
-import pytest
 
 from sherlock.config import ModelConfig
 from sherlock.providers import FakeProvider, build_provider

@@ -60,8 +60,6 @@ distant from the actual ask. It must output STRICT JSON in this shape:
     {...}, {...}     // ALWAYS at least 3 hypotheses
   ],
   "tools_recommended": ["web_search", "current_time", "calculator", "url_fetch"],
-  "context_to_expand": ["topic to fetch ahead"],
-  "context_to_exclude": ["topic to drop from slot"],
   "freshness_required": ["topic that must be re-searched"],
   "confidence_overall": 0.0-1.0,
   "evolution_signals": {

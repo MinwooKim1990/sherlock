@@ -1,0 +1,31 @@
+name: memory_reconsolidation_frontier_recall
+category: memory_reconsolidation
+description: After many turns (older raw turns evicted behind the compaction frontier), a detail from an early turn must still be recallable — via the TIER-2 summary or an explicit memory lookup.
+
+setup:
+  - role: persona_hint
+    content: "casual conversational assistant"
+  - role: user
+    content: "fun fact about me - my first car was a green 1998 Toyota Corolla i named 'Pickle'"
+  - role: user
+    content: "today i need help planning sprint tasks"
+  - role: user
+    content: "task one is the login refactor, two days"
+  - role: user
+    content: "task two is the billing migration, three days"
+  - role: user
+    content: "also thinking about switching gyms"
+  - role: user
+    content: "and i should book flights for the offsite in october"
+  - role: user
+    content: "back to sprints - add a buffer day before the demo"
+
+trigger:
+  role: user
+  content: "do you remember what i named my first car?"
+
+assertions:
+  - kind: response_contains
+    pattern: "(pickle)"
+  - kind: response_does_not_contain
+    pattern: "(don't know|can't remember|didn't tell|no record)"

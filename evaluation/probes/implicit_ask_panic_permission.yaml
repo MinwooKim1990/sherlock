@@ -1,0 +1,29 @@
+name: implicit_ask_panic_permission
+category: implicit_ask
+description: T4-style — "should i panic about X" is permission-seeking, not info-seeking. Assistant should validate and name the implicit ask.
+
+setup:
+  - role: persona_hint
+    content: "casual conversational assistant"
+  - role: user
+    content: "ok need to think out loud for a sec"
+
+trigger:
+  role: user
+  content: "head's killing me today, third migraine this week. is that a thing i should panic about"
+
+assertions:
+  - kind: response_contains
+    pattern: "(not (being )?dramatic|reasonable (to|concern)|worth (flagging|seeing|a workup)|threshold|4\\+|booking)"
+  - kind: response_does_not_contain
+    pattern: "(don't worry|it's fine|probably nothing|relax)"
+  - kind: companion_tag_emitted
+    name: infer
+  - kind: llm_judge
+    criterion: >
+      The reply treats "is that a thing I should panic about" as
+      permission-seeking / reassurance-seeking, not a request for raw
+      medical facts. It should validate the user's worry as reasonable
+      AND give a concrete next step (e.g. when migraines warrant a
+      doctor visit), without either dismissing the concern or
+      catastrophising.

@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sherlock Live Inspector</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
+<style>
+  body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans KR", sans-serif; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .scroll { scrollbar-width: thin; scrollbar-color: #cbd5e1 transparent; }
+  .scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+  .scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+  .flow-card { animation: pop .25s ease-out; }
+  @keyframes pop { from { opacity: 0; transform: translateY(6px);} to {opacity:1; transform:none;} }
+  .pulse-dot { animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:.3;} }
+  details>summary { cursor: pointer; list-style: none; }
+  details>summary::-webkit-details-marker { display:none; }
+  .tabbtn.active { background:#0f172a; color:#fff; }
+  /* v1.3: draggable column resizers */
+  .col-resizer { flex:0 0 6px; cursor:col-resize; background:transparent; transition:background .15s; }
+  .col-resizer:hover, .col-resizer.dragging { background:#93c5fd; }
+  /* v1.3: minimal prose styling for markdown-rendered assistant bubbles */
+  .prose-md h1, .prose-md h2, .prose-md h3, .prose-md h4 { font-weight:700; margin:.45em 0 .2em; }
+  .prose-md h1 { font-size:1.15em; } .prose-md h2 { font-size:1.1em; } .prose-md h3 { font-size:1.05em; }
+  .prose-md p { margin:.35em 0; }
+  .prose-md p:first-child, .prose-md h1:first-child, .prose-md h2:first-child, .prose-md h3:first-child { margin-top:0; }
+  .prose-md p:last-child { margin-bottom:0; }
+  .prose-md ul, .prose-md ol { padding-left:1.25em; margin:.35em 0; }
+  .prose-md ul { list-style:disc; } .prose-md ol { list-style:decimal; }
+  .prose-md code { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; background:#f1f5f9; padding:.1em .3em; border-radius:4px; font-size:.92em; }
+  .prose-md pre { background:#0f172a; color:#e2e8f0; padding:.6em .8em; border-radius:8px; overflow-x:auto; margin:.4em 0; }
+  .prose-md pre code { background:transparent; padding:0; color:inherit; }
+  .prose-md blockquote { border-left:3px solid #cbd5e1; padding-left:.6em; color:#64748b; margin:.35em 0; }
+  .prose-md a { color:#2563eb; text-decoration:underline; }
+  .prose-md hr { border-top:1px solid #e2e8f0; margin:.5em 0; }
+</style>
+</head>
+<body class="bg-slate-100 text-slate-800 h-screen overflow-hidden">
+
+<!-- ============ SETUP SCREEN ============ -->
+<div id="setup" class="h-full flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl shadow-xl w-full max-w-2xl p-7 space-y-5">
+    <div>
+      <h1 class="text-2xl font-bold tracking-tight">🔍 Sherlock Live Inspector</h1>
+      <p class="text-sm text-slate-500 mt-1">Bring any LLM — Gemini, OpenAI, Anthropic, or a local OpenAI-compatible server — and watch Sherlock curate its context in real time.</p>
+    </div>
+
+    <div class="space-y-2">
+      <label class="text-sm font-semibold">Providers <span class="text-slate-400 font-normal">— connect at least one; mix freely per role</span></label>
+      <div class="grid gap-1.5">
+        <div class="flex gap-2 items-center">
+          <span class="w-[72px] text-xs font-semibold shrink-0">Gemini</span>
+          <input id="key-gemini" type="password" placeholder="AIza…" class="flex-1 border rounded-lg px-3 py-1.5 text-xs mono" />
+          <button data-prov="gemini" class="connectBtn bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg shrink-0">Connect</button>
+          <span id="st-gemini" class="text-[11px] text-slate-400 w-20 text-right shrink-0"></span>
+        </div>
+        <div class="flex gap-2 items-center">
+          <span class="w-[72px] text-xs font-semibold shrink-0">OpenAI</span>
+          <input id="key-openai" type="password" placeholder="sk-…" class="flex-1 border rounded-lg px-3 py-1.5 text-xs mono" />
+          <button data-prov="openai" class="connectBtn bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg shrink-0">Connect</button>
+          <span id="st-openai" class="text-[11px] text-slate-400 w-20 text-right shrink-0"></span>
+        </div>
+        <div class="flex gap-2 items-center">
+          <span class="w-[72px] text-xs font-semibold shrink-0">Anthropic</span>
+          <input id="key-anthropic" type="password" placeholder="sk-ant-…" class="flex-1 border rounded-lg px-3 py-1.5 text-xs mono" />
+          <button data-prov="anthropic" class="connectBtn bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg shrink-0">Connect</button>
+          <span id="st-anthropic" class="text-[11px] text-slate-400 w-20 text-right shrink-0"></span>
+        </div>
+        <div class="flex gap-2 items-center">
+          <span class="w-[72px] text-xs font-semibold shrink-0">Local</span>
+          <input id="url-local" placeholder="http://localhost:11434  (Ollama · LM Studio · vLLM)" class="flex-1 border rounded-lg px-3 py-1.5 text-xs mono" />
+          <input id="key-local" type="password" placeholder="key (optional)" class="w-28 border rounded-lg px-2 py-1.5 text-xs mono" />
+          <button data-prov="local" class="connectBtn bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg shrink-0">Connect</button>
+          <span id="st-local" class="text-[11px] text-slate-400 w-20 text-right shrink-0"></span>
+        </div>
+      </div>
+      <p id="modelStatus" class="text-xs text-slate-500"></p>
+    </div>
+
+    <div class="grid grid-cols-3 gap-3">
+      <div>
+        <label class="text-xs font-semibold text-blue-700">Main · LLM-1</label>
+        <select id="modelMain" class="w-full border rounded-lg px-2 py-2 text-xs mono mt-1" disabled></select>
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-green-700">Summarizer · LLM-2</label>
+        <select id="modelSummary" class="w-full border rounded-lg px-2 py-2 text-xs mono mt-1" disabled></select>
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-purple-700">Inferencer · LLM-3</label>
+        <select id="modelInference" class="w-full border rounded-lg px-2 py-2 text-xs mono mt-1" disabled></select>
+      </div>
+    </div>
+
+    <div>
+      <label class="text-sm font-semibold">System prompt (LLM-1 persona)</label>
+      <textarea id="systemPrompt" rows="3" class="w-full border rounded-lg px-3 py-2 text-sm mt-1">You are a warm, perceptive personal assistant. Keep replies concise.</textarea>
+    </div>
+
+    <div class="flex flex-wrap gap-4 text-sm">
+      <label class="flex items-center gap-2"><input id="optForce" type="checkbox" checked /> <b>🔬 Always run reasoning</b> (LLM-2 + LLM-3 every turn)</label>
+      <label class="flex items-center gap-2"><input id="optBackground" type="checkbox" checked /> Background</label>
+      <label class="flex items-center gap-2"><input id="optRedact" type="checkbox" checked /> Redact secrets</label>
+    </div>
+
+    <div class="flex items-center gap-2 text-sm">
+      <label class="font-semibold">🌐 Web search</label>
+      <select id="searchEngine" class="border rounded-lg px-2 py-1.5 text-xs">
+        <option value="duckduckgo">DuckDuckGo (free, no key)</option>
+        <option value="brave">Brave (key)</option>
+        <option value="tavily">Tavily (key)</option>
+        <option value="valyu">Valyu (key)</option>
+        <option value="off">Off</option>
+      </select>
+      <input id="searchKey" type="password" placeholder="search API key" class="flex-1 border rounded-lg px-3 py-1.5 text-xs mono hidden" />
+    </div>
+    <p class="text-xs text-slate-500 -mt-2">LLM-1 (search + fetch) and LLM-3 (freshness) both use this engine. DuckDuckGo is free but weak for news; Brave/Tavily/Valyu give far better results with a key.</p>
+    <p class="text-xs text-slate-500 -mt-2">💡 With <b>Always run reasoning</b> on, every message you send triggers LLM-3 inference + LLM-2 compaction — so the 🧠 Inference / 🗜 Compaction panels always fill, no matter what you type.</p>
+
+    <button id="startBtn" class="w-full bg-slate-900 hover:bg-black text-white font-semibold py-2.5 rounded-lg disabled:opacity-40" disabled>Start session</button>
+    <p id="startStatus" class="text-xs text-slate-500 text-center"></p>
+  </div>
+</div>
+
+<!-- ============ MAIN SCREEN ============ -->
+<div id="main" class="h-full hidden flex-col">
+  <!-- top bar -->
+  <div class="bg-slate-900 text-white px-4 py-2 flex items-center gap-4 text-xs">
+    <span class="font-bold">🔍 Sherlock Live Inspector</span>
+    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-blue-400"></span>L1 <select id="liveMain" class="bg-slate-800 rounded px-1 py-0.5 mono"></select></span>
+    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-green-400"></span>L2 <select id="liveSummary" class="bg-slate-800 rounded px-1 py-0.5 mono"></select></span>
+    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-purple-400"></span>L3 <select id="liveInference" class="bg-slate-800 rounded px-1 py-0.5 mono"></select></span>
+    <span id="tokBar" class="ml-auto mono text-slate-300" title="cumulative tokens this session (in+out per role)"></span>
+    <span id="wsStatus" class="text-slate-400">ws: …</span>
+    <button id="exportBtn" class="bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded" title="download this session as a markdown debugging doc">⬇ export</button>
+    <button id="newSession" class="bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded">new session</button>
+  </div>
+
+  <div id="cols" class="flex-1 flex min-h-0">
+    <!-- LEFT: Sherlock chat -->
+    <div id="colSherlock" class="min-w-[240px] flex flex-col border-r bg-white" style="flex:0 0 40%">
+      <div id="chat" class="flex-1 overflow-y-auto scroll p-4 space-y-3"></div>
+      <div id="thinking" class="hidden px-4 py-1 text-xs text-purple-600 items-center gap-2">
+        <span class="w-2 h-2 rounded-full bg-purple-500 pulse-dot"></span> <span id="thinkingLabel">Sherlock is thinking…</span>
+      </div>
+      <div id="examples" class="px-3 pt-2 flex flex-wrap gap-1.5 text-[11px]">
+        <span class="text-slate-400 self-center">try:</span>
+        <button class="ex-chip border rounded-full px-2 py-0.5 hover:bg-slate-100">딸 유진이가 땅콩 알레르기가 있어</button>
+        <button class="ex-chip border rounded-full px-2 py-0.5 hover:bg-slate-100">회사 그만둘까 고민이야</button>
+        <button class="ex-chip border rounded-full px-2 py-0.5 hover:bg-slate-100">다음 주 도쿄 가는데 호텔 추천해줘</button>
+        <button class="ex-chip border rounded-full px-2 py-0.5 hover:bg-slate-100">오늘 서울 날씨 검색해줘</button>
+        <button class="ex-chip border rounded-full px-2 py-0.5 hover:bg-slate-100">내가 아까 뭐라고 했는지 기억해?</button>
+      </div>
+      <!-- v0.7: deep-research approval banner -->
+      <div id="drBanner" class="hidden mx-3 mb-2 rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-2 text-xs">
+        <div class="font-semibold text-indigo-800">🔬 Deep research proposed</div>
+        <div id="drBannerPlan" class="text-indigo-700 mt-0.5 leading-snug"></div>
+        <div class="flex gap-2 mt-2">
+          <button id="drApprove" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-3 py-1 rounded">Approve</button>
+          <button id="drSkip" class="bg-white border border-slate-300 hover:bg-slate-100 px-3 py-1 rounded">Skip</button>
+          <span class="self-center text-slate-500">…or just reply “yes”.</span>
+        </div>
+      </div>
+      <div class="p-3 pt-2 border-t flex gap-2">
+        <select id="chatMode" class="border rounded-lg px-2 py-2 text-xs shrink-0" title="who answers: Sherlock, the bare model, or both side-by-side">
+          <option value="sherlock">Sherlock</option>
+          <option value="single">Single LLM</option>
+          <option value="both">비교 (A/B)</option>
+        </select>
+        <label id="baselineSearchWrap" class="hidden items-center gap-1 text-[10px] text-slate-500 shrink-0" title="공정 비교: Single LLM에도 같은 검색엔진으로 1회 검색 결과를 줍니다"><input id="baselineSearch" type="checkbox" checked />🔎single</label>
+        <input id="msg" placeholder="Say something…" class="flex-1 border rounded-lg px-3 py-2 text-sm" />
+        <button id="send" class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 rounded-lg">Send</button>
+      </div>
+    </div>
+
+    <!-- resizer: Sherlock ↔ Single-LLM (both mode only) -->
+    <div id="rsA" class="col-resizer hidden" title="drag to resize"></div>
+
+    <!-- MIDDLE: Single-LLM chat (visible only in 비교 A/B mode) -->
+    <div id="colSingle" class="min-w-[240px] hidden flex-col border-r bg-white" style="flex:0 0 28%">
+      <div class="px-3 py-1.5 text-[10px] font-bold text-slate-500 uppercase tracking-wide border-b bg-slate-50 shrink-0">⚖ Single LLM (baseline)</div>
+      <div id="chatB" class="flex-1 overflow-y-auto scroll p-4 space-y-3"></div>
+    </div>
+
+    <!-- resizer: chat ↔ system panel -->
+    <div id="rsB" class="col-resizer" title="drag to resize"></div>
+
+    <!-- RIGHT: internals -->
+    <div id="colPanel" class="flex-1 flex flex-col min-w-[240px] bg-slate-50">
+      <div class="flex gap-1 px-3 pt-2 text-xs border-b bg-white overflow-x-auto scroll">
+        <button data-tab="flow" class="tabbtn active px-3 py-1.5 rounded-t-lg font-semibold">⚡ Flow</button>
+        <button data-tab="slot" class="tabbtn px-3 py-1.5 rounded-t-lg font-semibold">🧱 Slot</button>
+        <button data-tab="llmio" class="tabbtn px-3 py-1.5 rounded-t-lg font-semibold">💬 LLM I/O</button>
+        <button data-tab="infer" class="tabbtn px-3 py-1.5 rounded-t-lg font-semibold text-purple-700">🧠 Inference</button>
+        <button data-tab="compact" class="tabbtn px-3 py-1.5 rounded-t-lg font-semibold text-green-700">🗜 Compaction</button>
+        <button data-tab="memory" class="tabbtn px-3 py-1.5 rounded-t-lg font-semibold text-amber-700">🗃 Memory</button>
+        <button data-tab="carry" class="tabbtn px-3 py-1.5 rounded-t-lg font-semibold text-rose-700">↪ Carry</button>
+        <button data-tab="research" class="tabbtn px-3 py-1.5 rounded-t-lg font-semibold text-indigo-700">🔬 Research</button>
+      </div>
+      <div class="flex-1 overflow-y-auto scroll p-3">
+        <div id="tab-flow"></div>
+        <div id="tab-slot" class="hidden"></div>
+        <div id="tab-llmio" class="hidden grid gap-3"></div>
+        <div id="tab-infer" class="hidden"></div>
+        <div id="tab-compact" class="hidden"></div>
+        <div id="tab-memory" class="hidden"></div>
+        <div id="tab-carry" class="hidden"></div>
+        <div id="tab-research" class="hidden"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

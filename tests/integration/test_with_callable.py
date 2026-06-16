@@ -1,4 +1,5 @@
 """Sherlock.with_callable() — bring-your-own-LLM end-to-end smoke."""
+
 from __future__ import annotations
 
 import pytest
@@ -84,6 +85,74 @@ def test_with_callable_separate_companions(tmp_path):
     assert len(main_calls) >= 1
     # Inferer fires when LLM-1 requests it AND cold-start clears (turn>=10):
     assert len(inference_calls) >= 1
+
+
+def test_system_prompt_layering_default_appends(tmp_path):
+    """User prompt stays primary; Sherlock extension appended after it."""
+    seen: list[str] = []
+
+    def my_llm(messages):
+        # First message is the composed system prompt.
+        if messages and messages[0].get("role") == "system":
+            seen.append(messages[0]["content"])
+        return "ok."
+
+    agent = Sherlock.with_callable(
+        main_chat=my_llm,
+        system_prompt="ROLE: pirate-themed help desk.",
+        storage_dir=tmp_path,
+    )
+    agent.chat("hi")
+    assert seen, "system prompt never reached the callable"
+    composed = seen[0]
+    # User prompt appears verbatim:
+    assert "ROLE: pirate-themed help desk." in composed
+    # Sherlock extension rides alongside:
+    assert "SHERLOCK SYSTEM" in composed
+    # And the user portion comes first (default position = "after"):
+    assert composed.index("pirate") < composed.index("SHERLOCK SYSTEM")
+    # Inspector still records the user-only and extension halves:
+    assert "pirate" in agent._user_system_prompt
+    assert "SHERLOCK SYSTEM" in agent._sherlock_extension
+
+
+def test_system_prompt_layering_before_position(tmp_path):
+    seen: list[str] = []
+
+    def my_llm(messages):
+        if messages and messages[0].get("role") == "system":
+            seen.append(messages[0]["content"])
+        return "ok."
+
+    agent = Sherlock.with_callable(
+        main_chat=my_llm,
+        system_prompt="USER: be terse.",
+        storage_dir=tmp_path,
+        extension_position="before",
+    )
+    agent.chat("hi")
+    composed = seen[0]
+    assert composed.index("SHERLOCK SYSTEM") < composed.index("USER: be terse.")
+
+
+def test_system_prompt_layering_optout(tmp_path):
+    seen: list[str] = []
+
+    def my_llm(messages):
+        if messages and messages[0].get("role") == "system":
+            seen.append(messages[0]["content"])
+        return "ok."
+
+    agent = Sherlock.with_callable(
+        main_chat=my_llm,
+        system_prompt="ONLY MINE.",
+        storage_dir=tmp_path,
+        sherlock_extension="",
+    )
+    agent.chat("hi")
+    composed = seen[0]
+    assert "ONLY MINE." in composed
+    assert "SHERLOCK SYSTEM" not in composed
 
 
 @pytest.mark.asyncio

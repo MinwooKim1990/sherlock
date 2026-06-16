@@ -1,4 +1,5 @@
 """Builtin tools + a `@sherlock.tool` decorator (SPEC §5.6)."""
+
 from __future__ import annotations
 
 import inspect
@@ -95,9 +96,17 @@ def _current_time(tz_offset_hours: float = 0.0) -> dict:
 def _calculator(expression: str) -> dict:
     """Safe arithmetic eval."""
     allowed = {
-        "abs": abs, "round": round, "min": min, "max": max,
-        "sqrt": math.sqrt, "pow": math.pow, "log": math.log,
-        "sin": math.sin, "cos": math.cos, "pi": math.pi, "e": math.e,
+        "abs": abs,
+        "round": round,
+        "min": min,
+        "max": max,
+        "sqrt": math.sqrt,
+        "pow": math.pow,
+        "log": math.log,
+        "sin": math.sin,
+        "cos": math.cos,
+        "pi": math.pi,
+        "e": math.e,
     }
     try:
         result = eval(expression, {"__builtins__": {}}, allowed)
@@ -106,28 +115,68 @@ def _calculator(expression: str) -> dict:
     return {"result": result, "expression": expression}
 
 
-def _url_fetch(url: str, timeout: float = 10.0) -> dict:
-    """Fetch a URL and return its body (truncated)."""
+def _url_fetch(url: str, timeout: float = 10.0, resolver=None) -> dict:
+    """Fetch a URL and return its body (truncated).
+
+    v0.5.1: SSRF-guarded (defense-in-depth). Mirrors web_search._default_fetch —
+    refuses non-http(s) schemes and hosts resolving to private/loopback/link-
+    local/metadata IPs, and re-validates the final URL after redirects. Even
+    though this builtin is currently only called by trusted internal code,
+    guarding it means exposing the builtin registry as an LLM tool can't
+    reintroduce a localhost/metadata fetch hole. ``resolver`` is passed to the
+    guard (default: real DNS); inject one for offline tests.
+    """
+    from sherlock.security.urlguard import is_safe_url
+
+    ok, reason = is_safe_url(url, resolver=resolver)
+    if not ok:
+        return {"error": f"blocked unsafe url: {reason}", "url": url}
     try:
         with httpx.Client(timeout=timeout, follow_redirects=True) as client:
             r = client.get(url)
             r.raise_for_status()
+            ok2, reason2 = is_safe_url(str(r.url), resolver=resolver)
+            if not ok2:
+                return {"error": f"blocked redirect target: {reason2}", "url": str(r.url)}
             text = r.text[:8000]
             return {"url": url, "status": r.status_code, "text": text}
     except Exception as exc:
         return {"error": f"{type(exc).__name__}: {exc}", "url": url}
 
 
+# v0.5.0: file_read is NOT exposed via the agent's <<sherlock-tool: ...>>
+# tag dispatch (only search/fetch/memory are). It remains available via the
+# builtin registry for explicit, trusted callers. As defense-in-depth, an
+# optional root allowlist confines reads. Set SHERLOCK_FILE_READ_ROOTS to a
+# ':'-separated list of allowed directory prefixes; unset = no restriction
+# (back-compat for trusted local use).
 def _file_read(path: str, max_bytes: int = 100_000) -> dict:
+    import os
+    from pathlib import Path
+
+    roots_env = os.environ.get("SHERLOCK_FILE_READ_ROOTS", "").strip()
+    if roots_env:
+        try:
+            target = Path(path).resolve()
+            allowed = [Path(r).resolve() for r in roots_env.split(os.pathsep) if r]
+            if not any(target == root or root in target.parents for root in allowed):
+                return {"error": "path outside allowed roots", "path": path}
+        except Exception as exc:
+            return {"error": f"{type(exc).__name__}: {exc}", "path": path}
     try:
         with open(path, "rb") as fp:
             data = fp.read(max_bytes)
-        return {"path": path, "bytes_read": len(data), "text": data.decode("utf-8", errors="replace")}
+        return {
+            "path": path,
+            "bytes_read": len(data),
+            "text": data.decode("utf-8", errors="replace"),
+        }
     except Exception as exc:
         return {"error": f"{type(exc).__name__}: {exc}", "path": path}
 
 
 # Public dataclass wrappers (per spec mention of CurrentTime, Calculator, UrlFetch).
+
 
 @dataclass
 class CurrentTime:
@@ -155,7 +204,11 @@ builtin_registry.register(
     Tool(
         name="current_time",
         description="Return current UTC ISO timestamp + epoch.",
-        schema={"type": "object", "properties": {"tz_offset_hours": {"type": "number"}}, "required": []},
+        schema={
+            "type": "object",
+            "properties": {"tz_offset_hours": {"type": "number"}},
+            "required": [],
+        },
         func=_current_time,
     )
 )

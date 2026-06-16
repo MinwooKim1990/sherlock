@@ -1,0 +1,28 @@
+name: tier1_always_on_pinned_in_slot
+category: tier1_always_on
+description: Pinned anchor facts must be visible in every turn's context slot — verify by behavior on a turn unrelated to those facts.
+
+setup:
+  - role: persona_hint
+    content: "casual conversational assistant"
+  - role: user
+    content: "yujin is 4, has soba allergy, carries epipen. critical context"
+  - role: user
+    content: "i'm freelance, ~25 hrs/week with nimbus (vancouver analytics startup)"
+  - role: user
+    content: "tokyo trip 12-15 june, hotel monterey ginza"
+  - role: user
+    content: "boss is erin in vancouver, pacific time"
+
+trigger:
+  role: user
+  content: "ok totally different topic — recommend a good book to read on the flight"
+
+assertions:
+  - kind: pinned_facts_count_between
+    min: 3
+    max: 10
+  - kind: pinned_facts_include_keyword
+    keyword: "yujin"
+  - kind: pinned_facts_include_keyword
+    keyword: "tokyo"

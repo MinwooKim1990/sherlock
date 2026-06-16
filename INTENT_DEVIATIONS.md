@@ -162,3 +162,148 @@ Trivial — to revert, treat the small-model evaluator's score as authoritative 
 
 **User action requested (optional):**
 None — this is the user's explicit direction.
+
+---
+
+## DEVIATION-006 — v0.5.0 production-hardening interpretations
+
+**Date:** 2026-05-12
+**Context:** v0.5.0 took the system from MVP to production-usable after two
+Opus audits + an external analysis converged on the same defects.
+
+A few decisions deviate from the literal spec / earlier choices:
+
+1. **Hybrid embeddings, fake stays the test default.** The spec implied
+   real embeddings throughout. We default `with_callable(embedding=...)`
+   to `fake` (hermetic, offline CI) while `sherlock.live.yaml` and
+   `test_sherlock.py` default to `local` (fastembed multilingual). This
+   keeps the 160-test suite network-free while real usage gets real
+   semantic memory. Reversible via the `embedding=` param.
+
+2. **Companion fallback fires `compact` every N turns, but NOT `infer`.**
+   The user was emphatic that LLM-1 decides when to infer. So the
+   real-usage safety net only auto-compacts (memory must not starve);
+   inference stays purely tag-driven. `auto_infer_on_topic_shift` exists
+   as an opt-in (default off).
+
+3. **"Safety-critical" pin protection = SYSTEM + USER + persona_summary.**
+   The plan said "protect safety-critical/system/user pins." We have no
+   reliable safety-critical *classifier* (that path was removed in loop 15
+   as overfitting), so we protect by provenance (SYSTEM/USER source +
+   persona-summary tag) rather than by a content heuristic. Honest and
+   non-overfit.
+
+4. **Background worker is single-threaded + lock-guarded, not a full
+   async queue.** "Main fast, background follows" is realised with a
+   1-worker ThreadPoolExecutor + RLock + bounded pending-wait. A true
+   multi-worker async queue (M5's original ambition) is deferred — the
+   single worker is correct and race-free; throughput wasn't the issue.
+
+5. **`add_many` batch-embedding deferred to v0.6.** Compaction persists
+   ≤8 facts/turn, so N sequential embeds is a minor cost; bundled with
+   the bigger Phase-5 wins it wasn't worth the dedup-batching complexity
+   this release.
+
+**Reversibility:** all five are config- or param-gated; none change the
+spec's data model or the public API shape.
+
+
+## DEVIATION-007 — v0.5.1 security & correctness finishing pass
+
+**Date:** 2026-05-29
+**Context:** A second precise external review (after the v0.5.0 hardening)
+found 5 remaining fitness-for-purpose gaps. All were closed; verified by
+operating the system (real local embeddings + true background), not by
+pass/fail alone.
+
+1. **Redaction now covers EVERY memory string field, not just `content`.**
+   `MemoryStore.add()` redacts `content`, `evidence`, `tags`, and each
+   `semantic_triple` element at the single write choke point. This closes
+   the leak where LLM-2/LLM-3 placed a secret in evidence/tags/triple — it
+   previously persisted verbatim and surfaced via the eval provenance ledger,
+   the memory tool's `tags` export, and the SQLite entity index. The
+   `[REDACTED:label]` placeholder is JSON-safe, so the `evidence` JSON list
+   stays parseable; structural tags (`persona_summary`, `prediction`,
+   `freshness,…`) are not secret-shaped so entity/persona logic is unaffected.
+
+2. **Builtin `_url_fetch` is now SSRF-guarded too (defense-in-depth).** It
+   was only reachable by trusted internal code (the LLM tag dispatch uses the
+   already-guarded `web_search` path), but it now runs `is_safe_url` + a
+   redirect re-check — so exposing the builtin registry as an LLM tool can't
+   reintroduce a localhost/metadata hole. Gains a `resolver=` param for
+   offline testing, mirroring `_default_fetch`.
+
+3. **`hard_delete` cascades the entity index.** It now deletes the row's
+   `MemoryEntity` rows alongside the SQLite row + Chroma vector, matching
+   `delete_conversation_memories`. Prevents stale-index buildup from repeated
+   persona-summary replacement and decay eviction.
+
+4. **`memory_entity` tool uses the persistent index.** It now calls
+   `find_by_entities()` (O(matches)) instead of `store.list()` + full scan,
+   falling back to a scan only when `conversation_id is None`. Same FORGOTTEN
+   filter + entity-pool re-verification as `hybrid.py`.
+
+5. **Package docstring steers to `Sherlock.from_yaml(...)`.** The
+   `sherlock/__init__.py` advanced example showed the bare `Sherlock(config)`
+   constructor, which skips companion/bootstrap/search wiring (LLM-1 only).
+   Now it shows `from_yaml` with a note. (The CLI was already fixed in v0.5.0.)
+
+**Out of scope (noted, not done):** a real-provider + real-judge eval gate —
+`ralph_v2 --fake-llm` passing 5/25 is expected (the fake LLM can't infer
+intent); genuine quality evidence needs the user's API keys via `make eval`.
+
+**Reversibility:** redaction is gated by `memory.redact_secrets`; the fetch
+guard and index changes are behavior-preserving for legitimate inputs; the
+docstring is documentation-only. No data-model or public-API changes.
+
+
+## DEVIATION-008 — v0.6 vision-fidelity + numpy-style packaging
+
+**Date:** 2026-06-08
+**Context:** An audit + the user's restated design intent showed the core loop
+was wired but partly dormant (LLM-3 rarely fired), plus real bugs and
+packaging friction. The user is NOT selling this, so sale-only items
+(LICENSE/legal/PyPI marketing) are deliberately out of scope; the goal is a
+clean, numpy-style importable library that behaves as designed.
+
+1. **LLM-3 inference is no longer purely tag-driven.** It stays tag-first
+   (LLM-1 decides), but a selective auto-trigger (`memory.auto_infer`:
+   "smart" default | "off" | "always") fires it on a topic shift / first turn
+   so the psychological-inference layer isn't dormant when a vanilla model
+   under-emits the tag. Never every-turn (honours "don't burn tokens"). A
+   `SHERLOCK_AUTO_INFER` env var overrides for hermetic tests (suite sets "off").
+   The LLM-1 protocol prompt's `infer` guidance was rewritten from one vague
+   line into principled criteria (vague/implicit intent, hallucination guard,
+   reward-hack guard) — no keyword lists (those were removed as overfit).
+
+2. **Forward predictions surface proactively.** `worth_digging` (previously
+   generated then discarded) is now persisted; the LLM-1 slot shows the top
+   2-3 hypotheses (was top-1) and a dedicated ANTICIPATED DIRECTIONS block that
+   RAG-selects the stored prediction/worth-digging matching the CURRENT input —
+   so a sudden topic pivot pulls up the matching pre-inference.
+
+3. **Real bug fixes:** the current turn's user input was duplicated in every
+   LLM-1 prompt (persisted before slot assembly + appended) — now excluded from
+   the K-turn tail by id; the semantic-dedup window scanned the OLDEST 30 rows
+   (`rows[-30:]` on a desc query) instead of the most-recent (`rows[:30]`);
+   `achat()` reached parity with `chat()` (memory lock, background barrier,
+   event probes, no-duplication).
+
+4. **numpy-style packaging:** the embedding default is `"auto"` (real local
+   semantic memory when `[embeddings]` is installed, graceful fake fallback +
+   warning otherwise; `SHERLOCK_AUTO_EMBEDDING` overrides for tests); web search
+   moved to an optional `[search]` extra (no scraping dep in the base install);
+   the undeclared private `unified_cli` import is now guarded with a clear,
+   actionable error instead of a bare ImportError. `sherlock.evaluation` stays
+   in the wheel because it backs the `evaluate`/`replay` CLI commands (not
+   dev-only cruft) — the audit's "exclude it" finding was reclassified.
+
+**Out of scope (per the user, not selling):** LICENSE file, copyright/SPDX
+headers, PyPI name/metadata, duckduckgo-ToS-as-legal-blocker (handled as the
+[search]-optional packaging move instead).
+
+**Reversibility:** auto_infer/auto-embedding are config + env gated;
+search/embeddings are optional extras with graceful fallback; the duplication,
+dedup, and achat fixes are behavior-correcting. No public-API breakage —
+`with_callable`/`from_yaml`/`chat`/`achat` signatures are unchanged except new
+defaulted params.

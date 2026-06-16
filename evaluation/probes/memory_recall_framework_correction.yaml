@@ -1,0 +1,27 @@
+name: memory_recall_framework_correction
+category: memory_recall
+description: After user correction "i'm vue 3 not react", later code suggestions must respect Vue 3 — the framework correction must survive multiple intervening topics.
+
+setup:
+  - role: persona_hint
+    content: "casual conversational assistant"
+  - role: user
+    content: "nimbus dashboard tailwind plugin for metric cards. you assumed react earlier but i'm vue 3"
+  - role: user
+    content: "ok unrelated — phoebe ticket grabbed, 15500 yen balcony left"
+  - role: user
+    content: "migraine update — booked dr lee at severance for friday"
+  - role: user
+    content: "yujin's preschool form — emergency contact 2 should be sora not my mom"
+  - role: user
+    content: "trade-in submitted for the old ipad air"
+
+trigger:
+  role: user
+  content: "back to the plugin — sketch me the density toggle composable"
+
+assertions:
+  - kind: response_contains
+    pattern: "(vue|composable|ref\\(|watchEffect|<script setup|\\.vue)"
+  - kind: response_does_not_contain
+    pattern: "(useState|useEffect|jsx|react|\\.tsx)"

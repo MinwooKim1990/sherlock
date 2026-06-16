@@ -17,18 +17,22 @@ Quick start (bring your own LLM):
 
 Sherlock manages conversation history, runs LLM-2 (compaction) and
 LLM-3 (Sherlock-style inference) in the background, and curates a
-durable provenance-aware memory store. Your LLM decides when to invoke
-the companions by emitting an optional `<<sherlock-companions: compact,
+durable provenance-aware memory store. Your LLM can invoke the
+companions explicitly by emitting a `<<sherlock-companions: compact,
 infer>>` tag at the end of its reply (the tag is stripped before the
-user sees it). If your LLM never emits the tag, Sherlock will still
-fire on the final turn so memory is never empty.
+user sees it). As a safety net so neither stays dormant when your LLM
+under-emits the tag, Sherlock also auto-fires `compact` every N turns
+and `infer` selectively on a topic shift (config `memory.auto_infer`:
+"smart" default | "off" | "always").
 
 Spec-driven YAML path (advanced):
 
-    from sherlock import Sherlock, Config
-    config = Config.from_yaml("sherlock.yaml")
-    agent = Sherlock(config)
+    from sherlock import Sherlock
+    agent = Sherlock.from_yaml("sherlock.yaml")
 
+Use `Sherlock.from_yaml(...)`, NOT the bare `Sherlock(config)` constructor:
+`from_yaml` also wires the companion prompts (LLM-2/LLM-3) and the web-search
+engines from the config. The bare constructor leaves those unset (LLM-1 only).
 See `sherlock.example.yaml` for the YAML schema.
 """
 
@@ -42,7 +46,7 @@ from sherlock.providers import (
     FakeProvider,
 )
 
-__version__ = "0.2.0"
+__version__ = "0.5.0"
 __all__ = [
     "BaseProvider",
     "CallableProvider",

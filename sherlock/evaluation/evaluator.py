@@ -14,6 +14,7 @@ comparable — each model has its own scoring tendencies. The successful
 model's id is written to `evaluator_output.json` so trajectory analysis
 can group runs by `evaluator_model`.
 """
+
 from __future__ import annotations
 
 import json
@@ -21,7 +22,6 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
-
 
 # Fallback chain in priority order. Each tuple is (wrapper-provider, model-id).
 # Per user instruction (small models only — large models trivially hit 80%):
@@ -88,7 +88,14 @@ class GeminiEvaluator:
         self._system_prompt = Path(system_prompt_path).read_text(encoding="utf-8")
 
     def evaluate(self, gold_md: str, candidate_md: str) -> EvaluatorScore:
-        from unified_cli import create  # local import — keeps optional dep clean
+        try:
+            from unified_cli import create  # optional, undeclared private dep
+        except ImportError as exc:
+            raise RuntimeError(
+                "GeminiEvaluator needs the optional 'unified_cli' package, which "
+                "is not installed. Use the ralph_v2 --judge-model path instead, "
+                "or install unified_cli."
+            ) from exc
 
         prompt = (
             f"{self._system_prompt.strip()}\n\n"

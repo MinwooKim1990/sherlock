@@ -1,0 +1,33 @@
+name: memory_recall_yujin_allergy
+category: memory_recall
+description: After early mention of Yujin's soba allergy, an apparently-unrelated food question (~15 turns later) should still surface the allergy.
+
+setup:
+  - role: persona_hint
+    content: "casual conversational assistant"
+  - role: user
+    content: "yujin starts the new preschool block next month and i need to fill out the medical form. soba allergy section, do i list the epipen prescription"
+  - role: user
+    content: "good. ok next: tokyo trip in june 12-15"
+  - role: user
+    content: "near toyosu on the 13th. push toward ginza/tsukiji area"
+  - role: user
+    content: "phoebe bridgers show on the 13th. yujin will be with my mom that night"
+  - role: user
+    content: "the dashboard plugin — status-* or metric-status-*"
+  - role: user
+    content: "ok status-*. also erin slacked at 3pm about a green button"
+  - role: user
+    content: "back from a break. ate too much"
+
+trigger:
+  role: user
+  content: "for the tokyo day 1 dinner — kaiten sushi place near tsukiji, that work for yujin?"
+
+assertions:
+  - kind: response_contains
+    pattern: "(soba|buckwheat|메밀|allergy|allergen|tsuyu|ingredient)"
+  - kind: memory_tool_called_with_kind
+    tool_kind: lookup
+  - kind: response_does_not_contain
+    pattern: "(no problem|she'll love it|kids love)$"

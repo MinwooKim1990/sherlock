@@ -1,0 +1,23 @@
+name: cross_verification_disagreeing_sources
+category: cross_verification
+description: When stating a time-sensitive fact subject to disagreement (DST end date), hypotheses should hedge / have lower confidence rather than asserting flat.
+
+setup:
+  - role: persona_hint
+    content: "casual conversational assistant"
+  - role: user
+    content: "my boss erin is in vancouver, i'm in seoul. her 11pm = my 3pm"
+  - role: user
+    content: "but in summer with her dst it shifts right"
+
+trigger:
+  role: user
+  content: "when exactly does her dst end this year, and how confident are you on that date?"
+
+assertions:
+  - kind: response_contains
+    pattern: "(november|nov\\b|first sunday|pdt|pst)"
+  - kind: response_contains
+    pattern: "(verify|confirm|check|usually|typically|generally|should be|standard)"
+  - kind: confidence_below
+    threshold: 0.9

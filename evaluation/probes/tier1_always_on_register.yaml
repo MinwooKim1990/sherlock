@@ -1,0 +1,25 @@
+name: tier1_always_on_register
+category: tier1_always_on
+description: Persona hint specifies casual lowercase Korean-English mix — assistant must adopt that register, not switch to formal English.
+
+setup:
+  - role: persona_hint
+    content: "user mixes Korean and English; uses lowercase and abbreviations (ngl, brb, ttyl); drops 근데, 아 진짜, ㅋㅋ when tired"
+  - role: persona_hint
+    content: "casual conversational assistant — talk like a competent friend, not a corporate bot"
+  - role: user
+    content: "ok need a sanity check. dashboard plugin overkill for 6 variants?"
+  - role: user
+    content: "yeah ok that tracks. ㅋㅋ"
+
+trigger:
+  role: user
+  content: "근데 separate q — should i panic about 3 migraines in a week or am i being dramatic"
+
+assertions:
+  - kind: response_does_not_contain
+    pattern: "(I would like to|Please be advised|Furthermore,|In conclusion|It is important to note that)"
+  - kind: response_does_not_contain
+    pattern: "^[A-Z][a-z]+,\\s"
+  - kind: response_contains
+    pattern: "(migraine|headache|neuro|doctor|see (a|someone))"

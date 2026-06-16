@@ -1,10 +1,10 @@
 """Config schema + YAML loader tests."""
+
 from __future__ import annotations
 
 from pathlib import Path
 
 import pytest
-import yaml
 
 from sherlock.config import Config, ModelConfig
 
@@ -56,9 +56,14 @@ models:
 
 
 def test_litellm_model_id_routing() -> None:
-    assert ModelConfig(provider="anthropic", model="claude-haiku").litellm_model_id() == "anthropic/claude-haiku"
+    assert (
+        ModelConfig(provider="anthropic", model="claude-haiku").litellm_model_id()
+        == "anthropic/claude-haiku"
+    )
     assert ModelConfig(provider="openai", model="gpt-5").litellm_model_id() == "gpt-5"
-    assert ModelConfig(provider="gemini", model="gemini-3.1").litellm_model_id() == "gemini/gemini-3.1"
+    assert (
+        ModelConfig(provider="gemini", model="gemini-3.1").litellm_model_id() == "gemini/gemini-3.1"
+    )
     assert ModelConfig(provider="xai", model="grok-4").litellm_model_id() == "xai/grok-4"
     assert ModelConfig(provider="ollama", model="llama3").litellm_model_id() == "ollama/llama3"
 
