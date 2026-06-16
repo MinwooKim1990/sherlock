@@ -100,8 +100,8 @@ pip install -e ".[playground]"            # + the Live Inspector web app
 Or build and share a wheel:
 
 ```bash
-pip install build && python -m build      # → dist/sherlock_context-1.2.0-py3-none-any.whl
-pip install "sherlock-context[embeddings,playground] @ file:./dist/sherlock_context-1.2.0-py3-none-any.whl"
+pip install build && python -m build      # → dist/sherlock_context-1.4.0-py3-none-any.whl
+pip install "sherlock-context[embeddings,playground] @ file:./dist/sherlock_context-1.4.0-py3-none-any.whl"
 ```
 
 > Distribution name is **`sherlock-context`** (PyPI `sherlock` is an
