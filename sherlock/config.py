@@ -228,6 +228,28 @@ class InferenceConfig(BaseModel):
     search_results_per_round: int = 4
 
 
+class PerceptionConfig(BaseModel):
+    """v1.5 Stage 1: pure-stdlib per-turn perception layer.
+
+    Deterministic OBSERVED facts (date arithmetic, script/locale, structural
+    spans, exact arithmetic, freshness keywords) + probabilistic PRIOR cues
+    injected into the LLM-1 slot (and, from Stage 2, LLM-3). ``enabled``
+    defaults to ``False`` so the slot stays byte-identical for existing users;
+    the playground turns it on. Per-primitive toggles let a noisy primitive be
+    silenced without disabling the layer.
+    """
+
+    enabled: bool = False
+    max_observations: int = 12
+    dates: bool = True
+    scripts: bool = True
+    arithmetic: bool = True
+    spans: bool = True
+    code: bool = True
+    discourse: bool = True
+    freshness: bool = True
+
+
 class ToolsConfig(BaseModel):
     builtin: list[str] = Field(
         default_factory=lambda: ["web_search", "current_time", "calculator", "url_fetch"]
@@ -273,6 +295,7 @@ class Config(BaseModel):
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     search: SearchConfig = Field(default_factory=SearchConfig)
     inference: InferenceConfig = Field(default_factory=InferenceConfig)
+    perception: PerceptionConfig = Field(default_factory=PerceptionConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     bootstrap: BootstrapConfig = Field(default_factory=BootstrapConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)

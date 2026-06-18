@@ -3879,6 +3879,38 @@ class Sherlock:
         if self.config.search.inject_datetime:
             _gran = getattr(self.config.memory, "slot_time_granularity", "minute")
             tier3_parts.append(f"[CURRENT TIME — system-injected] {_now_iso(_gran)}")
+        # v1.5 Stage 1: deterministic perception observations (OBSERVED/PRIOR).
+        # Pure-stdlib, computed once per turn, injected here so they ride the
+        # SYSTEM-ANALYSIS volatile block and reach LLM-1 the SAME turn (beating
+        # the 1-turn LLM-3 lag). OFF by default → tier3 text byte-identical.
+        self._last_perception = []
+        _pcfg = getattr(self.config, "perception", None)
+        if _pcfg is not None and _pcfg.enabled:
+            try:
+                from sherlock.perception import perceive, render_observations
+
+                obs = perceive(user_text, now=datetime.now(timezone.utc), config=_pcfg)
+                self._last_perception = obs
+                perception_block = render_observations(obs, max_observations=_pcfg.max_observations)
+            except Exception:
+                perception_block = ""
+            if perception_block:
+                tier3_parts.append(perception_block)
+                self._emit(
+                    "perception.observed",
+                    "perception",
+                    {
+                        "observations": [
+                            {
+                                "channel": o.channel,
+                                "kind": o.kind,
+                                "text": o.text,
+                                "confidence": o.confidence,
+                            }
+                            for o in obs
+                        ]
+                    },
+                )
         intent_block = self._format_active_intent(
             hypotheses, getattr(self, "_slot_inference_extras", {})
         )
@@ -4974,6 +5006,8 @@ class Sherlock:
         max_output_tokens: int | None = None,
         slot_budget_profile: str = "auto",
         slot_budget_overrides: dict[str, int] | None = None,
+        # --- v1.5 Stage 1: stdlib perception layer (off by default) ---
+        perception: bool | dict | None = None,
     ) -> "Sherlock":
         """Bring-your-own-LLM constructor.
 
@@ -5049,6 +5083,7 @@ class Sherlock:
             MemoryConfig,
             ModelConfig,
             ModelsConfig,
+            PerceptionConfig,
             SearchConfig,
             StorageConfig,
         )
@@ -5191,6 +5226,14 @@ class Sherlock:
             bootstrap=BootstrapConfig(auto_run_on_init=False),
             execution=ExecutionConfig(background=background),
         )
+
+        # v1.5 Stage 1: opt in to the perception layer (off by default). Accept
+        # ``True`` (enable with defaults) or a dict of PerceptionConfig overrides.
+        if perception:
+            if isinstance(perception, dict):
+                cfg.perception = PerceptionConfig(**{"enabled": True, **perception})
+            else:
+                cfg.perception = PerceptionConfig(enabled=True)
 
         main_provider = CallableProvider(main_chat, model_id=model_id)
         summary_provider = (

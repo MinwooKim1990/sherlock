@@ -86,6 +86,9 @@ def build_agent(session: Session, system_prompt: str, settings: dict):
         main_search_engine=engine,
         inference_search_engine=engine,
         search_api_key=settings.get("search_api_key") or None,
+        # v1.5 Stage 1: deterministic perception layer ON in the playground so
+        # OBSERVED/PRIOR observations surface for human verification.
+        perception=settings.get("perception", True),
     )
     agent.set_event_sink(session.emit)
     session.agent = agent
