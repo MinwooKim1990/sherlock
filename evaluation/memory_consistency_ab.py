@@ -92,11 +92,18 @@ def _run(mode, label):
 
 
 def main():
-    print(f"=== memory-consistency A/B ===\n  pinned : {PINNED}\n  message: {MESSAGE}\n", flush=True)
+    print(
+        f"=== memory-consistency A/B ===\n  pinned : {PINNED}\n  message: {MESSAGE}\n", flush=True
+    )
     off = _run("off", "off")
     on = _run("code", "code")
-    OUT.write_text(json.dumps({"pinned": PINNED, "message": MESSAGE, "off": off, "on": on},
-                              ensure_ascii=False, indent=2))
+    OUT.write_text(
+        json.dumps(
+            {"pinned": PINNED, "message": MESSAGE, "off": off, "on": on},
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
     for r in (off, on):
         print(f"### {r['label'].upper()}  | cue_in_slot={r['cue_in_slot']}")
         print(f"  reply: {r['reply']}\n")

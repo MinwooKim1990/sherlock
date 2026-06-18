@@ -95,6 +95,9 @@ def build_agent(session: Session, system_prompt: str, settings: dict):
         premise_conflict=settings.get("premise_conflict", True),
         # v1.5 Stage 3: LLM-2 memory-consistency — code-first (fast, inline).
         memory_consistency_check=settings.get("memory_consistency_check", "code"),
+        # v1.5 Stage 4: recursive inference notebook (background-only, bounded).
+        inference_notebook=settings.get("inference_notebook", True),
+        notebook_max_rounds=settings.get("notebook_max_rounds", 3),
     )
     agent.set_event_sink(session.emit)
     session.agent = agent

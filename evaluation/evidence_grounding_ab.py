@@ -56,11 +56,15 @@ def _cb(counter):
         u = getattr(resp, "usage", None)
         pin = int(getattr(u, "input_tokens", 0) or getattr(u, "prompt_tokens", 0) or 0) if u else 0
         out = (
-            int(getattr(u, "output_tokens", 0) or getattr(u, "completion_tokens", 0) or 0) if u else 0
+            int(getattr(u, "output_tokens", 0) or getattr(u, "completion_tokens", 0) or 0)
+            if u
+            else 0
         )
         counter["in"] += pin
         counter["calls"] += 1
-        return ChatResponse(text=text, model=MODEL, usage=TokenUsage(prompt_tokens=pin, completion_tokens=out))
+        return ChatResponse(
+            text=text, model=MODEL, usage=TokenUsage(prompt_tokens=pin, completion_tokens=out)
+        )
 
     return fn
 

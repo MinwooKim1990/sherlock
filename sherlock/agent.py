@@ -485,6 +485,25 @@ def _looks_contradictory(text_a: str, text_b: str) -> bool:
     return bool(nums_a and nums_b and nums_a != nums_b)
 
 
+def _notebook_step_grounded(step: dict, corpus_cf: str) -> bool:
+    """v1.5 Stage 4: a notebook step survives only if its `evidence` is a
+    verbatim, substantial quote present in the corpus — reusing the Stage-2
+    span-grounding check. No quote → discarded (so the notebook cannot amplify
+    its own ungrounded self-talk)."""
+    from sherlock.inference.engine import _QUOTE_PATTERNS, _quote_grounds
+
+    ev = str(step.get("evidence") or "").strip()
+    if not ev:
+        return False
+    if _quote_grounds(ev, corpus_cf):
+        return True
+    for rx in _QUOTE_PATTERNS:
+        for q in rx.findall(ev):
+            if _quote_grounds(q, corpus_cf):
+                return True
+    return False
+
+
 def _diversify_fragments(hits: list[dict]) -> list[dict]:
     """v1.0 C4 (R19-lite): order fragments by Reciprocal Rank Fusion across the
     queries that found them, then round-robin across source types so the few
@@ -917,6 +936,9 @@ class Sherlock:
         # output rides forward one turn.
         self._pending_hypotheses: list[dict] = []
         self._pending_search_results: list[dict] = []
+        # v1.5 Stage 4: inference-notebook carry-over (None when off / not produced).
+        self._pending_notebook: dict | None = None
+        self._slot_notebook: dict | None = None
 
         # Optional visualization probe. When set via set_event_sink(), the agent
         # emits structured lifecycle events (slot assembly, infer/compact/decay,
@@ -1124,6 +1146,11 @@ class Sherlock:
         self._pending_hypotheses = []
         self._pending_inference_extras = {}
         self._pending_search_results = []
+        # v1.5 Stage 4: inference-notebook carry-over (None when the feature is off
+        # or no notebook was produced). Initialized here so the consume/render
+        # sites never depend solely on getattr defaults.
+        self._pending_notebook = None
+        self._slot_notebook = None
         self._conv_tool_calls = 0
         self._last_compact_turn = 0
         # Re-seed domain hints into the new conversation.
@@ -3479,6 +3506,15 @@ class Sherlock:
                     initial_queries=infer_result.get("freshness_required", []) or [],
                     search_results=search_results,
                 )
+                # v1.5 Stage 4: recursive inference notebook (off by default). Runs
+                # AFTER the search loop so it can quote any web facts gathered this
+                # turn; rides the NEXT turn's slot like the inference extras above.
+                if getattr(self.config.inference, "inference_notebook", False):
+                    nb = self._run_inference_notebook(
+                        conv_id, turn_index, infer_result, search_results
+                    )
+                    if nb:
+                        self._pending_notebook = nb
             except Exception as exc:
                 import sys
 
@@ -3924,6 +3960,134 @@ class Sherlock:
             lines.append(f'- on record: "{c["fact"]}"')
         return "\n".join(lines)
 
+    # ---- v1.5 Stage 4: recursive inference notebook (deep-research mirror) ----
+    def _notebook_corpus(self, conv_id: str, search_results: list) -> str:
+        """The grounding corpus a notebook step may quote from: the USER's own
+        words + the deterministic code OBSERVATIONS + any web facts gathered this
+        turn. ASSISTANT turns are deliberately EXCLUDED — grounding on LLM-1's own
+        prior (unverified) claims would be self-talk and amplify its bias, which
+        is exactly what the notebook must avoid. No new fetches."""
+        parts: list[str] = []
+        try:
+            for m in self._format_last_k_turns(conv_id, 4):
+                if m.role == "user":
+                    parts.append(f"USER: {m.content}")
+        except Exception:
+            pass
+        if getattr(self, "_last_perception", None):
+            try:
+                from sherlock.perception import render_observations
+
+                block = render_observations(self._last_perception)
+                if block:
+                    parts.append(block)
+            except Exception:
+                pass
+        for r in (search_results or [])[:8]:
+            if isinstance(r, dict):
+                txt = f"{r.get('title', '')} {r.get('content') or r.get('snippet') or ''}".strip()
+                if txt:
+                    parts.append(txt)
+        return "\n".join(parts)
+
+    def _run_inference_notebook(
+        self, conv_id: str, turn_index: int, infer_result: dict, search_results: list
+    ) -> dict | None:
+        """Bounded recursive reasoning notebook (SEPARATE code path — never calls
+        deep research). ANCHORED (only a high-value open question enters),
+        GROUNDED (every kept step cites a verbatim corpus quote — ungrounded steps
+        are discarded), BOUNDED (≤ notebook_max_rounds, converge-stop, yields to
+        deep research). Returns {raw, conclusions, rounds} for the NEXT turn's
+        slot (LLM-1 PULLS it), or None."""
+        cfg = self.config.inference
+        if self._inferer is None:
+            return None
+        # ANCHOR — only deepen when LLM-3 left a genuine high-value open question.
+        open_qs: list[str] = []
+        ra = (infer_result.get("really_asking") or "").strip()
+        if ra:
+            open_qs.append(ra)
+        for q in infer_result.get("anticipated_next") or []:
+            if isinstance(q, dict) and q.get("question"):
+                open_qs.append(str(q["question"]).strip())
+        try:
+            conf = float(infer_result.get("confidence_overall") or 0.0)
+        except (TypeError, ValueError):
+            conf = 0.0
+        has_chain = bool(infer_result.get("implied_chain"))
+        if not open_qs or (conf >= 0.8 and not has_chain):
+            return None  # confident & no open thread → not worth the extra rounds
+
+        max_rounds = max(1, min(int(getattr(cfg, "notebook_max_rounds", 3)), 5))
+        corpus = self._notebook_corpus(conv_id, search_results)
+        corpus_cf = re.sub(r"\s+", " ", corpus).casefold()
+        state = {
+            "confirmed": [
+                h.get("intent")
+                for h in (infer_result.get("hypotheses") or [])[:2]
+                if isinstance(h, dict)
+            ],
+            "conclusions": [],
+            "open_questions": open_qs[:2],
+        }
+        raw_steps: list[dict] = []
+        conclusions: list[str] = []
+        seen_q: set = set()
+        rounds = 0
+        for r in range(1, max_rounds + 1):
+            rounds = r
+            if getattr(self, "_deep_researching", False):
+                break  # YIELD to deep research
+            out = self._inferer.deepen_notebook(
+                open_questions=state["open_questions"],
+                notebook_state=state,
+                corpus=corpus,
+                round_index=r,
+                max_rounds=max_rounds,
+            )
+            if not out:
+                break
+            grounded = [s for s in out.get("steps", []) if _notebook_step_grounded(s, corpus_cf)]
+            fresh = [s for s in grounded if s.get("question") and s["question"] not in seen_q]
+            for s in fresh:
+                seen_q.add(s["question"])
+            raw_steps.extend(fresh)
+            if out.get("conclusions"):
+                conclusions = out["conclusions"]
+                state["conclusions"] = conclusions
+            state["open_questions"] = out.get("open_questions") or []
+            if out.get("converged") or not fresh or not state["open_questions"]:
+                break  # CONVERGENCE / dry round / nothing left open
+
+        if not raw_steps and not conclusions:
+            return None
+        notebook = {"raw": raw_steps[:6], "conclusions": conclusions[:3], "rounds": rounds}
+        self._emit("notebook.done", "llm3", notebook)
+        return notebook
+
+    @staticmethod
+    def _render_notebook_block(notebook: dict) -> str:
+        raw = notebook.get("raw") or []
+        concl = notebook.get("conclusions") or []
+        lines = [
+            "INFERENCE NOTEBOOK (LLM-3, prior turn — HALF raw grounded reasoning, "
+            "HALF conclusions; judge reliability yourself, do NOT blindly trust either):"
+        ]
+        if raw:
+            lines.append("RAW STEPS (each tied to a verbatim quote):")
+            for s in raw[:6]:
+                lines.append(
+                    f"- Q: {s.get('question', '')} → A: {s.get('answer', '')}  "
+                    f'[evidence: "{s.get("evidence", "")}"]'
+                )
+        if concl:
+            lines.append(
+                "CONCLUSIONS (LLM-3's distilled read — verify against the raw steps above):"
+            )
+            for c in concl[:3]:
+                lines.append(f"- {c}")
+        return "\n".join(lines)
+
     def _assemble_messages(
         self,
         user_text: str,
@@ -4055,6 +4219,11 @@ class Sherlock:
                 "llm2",
                 {"conflicts": [{"fact": c["fact"]} for c in consistency]},
             )
+        # v1.5 Stage 4: the prior turn's inference notebook (half raw / half
+        # conclusions) rides this slot; LLM-1 PULLS it. OFF → never set → no block.
+        _nb = getattr(self, "_slot_notebook", None)
+        if _nb and getattr(self.config.inference, "inference_notebook", False):
+            tier3_parts.append(self._render_notebook_block(_nb))
         intent_block = self._format_active_intent(
             hypotheses, getattr(self, "_slot_inference_extras", {})
         )
@@ -4535,9 +4704,12 @@ class Sherlock:
         slot_inference_extras = getattr(self, "_pending_inference_extras", {}) or {}
         self._slot_inference_extras = slot_inference_extras
         slot_search_results = self._pending_search_results
+        # v1.5 Stage 4: consume the prior turn's inference notebook into this slot.
+        self._slot_notebook = getattr(self, "_pending_notebook", None)
         self._pending_hypotheses = []
         self._pending_inference_extras = {}
         self._pending_search_results = []
+        self._pending_notebook = None
 
         # `search_results` accumulates THIS turn's tool-call results (the
         # post-response companion work in _run_post_response adds LLM-3
@@ -4843,9 +5015,12 @@ class Sherlock:
         slot_inference_extras = getattr(self, "_pending_inference_extras", {}) or {}
         self._slot_inference_extras = slot_inference_extras
         slot_search_results = self._pending_search_results
+        # v1.5 Stage 4: consume the prior turn's inference notebook into this slot.
+        self._slot_notebook = getattr(self, "_pending_notebook", None)
         self._pending_hypotheses = []
         self._pending_inference_extras = {}
         self._pending_search_results = []
+        self._pending_notebook = None
 
         topic_changed = False
         if self._summarizer and self._prev_user_text:
@@ -5157,6 +5332,9 @@ class Sherlock:
         premise_conflict: bool = False,
         # --- v1.5 Stage 3: LLM-2 memory-consistency (off by default) ---
         memory_consistency_check: str = "off",
+        # --- v1.5 Stage 4: recursive inference notebook (off by default) ---
+        inference_notebook: bool = False,
+        notebook_max_rounds: int = 3,
     ) -> "Sherlock":
         """Bring-your-own-LLM constructor.
 
@@ -5391,6 +5569,9 @@ class Sherlock:
         # v1.5 Stage 3: LLM-2 memory-consistency mode.
         if memory_consistency_check in ("off", "code", "code+llm2"):
             cfg.memory.memory_consistency_check = memory_consistency_check
+        # v1.5 Stage 4: recursive inference notebook.
+        cfg.inference.inference_notebook = bool(inference_notebook)
+        cfg.inference.notebook_max_rounds = int(notebook_max_rounds)
 
         main_provider = CallableProvider(main_chat, model_id=model_id)
         summary_provider = (

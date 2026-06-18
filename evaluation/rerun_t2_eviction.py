@@ -59,8 +59,10 @@ def _usage(resp):
     u = getattr(resp, "usage", None)
     if u is None:
         return 0, 0
-    return (int(getattr(u, "input_tokens", 0) or getattr(u, "prompt_tokens", 0) or 0),
-            int(getattr(u, "output_tokens", 0) or getattr(u, "completion_tokens", 0) or 0))
+    return (
+        int(getattr(u, "input_tokens", 0) or getattr(u, "prompt_tokens", 0) or 0),
+        int(getattr(u, "output_tokens", 0) or getattr(u, "completion_tokens", 0) or 0),
+    )
 
 
 def _cb(counter, force):
@@ -74,7 +76,9 @@ def _cb(counter, force):
         sys_txt = next((m["content"] for m in messages if m.get("role") == "system"), "")
         if force and "[SHERLOCK SYSTEM" in sys_txt and "<<sherlock" not in text:
             text = text.rstrip() + "\n<<sherlock-companions: compact, infer>>"
-        return ChatResponse(text=text, model=MODEL, usage=TokenUsage(prompt_tokens=pin, completion_tokens=out))
+        return ChatResponse(
+            text=text, model=MODEL, usage=TokenUsage(prompt_tokens=pin, completion_tokens=out)
+        )
 
     return fn
 
@@ -87,10 +91,16 @@ def _hit(text, checks):
 def main():
     counter = {"in": 0, "out": 0, "calls": 0}
     agent = Sherlock.with_callable(
-        main_chat=_cb(counter, True), inference_chat=_cb(counter, False), summary_chat=_cb(counter, False),
+        main_chat=_cb(counter, True),
+        inference_chat=_cb(counter, False),
+        summary_chat=_cb(counter, False),
         system_prompt="You are a warm personal assistant. Reply in Korean, concise.",
-        storage_dir=tempfile.mkdtemp(prefix="t2evict_"), embedding="local", background=False,
-        context_window=4000, main_search_engine=None, inference_search_engine=None,
+        storage_dir=tempfile.mkdtemp(prefix="t2evict_"),
+        embedding="local",
+        background=False,
+        context_window=4000,
+        main_search_engine=None,
+        inference_search_engine=None,
     )
     agent.config.memory.compact_at_fill_ratio = 0.55  # small window + padded turns → fires + evicts
     for u in CONTEXT:
@@ -127,17 +137,28 @@ def main():
         bcount["out"] += out
         bcount["calls"] += 1
         h, tot = _hit(getattr(r, "text", "") or "", q["checks"])
-        b_results.append({"q": q["q"], "answer": getattr(r, "text", "") or "", "checks_hit": f"{h}/{tot}"})
+        b_results.append(
+            {"q": q["q"], "answer": getattr(r, "text", "") or "", "checks_hit": f"{h}/{tot}"}
+        )
 
     out = {
-        "ctx_window": 4000, "tail_turns_at_query": tail, "pinned_facts": len(pinned),
-        "first_fact_still_in_raw_tail": first_in_tail, "mem_entries": len(entries),
+        "ctx_window": 4000,
+        "tail_turns_at_query": tail,
+        "pinned_facts": len(pinned),
+        "first_fact_still_in_raw_tail": first_in_tail,
+        "mem_entries": len(entries),
         "sherlock": {"tokens": counter, "questions": q_results},
         "baseline_window3": {"tokens": bcount, "questions": b_results},
     }
     OUT.write_text(json.dumps(out, ensure_ascii=False, indent=2))
-    print("tail_turns_at_query:", tail, "| pinned:", len(pinned),
-          "| first fact still in raw tail?:", first_in_tail)
+    print(
+        "tail_turns_at_query:",
+        tail,
+        "| pinned:",
+        len(pinned),
+        "| first fact still in raw tail?:",
+        first_in_tail,
+    )
     print("Sherlock recall:", [q["checks_hit"] for q in q_results])
     print("baseline(win3) recall:", [q["checks_hit"] for q in b_results])
     print("wrote", OUT)

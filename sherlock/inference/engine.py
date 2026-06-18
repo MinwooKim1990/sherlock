@@ -270,6 +270,39 @@ Populate it ONLY when a user premise genuinely conflicts with your knowledge
 AND fresh external data could resolve it. Empty array is the norm."""
 
 
+# v1.5 Stage 4: the recursive INFERENCE NOTEBOOK system prompt (used only when
+# InferenceConfig.inference_notebook is on). Mirrors the deep-research discipline
+# but for INTENT: bounded, grounded, anchored. Every step must cite a verbatim
+# quote from the evidence — ungrounded self-talk is discarded by the system so
+# the notebook can't amplify its own bias.
+NOTEBOOK_PROMPT = """\
+You are LLM-3 keeping a bounded INFERENCE NOTEBOOK — deepening your read of what
+the user actually needs across a few rounds. This is NOT free brainstorming.
+
+IRON RULE — GROUNDING: every reasoning step MUST be anchored to a VERBATIM quote
+(≥2 words, copied exactly) from the EVIDENCE you are given (the conversation, the
+code OBSERVATIONS, or web facts). A step whose `evidence` is not a real quote
+from the evidence will be DISCARDED by the system. Never invent a quote. If you
+cannot quote support for a thought, do not write it down.
+
+You are given: the open question(s) to deepen, the notebook so far, and the
+EVIDENCE corpus. Think like a detective assembling micro-clues, not a pundit.
+
+Produce STRICT JSON only:
+{
+  "steps": [
+    {"question": "a precise sub-question you are resolving",
+     "answer": "the answer, one or two lines",
+     "evidence": "a VERBATIM quote from the corpus that supports the answer"}
+  ],
+  "conclusions": ["1-3 distilled reads of what the user really needs, each tied to the steps"],
+  "open_questions": ["what is STILL genuinely unresolved and high-value — ≤2, [] if the picture is clear"],
+  "converged": true|false
+}
+Set "converged": true when more digging would not change the conclusion. Keep it
+tight — quality of grounding over quantity. JSON only, no prose, no fences."""
+
+
 @dataclass
 class InferenceResult:
     hypotheses: list[dict] = field(default_factory=list)
@@ -578,6 +611,79 @@ class InferenceEngine:
                 tags=str(h.get("reasoning_type", "")),
             )
         return result.to_dict()
+
+    def deepen_notebook(
+        self,
+        *,
+        open_questions: list[str],
+        notebook_state: dict,
+        corpus: str,
+        round_index: int,
+        max_rounds: int,
+        usage_sink=None,
+    ) -> dict:
+        """v1.5 Stage 4: one round of the recursive inference notebook. Returns
+        {steps, conclusions, open_questions, converged}. Best-effort — any
+        failure returns {} so the orchestrator stops cleanly. The orchestrator
+        (agent) grounds each step against the corpus before keeping it."""
+        oq = "; ".join([q for q in (open_questions or []) if q][:3]) or (
+            "(none — confirm or refine the current read)"
+        )
+        try:
+            state_txt = json.dumps(notebook_state, ensure_ascii=False)[:1500]
+        except Exception:
+            state_txt = str(notebook_state)[:1500]
+        user_msg = (
+            f"OPEN QUESTION(S) TO DEEPEN (round {round_index}/{max_rounds}):\n{oq}\n\n"
+            f"NOTEBOOK SO FAR:\n{state_txt}\n\n"
+            f"EVIDENCE CORPUS (quote ONLY from inside here):\n{(corpus or '')[:4000]}\n\n"
+            "Produce the JSON."
+        )
+        messages = [
+            ChatMessage(
+                role="system",
+                content=NOTEBOOK_PROMPT,
+                cache_stable_prefix_chars=len(NOTEBOOK_PROMPT),
+            ),
+            ChatMessage(role="user", content=user_msg),
+        ]
+        parsed, resp = chat_json_with_retry(self._provider, messages, want=dict)
+        if usage_sink is not None and resp is not None:
+            try:
+                usage_sink(getattr(resp, "usage", None))
+            except Exception:
+                pass
+        if not isinstance(parsed, dict):
+            return {}
+        # Guard every field against non-list LLM output — a scalar string must NOT
+        # be iterated character-by-character ("hi" → ['h','i']).
+        steps = parsed.get("steps")
+        concl = parsed.get("conclusions")
+        oq = parsed.get("open_questions")
+        return {
+            "steps": (
+                [
+                    {
+                        "question": str(s.get("question") or "").strip(),
+                        "answer": str(s.get("answer") or "").strip(),
+                        "evidence": str(s.get("evidence") or "").strip(),
+                    }
+                    for s in steps
+                    if isinstance(s, dict)
+                ][:5]
+                if isinstance(steps, list)
+                else []
+            ),
+            "conclusions": (
+                [str(c).strip() for c in concl if str(c).strip()][:3]
+                if isinstance(concl, list)
+                else []
+            ),
+            "open_questions": (
+                [str(q).strip() for q in oq if str(q).strip()][:2] if isinstance(oq, list) else []
+            ),
+            "converged": bool(parsed.get("converged")),
+        }
 
     def review_search(
         self,

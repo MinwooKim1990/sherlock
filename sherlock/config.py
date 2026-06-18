@@ -245,6 +245,12 @@ class InferenceConfig(BaseModel):
     # external verification (gap detection, not silent "correction"). Off → the
     # DEFAULT_LLM3_PROMPT and schema stay byte-identical.
     premise_conflict: bool = False
+    # v1.5 Stage 4: recursive inference notebook. When on, LLM-3 (background only)
+    # deepens high-value open questions over a few grounded rounds and rides a
+    # "half raw reasoning / half conclusions" notebook to the next turn's slot.
+    # Off → never runs, slot byte-identical. Deep research is untouched (mirror).
+    inference_notebook: bool = False
+    notebook_max_rounds: int = 3
 
 
 class PerceptionConfig(BaseModel):

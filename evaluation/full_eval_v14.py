@@ -90,12 +90,21 @@ def sherlock_callable(counter: dict, force_companions: bool):
     return fn
 
 
-def baseline_answer(history_pairs: list[tuple[str, str]], question: str, counter: dict,
-                    window_turns: int | None = None) -> str:
+def baseline_answer(
+    history_pairs: list[tuple[str, str]],
+    question: str,
+    counter: dict,
+    window_turns: int | None = None,
+) -> str:
     """Bare model + raw history. window_turns caps how many recent turns the bare
     model can see (simulates a finite window — the control for T2)."""
     pairs = history_pairs if window_turns is None else history_pairs[-window_turns:]
-    msgs = [{"role": "system", "content": "You are a warm, perceptive personal assistant. Reply in Korean, concise."}]
+    msgs = [
+        {
+            "role": "system",
+            "content": "You are a warm, perceptive personal assistant. Reply in Korean, concise.",
+        }
+    ]
     for u, a in pairs:
         msgs.append({"role": "user", "content": u})
         msgs.append({"role": "assistant", "content": a or "(...)"})
@@ -119,10 +128,14 @@ T1_CONTEXT = [
 ]
 # elliptical / context-dropped questions that need the implied chain
 T1_QUESTIONS = [
-    {"q": "그래서 그냥 지금 있는 게 낫겠지?",
-     "checks": ["현금|연봉|집|cash", "워라밸|야근|아이|육아", "스톡|지분|불확실|리스크"]},
-    {"q": "아니면 한 번뿐인 기회인가 싶기도 하고...",
-     "checks": ["현금|집|2년", "워라밸|야근", "성장|기회|스타트업"]},
+    {
+        "q": "그래서 그냥 지금 있는 게 낫겠지?",
+        "checks": ["현금|연봉|집|cash", "워라밸|야근|아이|육아", "스톡|지분|불확실|리스크"],
+    },
+    {
+        "q": "아니면 한 번뿐인 기회인가 싶기도 하고...",
+        "checks": ["현금|집|2년", "워라밸|야근", "성장|기회|스타트업"],
+    },
 ]
 
 T2_CONTEXT = [
@@ -150,8 +163,9 @@ def _judge_checks(text: str, checks: list[str]) -> tuple[int, int]:
     return hit, len(checks)
 
 
-def run_sherlock_convo(label: str, context: list[str], questions: list[dict],
-                       compact_fill: float | None) -> dict:
+def run_sherlock_convo(
+    label: str, context: list[str], questions: list[dict], compact_fill: float | None
+) -> dict:
     counter = {"in": 0, "out": 0, "calls": 0}
     events: list[dict] = []
     t0 = time.monotonic()
@@ -172,8 +186,11 @@ def run_sherlock_convo(label: str, context: list[str], questions: list[dict],
         agent.config.memory.compact_at_fill_ratio = compact_fill
     agent.set_event_sink(
         lambda ev: events.append(
-            {"t": round(time.monotonic() - t0, 3), "type": ev.get("type"),
-             "turn": (ev.get("data", {}) or {}).get("turn_index")}
+            {
+                "t": round(time.monotonic() - t0, 3),
+                "type": ev.get("type"),
+                "turn": (ev.get("data", {}) or {}).get("turn_index"),
+            }
         )
     )
 
@@ -185,9 +202,15 @@ def run_sherlock_convo(label: str, context: list[str], questions: list[dict],
         reply_dt = time.monotonic() - ts
         agent.drain()
         drain_dt = time.monotonic() - ts
-        turns.append({"phase": "context", "i": i + 1, "user": u,
-                      "reply_latency_s": round(reply_dt, 2),
-                      "total_with_companions_s": round(drain_dt, 2)})
+        turns.append(
+            {
+                "phase": "context",
+                "i": i + 1,
+                "user": u,
+                "reply_latency_s": round(reply_dt, 2),
+                "total_with_companions_s": round(drain_dt, 2),
+            }
+        )
 
     # how much raw history is still in the slot (eviction evidence for T2)
     slot_tail = 0
@@ -207,11 +230,17 @@ def run_sherlock_convo(label: str, context: list[str], questions: list[dict],
         agent.drain()
         drain_dt = time.monotonic() - ts
         hit, tot = _judge_checks(ans, q["checks"])
-        q_results.append({
-            "q": q["q"], "answer": ans, "checks": q["checks"], "checks_hit": f"{hit}/{tot}",
-            "reply_latency_s": round(reply_dt, 2), "total_with_companions_s": round(drain_dt, 2),
-            "really_asking_into_slot": pre.get("really_asking", ""),
-        })
+        q_results.append(
+            {
+                "q": q["q"],
+                "answer": ans,
+                "checks": q["checks"],
+                "checks_hit": f"{hit}/{tot}",
+                "reply_latency_s": round(reply_dt, 2),
+                "total_with_companions_s": round(drain_dt, 2),
+                "really_asking_into_slot": pre.get("really_asking", ""),
+            }
+        )
 
     # companion tallies (T3)
     tally: dict[str, int] = {}
@@ -219,15 +248,18 @@ def run_sherlock_convo(label: str, context: list[str], questions: list[dict],
         tally[e["type"]] = tally.get(e["type"], 0) + 1
 
     return {
-        "tokens": counter, "turns": turns, "questions": q_results,
-        "slot_tail_turns_at_query": slot_tail, "pinned_facts": pinned,
-        "event_tally": tally, "events": events,
+        "tokens": counter,
+        "turns": turns,
+        "questions": q_results,
+        "slot_tail_turns_at_query": slot_tail,
+        "pinned_facts": pinned,
+        "event_tally": tally,
+        "events": events,
         "memory_entries": len(agent.memory.list(conversation_id=agent.conversation_id)),
     }
 
 
-def run_baseline_convo(context: list[str], questions: list[dict],
-                       window_turns: int | None) -> dict:
+def run_baseline_convo(context: list[str], questions: list[dict], window_turns: int | None) -> dict:
     counter = {"in": 0, "out": 0, "calls": 0}
     pairs: list[tuple[str, str]] = []
     # baseline "builds" by accumulating turns (one cheap reply each, full history)
@@ -240,8 +272,9 @@ def run_baseline_convo(context: list[str], questions: list[dict],
         ans = baseline_answer(pairs, q["q"], counter, window_turns=window_turns)
         dt = time.monotonic() - ts
         hit, tot = _judge_checks(ans, q["checks"])
-        q_results.append({"q": q["q"], "answer": ans, "checks_hit": f"{hit}/{tot}",
-                          "latency_s": round(dt, 2)})
+        q_results.append(
+            {"q": q["q"], "answer": ans, "checks_hit": f"{hit}/{tot}", "latency_s": round(dt, 2)}
+        )
         pairs.append((q["q"], ans))
     return {"tokens": counter, "questions": q_results, "window_turns": window_turns}
 
@@ -270,15 +303,23 @@ def main():
     # quick console summary
     print("\n" + "=" * 70)
     s1, b1 = result["t1_sherlock"], result["t1_baseline"]
-    print(f"T1  Sherlock tok {s1['tokens']['in']}/{s1['tokens']['out']} calls {s1['tokens']['calls']}"
-          f" | baseline tok {b1['tokens']['in']}/{b1['tokens']['out']} calls {b1['tokens']['calls']}")
+    print(
+        f"T1  Sherlock tok {s1['tokens']['in']}/{s1['tokens']['out']} calls {s1['tokens']['calls']}"
+        f" | baseline tok {b1['tokens']['in']}/{b1['tokens']['out']} calls {b1['tokens']['calls']}"
+    )
     print(f"T1  event tally: {s1['event_tally']}")
     s2 = result["t2_sherlock"]
-    print(f"T2  Sherlock slot_tail_turns_at_query={s2['slot_tail_turns_at_query']} "
-          f"pinned={s2['pinned_facts']} (eviction evidence) tok {s2['tokens']['in']}/{s2['tokens']['out']}")
+    print(
+        f"T2  Sherlock slot_tail_turns_at_query={s2['slot_tail_turns_at_query']} "
+        f"pinned={s2['pinned_facts']} (eviction evidence) tok {s2['tokens']['in']}/{s2['tokens']['out']}"
+    )
     print(f"T2  Sherlock recall: {[q['checks_hit'] for q in s2['questions']]}")
-    print(f"T2  baseline win3 recall: {[q['checks_hit'] for q in result['t2_baseline_window3']['questions']]}")
-    print(f"T2  baseline full recall: {[q['checks_hit'] for q in result['t2_baseline_full']['questions']]}")
+    print(
+        f"T2  baseline win3 recall: {[q['checks_hit'] for q in result['t2_baseline_window3']['questions']]}"
+    )
+    print(
+        f"T2  baseline full recall: {[q['checks_hit'] for q in result['t2_baseline_full']['questions']]}"
+    )
     print(f"\nwrote {OUT}")
 
 
