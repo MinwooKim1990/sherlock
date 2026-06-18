@@ -4398,6 +4398,11 @@ class Sherlock:
                     "search_block": list(search_results or []),
                     "retrieved_count": len(retrieved or []),
                     "user_text": user_text,
+                    # v1.5: the FINAL user message carries the volatile SYSTEM-ANALYSIS
+                    # block (perception OBSERVED/PRIOR, memory-consistency cue, the
+                    # inference notebook) — surface it so the playground inspector can
+                    # show the upgrade's per-turn injections. Observability only.
+                    "final_user_message": final_user_content,
                 },
             )
         except Exception:
