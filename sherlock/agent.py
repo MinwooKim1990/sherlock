@@ -1013,13 +1013,26 @@ class Sherlock:
                 ),
             )
         # Inference engine:
-        from sherlock.inference.engine import InferenceEngine  # local import to avoid cycle
+        from sherlock.inference.engine import (  # local import to avoid cycle
+            EVIDENCE_GROUNDING_EXTENSION,
+            PREMISE_CONFLICT_EXTENSION,
+            InferenceEngine,
+        )
 
         if self._inference_provider is not None:
+            # v1.5 Stage 2: augment the ENGINE's LLM-3 prompt with the grounding /
+            # gap-detection extensions when their kill-switches are on. The stored
+            # self._llm3_prompt stays the base text (byte-identical when off).
+            engine_llm3 = llm3
+            _inf = self.config.inference
+            if getattr(_inf, "evidence_grounding", False):
+                engine_llm3 += "\n\n" + EVIDENCE_GROUNDING_EXTENSION
+            if getattr(_inf, "premise_conflict", False):
+                engine_llm3 += "\n\n" + PREMISE_CONFLICT_EXTENSION
             self._inferer = InferenceEngine(
                 provider=self._inference_provider,
                 store=self._memory,
-                system_prompt=llm3,
+                system_prompt=engine_llm3,
                 cold_start_turns=self.config.inference.cold_start_turns,
                 confidence_threshold=self.config.inference.confidence_threshold,
             )
@@ -3417,6 +3430,19 @@ class Sherlock:
         if "infer" in requested and self._inferer is not None:
             try:
                 llm2_preds = self._fetch_recent_llm2_predictions(conv_id, limit=5)
+                # v1.5 Stage 2: feed LLM-3 the SAME deterministic perception block
+                # LLM-1 saw this turn, and enable the span-grounded evidence cap —
+                # both gated by InferenceConfig.evidence_grounding (off → no-op).
+                _inf = self.config.inference
+                _ground = getattr(_inf, "evidence_grounding", False)
+                _obs_text = ""
+                if _ground and getattr(self, "_last_perception", None):
+                    try:
+                        from sherlock.perception import render_observations
+
+                        _obs_text = render_observations(self._last_perception)
+                    except Exception:
+                        _obs_text = ""
                 infer_result = self._inferer.infer(
                     conversation_id=conv_id,
                     turn_index=turn_index,
@@ -3424,6 +3450,10 @@ class Sherlock:
                     recent_turns=self._format_last_k_turns(conv_id, 3),
                     llm2_predictions=llm2_preds,
                     bypass_cold_start=True,
+                    observations=_obs_text or None,
+                    ground_evidence=_ground,
+                    grounding_cap=getattr(_inf, "evidence_grounding_cap", 0.35),
+                    premise_conflict=getattr(_inf, "premise_conflict", False),
                 )
                 hypotheses = infer_result.get("hypotheses", []) or []
                 # v1.2: the chain-unrolled read rides to the NEXT turn's slot —
@@ -3460,7 +3490,7 @@ class Sherlock:
         # 8. Decay pass.
         active_topics = [user_input]
         for h in hypotheses[:2]:
-            if h.get("intent"):
+            if isinstance(h, dict) and h.get("intent"):
                 active_topics.append(str(h["intent"]))
         try:
             decay_counts = self._decay.step(
@@ -5008,6 +5038,9 @@ class Sherlock:
         slot_budget_overrides: dict[str, int] | None = None,
         # --- v1.5 Stage 1: stdlib perception layer (off by default) ---
         perception: bool | dict | None = None,
+        # --- v1.5 Stage 2: evidence-grounded LLM-3 (off by default) ---
+        evidence_grounding: bool = False,
+        premise_conflict: bool = False,
     ) -> "Sherlock":
         """Bring-your-own-LLM constructor.
 
@@ -5234,6 +5267,11 @@ class Sherlock:
                 cfg.perception = PerceptionConfig(**{"enabled": True, **perception})
             else:
                 cfg.perception = PerceptionConfig(enabled=True)
+
+        # v1.5 Stage 2: evidence-grounded LLM-3 kill-switches (must be set BEFORE
+        # install_companion_prompts below builds the inferer's augmented prompt).
+        cfg.inference.evidence_grounding = bool(evidence_grounding)
+        cfg.inference.premise_conflict = bool(premise_conflict)
 
         main_provider = CallableProvider(main_chat, model_id=model_id)
         summary_provider = (

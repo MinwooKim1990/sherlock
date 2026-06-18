@@ -89,6 +89,10 @@ def build_agent(session: Session, system_prompt: str, settings: dict):
         # v1.5 Stage 1: deterministic perception layer ON in the playground so
         # OBSERVED/PRIOR observations surface for human verification.
         perception=settings.get("perception", True),
+        # v1.5 Stage 2: evidence-grounded LLM-3 — feed perception to LLM-3, cap
+        # uncited hypotheses, and let premise-conflicts trigger a web check.
+        evidence_grounding=settings.get("evidence_grounding", True),
+        premise_conflict=settings.get("premise_conflict", True),
     )
     agent.set_event_sink(session.emit)
     session.agent = agent

@@ -226,6 +226,18 @@ class InferenceConfig(BaseModel):
     # v0.7: LLM-3 background iterative inference-search loop (self-evaluating).
     max_search_rounds: int = 10
     search_results_per_round: int = 4
+    # v1.5 Stage 2: evidence-grounded LLM-3. When on, the perception OBSERVED
+    # block is fed to LLM-3, the prompt requires a VERBATIM quote per hypothesis,
+    # and any hypothesis without a verifiable quote is capped to ≤0.35. Off →
+    # LLM-3 prompt + output byte-identical (kill switch).
+    evidence_grounding: bool = False
+    evidence_grounding_cap: float = 0.35
+    # v1.5 Stage 2: premise/knowledge-gap detection. When on, the prompt gains a
+    # `premise_conflict` field — topics where a user premise conflicts with the
+    # model's knowledge → routed to the existing inference-search loop for
+    # external verification (gap detection, not silent "correction"). Off → the
+    # DEFAULT_LLM3_PROMPT and schema stay byte-identical.
+    premise_conflict: bool = False
 
 
 class PerceptionConfig(BaseModel):
