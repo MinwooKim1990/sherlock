@@ -3821,6 +3821,109 @@ class Sherlock:
         tail = non_sys[-(2 * k) :]
         return [ChatMessage(role=m.role, content=m.content) for m in tail]
 
+    # Pronouns / numerals / fillers that must NOT count as a shared TOPIC word
+    # for the consistency gate (local to Stage 3 — does not touch the shared
+    # `_FACT_STOPWORDS` that deep research / search relevance depend on).
+    _CONSISTENCY_STOP = frozenset(
+        "i me my mine myself you your yours we us our ours he she him her his "
+        "they them their it its this that these those now today new actually "
+        "really just here there thing things".split()
+    )
+
+    @classmethod
+    def _substantive_tokens(cls, text: str) -> frozenset:
+        """Content tokens minus pronouns, pure numbers, and 1-char fillers —
+        what a genuine SHARED TOPIC between two statements looks like."""
+        return frozenset(
+            t
+            for t in _fact_tokens(text)
+            if len(t) > 1 and not t.isdigit() and t not in cls._CONSISTENCY_STOP
+        )
+
+    def _check_memory_consistency(self, user_text: str, entries: list) -> list[dict]:
+        """v1.5 Stage 3 — LLM-2's memory-consistency role, code-first.
+
+        Flag pinned facts the NEW message appears to contradict, reusing the
+        pure-code ``_looks_contradictory`` (negation mismatch / number divergence)
+        gated by topical overlap so unrelated facts never collide. Returns [] in
+        ``off`` mode (→ slot byte-identical). In ``code+llm2`` mode the rare set
+        of code-flagged candidates is confirmed by a single LLM-2 call (the only
+        ambiguous-case escalation; falls back to the code set on any failure)."""
+        mode = getattr(self.config.memory, "memory_consistency_check", "off")
+        if mode == "off":
+            return []
+        u_sub = self._substantive_tokens(user_text)
+        if not u_sub:
+            return []
+        candidates: list[dict] = []
+        for e in entries:
+            if not getattr(e, "pinned", False):
+                continue
+            content = getattr(e, "content", "") or ""
+            # Require a shared SUBSTANTIVE topic word — not a pronoun, number, or
+            # 1-char filler. `_fact_tokens` keeps "i"/"my"/digits, so the bare
+            # token overlap fired on ~any two first-person sentences with differing
+            # numbers; gating on substantive tokens kills that false-positive class
+            # without touching the shared `_FACT_STOPWORDS` (used by deep research).
+            if (u_sub & self._substantive_tokens(content)) and _looks_contradictory(
+                user_text, content
+            ):
+                candidates.append({"fact": content, "fact_id": getattr(e, "id", None)})
+            if len(candidates) >= 5:
+                break
+        if mode == "code+llm2" and candidates:
+            candidates = self._llm2_confirm_contradictions(user_text, candidates)
+        return candidates
+
+    def _llm2_confirm_contradictions(self, user_text: str, candidates: list[dict]) -> list[dict]:
+        """Single LLM-2 confirmation pass over code-flagged candidates — keep only
+        the ones LLM-2 agrees genuinely conflict. Best-effort: any failure returns
+        the code candidates unchanged (never raises into the turn)."""
+        if self._summary_provider is None:
+            return candidates
+        try:
+            from sherlock.jsonish import chat_json_with_retry
+
+            facts = "\n".join(f"{i}. {c['fact']}" for i, c in enumerate(candidates))
+            prompt = (
+                "A user just sent a NEW message. A code check flagged the stored "
+                "facts below as POSSIBLY contradicted by it. For EACH, decide if "
+                "the new message GENUINELY contradicts the stored fact (a real "
+                "conflict, not just the same topic).\n\n"
+                f"NEW MESSAGE: {user_text}\n\nSTORED FACTS:\n{facts}\n\n"
+                'Reply STRICT JSON only: {"contradictions": [<indices that genuinely conflict>]}'
+            )
+            parsed, _resp = chat_json_with_retry(
+                self._summary_provider,
+                [ChatMessage(role="user", content=prompt)],
+                want=dict,
+            )
+            # No usable verdict (parse failed → None, or the dict lacks the
+            # expected key) → keep the code candidates; never silently drop a
+            # possible real conflict on an LLM-2 hiccup. A present (even empty)
+            # "contradictions" list is a real verdict and IS honored.
+            if not isinstance(parsed, dict) or "contradictions" not in parsed:
+                return candidates
+            raw = parsed.get("contradictions", [])
+            idxs = (
+                {int(i) for i in raw if isinstance(i, (int, float)) and not isinstance(i, bool)}
+                if isinstance(raw, list)
+                else set()
+            )
+            return [c for i, c in enumerate(candidates) if i in idxs]
+        except Exception:
+            return candidates
+
+    @staticmethod
+    def _render_consistency_block(conflicts: list[dict]) -> str:
+        lines = [
+            "MEMORY-CONSISTENCY CHECK — the current message may conflict with a "
+            "stored fact. Reconcile with the user; do NOT silently override either:"
+        ]
+        for c in conflicts[:5]:
+            lines.append(f'- on record: "{c["fact"]}"')
+        return "\n".join(lines)
+
     def _assemble_messages(
         self,
         user_text: str,
@@ -3941,6 +4044,17 @@ class Sherlock:
                         ]
                     },
                 )
+        # v1.5 Stage 3: LLM-2 memory-consistency anchor. Code-first contradiction
+        # check of the new message vs pinned facts; surfaced same-turn so LLM-1 can
+        # reconcile rather than silently override. OFF by default → byte-identical.
+        consistency = self._check_memory_consistency(user_text, all_entries)
+        if consistency:
+            tier3_parts.append(self._render_consistency_block(consistency))
+            self._emit(
+                "memory.consistency",
+                "llm2",
+                {"conflicts": [{"fact": c["fact"]} for c in consistency]},
+            )
         intent_block = self._format_active_intent(
             hypotheses, getattr(self, "_slot_inference_extras", {})
         )
@@ -5041,6 +5155,8 @@ class Sherlock:
         # --- v1.5 Stage 2: evidence-grounded LLM-3 (off by default) ---
         evidence_grounding: bool = False,
         premise_conflict: bool = False,
+        # --- v1.5 Stage 3: LLM-2 memory-consistency (off by default) ---
+        memory_consistency_check: str = "off",
     ) -> "Sherlock":
         """Bring-your-own-LLM constructor.
 
@@ -5272,6 +5388,9 @@ class Sherlock:
         # install_companion_prompts below builds the inferer's augmented prompt).
         cfg.inference.evidence_grounding = bool(evidence_grounding)
         cfg.inference.premise_conflict = bool(premise_conflict)
+        # v1.5 Stage 3: LLM-2 memory-consistency mode.
+        if memory_consistency_check in ("off", "code", "code+llm2"):
+            cfg.memory.memory_consistency_check = memory_consistency_check
 
         main_provider = CallableProvider(main_chat, model_id=model_id)
         summary_provider = (

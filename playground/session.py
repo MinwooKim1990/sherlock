@@ -93,6 +93,8 @@ def build_agent(session: Session, system_prompt: str, settings: dict):
         # uncited hypotheses, and let premise-conflicts trigger a web check.
         evidence_grounding=settings.get("evidence_grounding", True),
         premise_conflict=settings.get("premise_conflict", True),
+        # v1.5 Stage 3: LLM-2 memory-consistency — code-first (fast, inline).
+        memory_consistency_check=settings.get("memory_consistency_check", "code"),
     )
     agent.set_event_sink(session.emit)
     session.agent = agent

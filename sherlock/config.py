@@ -128,6 +128,13 @@ class MemoryConfig(BaseModel):
     # K-turn tail (they stay in SQLite + memory tools). Kill switch.
     compaction_frontier: bool = True
 
+    # v1.5 Stage 3: LLM-2 memory-consistency check. "off" (default) → no check,
+    # slot byte-identical. "code" → pure-code contradiction check of the new
+    # message vs pinned facts (negation/number divergence), surfaced same-turn.
+    # "code+llm2" → also confirm the rare code-flagged candidates with one LLM-2
+    # call (ambiguous-case escalation only).
+    memory_consistency_check: Literal["off", "code", "code+llm2"] = "off"
+
     # v0.5.0: redact secrets/PII before writing to long-term memory/RAG
     # (the raw transcript is never redacted — only the memory write path).
     redact_secrets: bool = False
