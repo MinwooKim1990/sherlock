@@ -8,6 +8,10 @@ OFF by default → slot byte-identical; deep-research code path untouched.
 
 from __future__ import annotations
 
+import json
+
+import pytest
+
 from sherlock import Sherlock
 from sherlock.agent import _notebook_step_grounded
 from sherlock.inference.engine import InferenceEngine
@@ -239,3 +243,60 @@ def test_slot_on_pulls_notebook(tmp_path):
     final = a.inspect_last_turn().messages_passed_to_llm1[-1].content
     assert "INFERENCE NOTEBOOK" in final
     assert "wants flexibility" in final
+
+
+# ---------- async parity (external audit P1) --------------------------------
+_INFER_JSON = json.dumps(
+    {
+        "hypotheses": [
+            {
+                "intent": "wants flexibility",
+                "probability": 0.6,
+                "evidence": ['user said "buy the pass"'],
+                "search_keywords": [],
+                "reasoning_type": "pragmatic",
+            }
+        ],
+        "implied_chain": ["a", "b"],
+        "really_asking": "is it safe to wait on the pass",
+        "anticipated_next": [],
+        "tools_recommended": [],
+        "freshness_required": [],
+        "confidence_overall": 0.6,
+        "evolution_signals": {},
+    }
+)
+
+
+@pytest.mark.asyncio
+async def test_achat_v15_parity(tmp_path):
+    # AUDIT P1: native async achat() must fire the v1.5 LLM-3 upgrades + the v1.2
+    # chain carry-forward + the notebook, exactly like sync chat().
+    async def main(messages):
+        return "here is the answer.\n<<sherlock-companions: infer>>"
+
+    a = Sherlock.with_callable(
+        main_chat=main,
+        inference_chat=lambda m: _INFER_JSON,
+        system_prompt="You are terse.",
+        storage_dir=tmp_path / "asyncparity",
+        context_window=128_000,
+        embedding="fake",
+        main_search_engine=None,
+        inference_search_engine=None,
+        perception=True,
+        evidence_grounding=True,
+        premise_conflict=True,
+        inference_notebook=True,
+    )
+    a._inferer.deepen_notebook = lambda **kw: {
+        "steps": [{"question": "q1", "answer": "a1", "evidence": "buy the pass"}],
+        "conclusions": ["wants flexibility"],
+        "open_questions": [],
+        "converged": True,
+    }
+    await a.achat("should I buy the pass early before the trip")
+    # v1.2 implied-chain carry-forward now lands on the async path (was dropped):
+    assert a._pending_inference_extras.get("really_asking")
+    # v1.5 inference notebook now runs on the async path (was never produced):
+    assert a._pending_notebook is not None

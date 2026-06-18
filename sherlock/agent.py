@@ -5172,6 +5172,20 @@ class Sherlock:
         if "infer" in requested and self._inferer is not None:
             try:
                 llm2_preds = self._fetch_recent_llm2_predictions(conv.id, limit=5)
+                # v1.5 parity with sync chat()/_run_post_response: feed the perception
+                # observations + enable the span-grounded cap + premise_conflict, all
+                # gated by config (off → no-op). Without this, native-async library
+                # users silently miss the v1.5 LLM-3 upgrades AND the v1.2 chain.
+                _inf = self.config.inference
+                _ground = getattr(_inf, "evidence_grounding", False)
+                _obs_text = ""
+                if _ground and getattr(self, "_last_perception", None):
+                    try:
+                        from sherlock.perception import render_observations
+
+                        _obs_text = render_observations(self._last_perception)
+                    except Exception:
+                        _obs_text = ""
                 infer_result = await asyncio.to_thread(
                     self._inferer.infer,
                     conversation_id=conv.id,
@@ -5180,10 +5194,28 @@ class Sherlock:
                     recent_turns=self._format_last_k_turns(conv.id, 3),
                     llm2_predictions=llm2_preds,
                     bypass_cold_start=True,  # P0-3: tag-driven request honours LLM-1
+                    observations=_obs_text or None,
+                    ground_evidence=_ground,
+                    grounding_cap=getattr(_inf, "evidence_grounding_cap", 0.35),
+                    premise_conflict=getattr(_inf, "premise_conflict", False),
                 )
                 if isinstance(infer_result, dict):
                     hypotheses = infer_result.get("hypotheses", []) or []
+                    # v1.2: the chain-unrolled read rides to the NEXT turn's slot.
+                    self._pending_inference_extras = {
+                        "implied_chain": infer_result.get("implied_chain") or [],
+                        "really_asking": infer_result.get("really_asking") or "",
+                        "anticipated_next": infer_result.get("anticipated_next") or [],
+                    }
                     self._emit("infer.done", "llm3", dict(infer_result))
+                    self._tool_call_history.append(
+                        {
+                            "turn_index": turn_index,
+                            "user": user_input,
+                            "tools_recommended": infer_result.get("tools_recommended", []) or [],
+                            "freshness_required": infer_result.get("freshness_required", []) or [],
+                        }
+                    )
                     await asyncio.to_thread(
                         self._run_inference_search_loop,
                         conv_id=conv.id,
@@ -5192,6 +5224,17 @@ class Sherlock:
                         initial_queries=infer_result.get("freshness_required", []) or [],
                         search_results=search_results,
                     )
+                    # v1.5 Stage 4: recursive inference notebook (off by default).
+                    if getattr(_inf, "inference_notebook", False):
+                        nb = await asyncio.to_thread(
+                            self._run_inference_notebook,
+                            conv.id,
+                            turn_index,
+                            infer_result,
+                            search_results,
+                        )
+                        if nb:
+                            self._pending_notebook = nb
             except Exception:
                 pass
 

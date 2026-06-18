@@ -290,10 +290,17 @@ class BootstrapConfig(BaseModel):
 
 
 class ExecutionConfig(BaseModel):
-    parallel_when_possible: bool = True
-    max_concurrent_background_tasks: int = 3
-    cost_cap_per_turn_usd: float = 0.50
-    fallback_to_sequential_on_local: bool = True
+    # NOTE (honesty): the following three are ADVISORY / NOT ENFORCED today. The
+    # background companion worker is a single-thread executor (max_workers=1) for
+    # deterministic replay, so `parallel_when_possible` /
+    # `max_concurrent_background_tasks` do not change concurrency, and
+    # `cost_cap_per_turn_usd` is not wired to any spend check (no per-turn USD
+    # cap is enforced). They are kept for forward-compat config stability; treat
+    # them as documentation of intent, not active controls.
+    parallel_when_possible: bool = True  # advisory — not enforced (single bg worker)
+    max_concurrent_background_tasks: int = 3  # advisory — not enforced (single bg worker)
+    cost_cap_per_turn_usd: float = 0.50  # advisory — NOT enforced (no spend gate)
+    fallback_to_sequential_on_local: bool = True  # advisory — not enforced
     # v0.5.0: run companions (LLM-2/LLM-3) + decay in a background worker so
     # chat() returns the main reply immediately. False = inline (deterministic
     # for tests/eval/replay).
