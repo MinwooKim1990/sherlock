@@ -408,6 +408,7 @@ inference:
   confidence_threshold: 0.4
 
 execution:
+  # advisory / NOT enforced today (single background worker; no spend gate):
   parallel_when_possible: true
   max_concurrent_background_tasks: 3
   cost_cap_per_turn_usd: 0.50

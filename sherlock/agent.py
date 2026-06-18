@@ -5167,7 +5167,38 @@ class Sherlock:
             },
         )
 
-        # v0.4.0: LLM-3 fires only when LLM-1 emitted `infer` tag.
+        # --- Companion pipeline (ordering parity with sync _run_post_response) ---
+        # 7a. LLM-2 compaction FIRST so LLM-3 reasons over freshly-compacted memory
+        #     AND the v1.4 cascade can fire on a compact-only turn (was: async ran
+        #     infer before compaction, so the cascade below never triggered).
+        summary_run = False
+        summary_result = None
+        if "compact" in requested and self._summarizer is not None:
+            try:
+                summary_result = await asyncio.to_thread(
+                    self._summarizer.run,
+                    conversation_id=conv.id,
+                    recent_turns=self._format_last_k_turns(
+                        conv.id, max(5, turn_index - self._last_compact_turn)
+                    ),
+                    turn_index=turn_index,
+                )
+                summary_run = True
+                self._last_compact_turn = turn_index
+                if isinstance(summary_result, dict):
+                    self._emit("compact.done", "llm2", dict(summary_result))
+            except Exception:
+                pass
+
+        # v1.4 LLM-2 → LLM-3 cascade (parity): if compaction surfaced forward-looking
+        # threads (worth_digging / predicted_directions), force an inference even when
+        # LLM-1 didn't request one.
+        if isinstance(summary_result, dict) and (
+            summary_result.get("worth_digging") or summary_result.get("predicted_directions")
+        ):
+            requested = set(requested) | {"infer"}
+
+        # 7b. LLM-3 inference (now over freshly-compacted memory).
         # Its output benefits the NEXT turn's slot (cannot time-travel).
         if "infer" in requested and self._inferer is not None:
             try:
@@ -5238,41 +5269,23 @@ class Sherlock:
             except Exception:
                 pass
 
-        # Background: summarizer + decay can run in parallel after the response is sent.
-        # v0.4.0: LLM-2 also tag-gated (matches sync chat()).
-        async def _do_summary():
-            if self._summarizer is None or "compact" not in requested:
-                return False
-            try:
-                summary_result = await asyncio.to_thread(
-                    self._summarizer.run,
-                    conversation_id=conv.id,
-                    recent_turns=self._format_last_k_turns(
-                        conv.id, max(5, turn_index - self._last_compact_turn)
-                    ),
-                    turn_index=turn_index,
-                )
-                self._last_compact_turn = turn_index
-                if isinstance(summary_result, dict):
-                    self._emit("compact.done", "llm2", dict(summary_result))
-                return True
-            except Exception:
-                return False
-
-        async def _do_decay():
+        # 8. Decay (uses this turn's hypotheses). Compaction already ran above (so the
+        #    cascade could fire), so decay runs after inference — matching sync order.
+        decay_counts = {}
+        try:
             active_topics = [user_input]
             for h in hypotheses[:2]:
-                if h.get("intent"):
+                if isinstance(h, dict) and h.get("intent"):
                     active_topics.append(str(h["intent"]))
-            return await asyncio.to_thread(
+            decay_counts = await asyncio.to_thread(
                 self._decay.step,
                 conversation_id=conv.id,
                 current_turn_index=turn_index,
                 active_topics=active_topics,
             )
-
-        summary_run, decay_counts = await asyncio.gather(_do_summary(), _do_decay())
-        self._emit("decay.done", "decay", dict(decay_counts or {}))
+            self._emit("decay.done", "decay", dict(decay_counts or {}))
+        except Exception:
+            decay_counts = {}
 
         # Carry THIS turn's LLM-3 output forward to next turn's slot.
         self._pending_hypotheses = hypotheses

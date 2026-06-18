@@ -539,7 +539,7 @@ sherlock evaluate --config sherlock.yaml --conversation evaluation/dummy_convers
 - End-to-end against an 80-turn synthetic benchmark
   (`evaluation/dummy_conversation.md` + gold standard): **82/100** with
   Claude Opus workers, passing the spec's 80% gate (`logs/REPORT.html`).
-- **Ralph v2 behavior probes** — 25 single-capability probes
+- **Ralph v2 behavior probes** — 31 single-capability probes
   (`evaluation/probes/`):
 
   ```bash
@@ -547,7 +547,7 @@ sherlock evaluate --config sherlock.yaml --conversation evaluation/dummy_convers
       --config sherlock.live.yaml --report logs/probe.json
   ```
 
-- The full pytest suite (458 tests) runs hermetically — scripted
+- The full pytest suite (460 tests) runs hermetically — scripted
   callables + fake engines, no network or keys needed: `pytest -q`.
 - **Measure it yourself**: the playground's A/B mode runs every prompt
   against the same model with and without Sherlock (the baseline gets the

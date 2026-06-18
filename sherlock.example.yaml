@@ -69,7 +69,12 @@ search:
   # compress_fetched: true
 
 execution:
-  parallel_when_possible: true
-  max_concurrent_background_tasks: 3
-  cost_cap_per_turn_usd: 0.50
-  fallback_to_sequential_on_local: true
+  # NOTE: the next three are ADVISORY / NOT ENFORCED today. The background
+  # companion worker is a single thread (deterministic replay), so
+  # parallel_when_possible / max_concurrent_background_tasks do not change
+  # concurrency, and cost_cap_per_turn_usd is wired to no spend gate (no per-turn
+  # USD cap is enforced). Kept for forward-compat; treat as intent, not controls.
+  parallel_when_possible: true            # advisory — not enforced
+  max_concurrent_background_tasks: 3      # advisory — not enforced
+  cost_cap_per_turn_usd: 0.50             # advisory — NOT enforced (no spend gate)
+  fallback_to_sequential_on_local: true   # advisory — not enforced
