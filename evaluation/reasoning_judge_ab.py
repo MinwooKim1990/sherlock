@@ -56,7 +56,11 @@ def _flatten(messages):
 
 def _usage(resp):
     u = getattr(resp, "usage", None)
-    return (int(getattr(u, "input_tokens", 0) or 0), int(getattr(u, "output_tokens", 0) or 0)) if u else (0, 0)
+    return (
+        (int(getattr(u, "input_tokens", 0) or 0), int(getattr(u, "output_tokens", 0) or 0))
+        if u
+        else (0, 0)
+    )
 
 
 def _cb(counter):
@@ -66,7 +70,11 @@ def _cb(counter):
         counter["in"] += pin
         counter["out"] += out
         counter["calls"] += 1
-        return ChatResponse(text=getattr(resp, "text", "") or "", model=MODEL, usage=TokenUsage(prompt_tokens=pin, completion_tokens=out))
+        return ChatResponse(
+            text=getattr(resp, "text", "") or "",
+            model=MODEL,
+            usage=TokenUsage(prompt_tokens=pin, completion_tokens=out),
+        )
 
     return fn
 
@@ -136,7 +144,11 @@ def judge(replies):
         parsed = loads_lenient(txt)
     except Exception:
         parsed = None
-    return {"raw": txt, "parsed": parsed, "label_map": {"A": "bare", "B": "cold_start", "C": "turbo"}}
+    return {
+        "raw": txt,
+        "parsed": parsed,
+        "label_map": {"A": "bare", "B": "cold_start", "C": "turbo"},
+    }
 
 
 ROUNDS = 3
@@ -145,7 +157,9 @@ ROUNDS = 3
 def main():
     print(f"=== reasoning A/B + judge ({MODEL}), {ROUNDS} rounds ===", flush=True)
     rounds = []
-    agg = {c: {"scores": [], "in": 0, "out": 0, "calls": 0} for c in ("bare", "cold_start", "turbo")}
+    agg = {
+        c: {"scores": [], "in": 0, "out": 0, "calls": 0} for c in ("bare", "cold_start", "turbo")
+    }
     wins = {"bare": 0, "cold_start": 0, "turbo": 0}
     lab2cond = {"A": "bare", "B": "cold_start", "C": "turbo"}
     for rnd in range(ROUNDS):
@@ -168,9 +182,14 @@ def main():
         if best:
             wins[best] += 1
         rounds.append({"replies": replies, "judge": v})
-        print(f"  round {rnd+1}: scores={p.get('A')}/{p.get('B')}/{p.get('C')} best={p.get('best')}", flush=True)
+        print(
+            f"  round {rnd+1}: scores={p.get('A')}/{p.get('B')}/{p.get('C')} best={p.get('best')}",
+            flush=True,
+        )
 
-    OUT.write_text(json.dumps({"rounds": rounds, "agg": agg, "wins": wins}, ensure_ascii=False, indent=2))
+    OUT.write_text(
+        json.dumps({"rounds": rounds, "agg": agg, "wins": wins}, ensure_ascii=False, indent=2)
+    )
     print("\n" + "=" * 72)
     for c in ("bare", "cold_start", "turbo"):
         s = agg[c]["scores"]

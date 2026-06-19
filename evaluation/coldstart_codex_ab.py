@@ -62,7 +62,9 @@ def _cb(counter, role):
         counter["cached"] += cached
         counter["calls"] += 1
         counter[role] = counter.get(role, 0) + 1
-        return ChatResponse(text=text, model=MODEL, usage=TokenUsage(prompt_tokens=pin, completion_tokens=out))
+        return ChatResponse(
+            text=text, model=MODEL, usage=TokenUsage(prompt_tokens=pin, completion_tokens=out)
+        )
 
     return fn
 
@@ -120,7 +122,9 @@ def main():
             f"cached={t['cached']} | calls={t['calls']} (infer={t.get('infer',0)})"
         )
         for pt in r["per_turn"]:
-            print(f"   {pt['turn']:<18} calls={pt['calls']} infer={pt['infer']} fire3={pt['fire3']}")
+            print(
+                f"   {pt['turn']:<18} calls={pt['calls']} infer={pt['infer']} fire3={pt['fire3']}"
+            )
         for i, rep in enumerate(r["replies"]):
             print(f"   reply{i+1}: {rep[:90]}")
     ti, ci = turbo["totals"]["in"], cold["totals"]["in"]
