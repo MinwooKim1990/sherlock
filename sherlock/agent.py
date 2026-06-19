@@ -3469,7 +3469,11 @@ class Sherlock:
         delays the user. See CompanionsConfig for the three modes."""
         mode = getattr(getattr(self.config, "companions", None), "mode", "cold_start")
         if mode == "turbo":
-            return set(requested) | {"compact", "infer"}, True
+            # the prior all-on: infer EVERY turn + deep always armed, with the
+            # legacy fill-ratio compaction gate (compact only near the cliff, NOT
+            # every turn — matching the measured current behavior).
+            req = self._legacy_companion_decision(requested, turn_index, topic_changed, fill_ratio)
+            return set(req) | {"infer"}, True
         if mode == "off":
             return (
                 self._legacy_companion_decision(requested, turn_index, topic_changed, fill_ratio),
