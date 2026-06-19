@@ -967,6 +967,20 @@ class Sherlock:
         # v1.4: fraction of the model window the last assembled prompt occupied —
         # drives the fill-based compaction trigger + the LLM-1 context-fill line.
         self._last_fill_ratio: float = 0.0
+        # v1.6 Quiescence Gate: dual leaky-bucket companion-pressure state. _p3 =
+        # intent (LLM-3) pressure, _p2 = memory (LLM-2) pressure; latches hold the
+        # Schmitt "loud" state; _spans_since_compact accumulates durable OBSERVED
+        # spans toward memory pressure; _last_consistency / _prev_summary_result /
+        # _prev_infer_value are cross-turn signal inputs. All inert unless
+        # companions.mode == "cold_start".
+        self._p3: float = 0.0
+        self._p2: float = 0.0
+        self._p3_loud: bool = False
+        self._p2_loud: bool = False
+        self._spans_since_compact: int = 0
+        self._last_consistency: list = []
+        self._prev_summary_result: dict | None = None
+        self._prev_infer_value: dict | None = None
         # v0.5.0 Phase 4: per-conversation cumulative tool-call counter
         # (on top of the 3-rounds-per-turn cap). Resets on session change.
         self._conv_tool_calls: int = 0
@@ -1134,6 +1148,19 @@ class Sherlock:
             )
         return out
 
+    def _reset_companion_pressure(self) -> None:
+        """v1.6 Quiescence Gate: zero all dynamic-gating state on a session change
+        so a fresh/switched session never inherits stale pressure or a sticky
+        contradiction signal."""
+        self._p3 = 0.0
+        self._p2 = 0.0
+        self._p3_loud = False
+        self._p2_loud = False
+        self._spans_since_compact = 0
+        self._last_consistency = []
+        self._prev_summary_result = None
+        self._prev_infer_value = None
+
     def new_session(self) -> str:
         """Start a fresh session and switch to it. Returns the new id."""
         conv = self._storage.create_conversation(project=self.config.project)
@@ -1152,6 +1179,7 @@ class Sherlock:
         self._pending_notebook = None
         self._slot_notebook = None
         self._conv_tool_calls = 0
+        self._reset_companion_pressure()
         self._last_compact_turn = 0
         # Re-seed domain hints into the new conversation.
         self._ensure_conversation()
@@ -1179,6 +1207,11 @@ class Sherlock:
         self._pending_inference_extras = {}
         self._pending_search_results = []
         self._conv_tool_calls = 0
+        # v1.6: zero the gating state, then re-seed intent pressure from the last
+        # user message so a long sustained-need conversation doesn't silently drop
+        # to single-model after a reload (one free stdlib perception pass).
+        self._reset_companion_pressure()
+        self._reseed_companion_pressure_from_last_user(self._prev_user_text)
         # Restore last-compact turn from existing summaries so the fallback
         # doesn't immediately fire on resume.
         self._last_compact_turn = self._turn_index
@@ -1204,6 +1237,7 @@ class Sherlock:
             self._pending_inference_extras = {}
             self._pending_search_results = []
             self._conv_tool_calls = 0
+            self._reset_companion_pressure()
             self._last_compact_turn = 0
         return {
             "session_id": conversation_id,
@@ -3402,6 +3436,218 @@ class Sherlock:
             return set(requested) | {"infer"}
         return requested
 
+    # ---- v1.6 Quiescence Gate: dynamic companion gating --------------------
+    def _legacy_companion_decision(
+        self, requested: set, turn_index: int, topic_changed: bool, fill_ratio: float
+    ) -> set:
+        """The pre-v1.6 default, extracted VERBATIM: fill-ratio compaction gate +
+        smart auto_infer (incl. the SHERLOCK_AUTO_INFER env override via
+        _maybe_auto_infer). Used by companions.mode == "off" so that mode is
+        byte-identical to the legacy behavior."""
+        fill_threshold = float(getattr(self.config.memory, "compact_at_fill_ratio", 0.80) or 0.0)
+        if (
+            "compact" not in requested
+            and self._summarizer is not None
+            and fill_threshold > 0.0
+            and fill_ratio >= fill_threshold
+        ):
+            requested = set(requested) | {"compact"}
+        return self._maybe_auto_infer(requested, turn_index, topic_changed)
+
+    def _companion_pressure(
+        self,
+        *,
+        requested: set,
+        turn_index: int,
+        topic_changed: bool,
+        fill_ratio: float,
+        user_text: str = "",
+    ) -> tuple[set, bool]:
+        """Decide which background companions fire this turn + whether the DEEP
+        tier (notebook + proactive search) is armed. Returns (requested, deep).
+        LLM-1's reply is already produced/sent before this runs, so this never
+        delays the user. See CompanionsConfig for the three modes."""
+        mode = getattr(getattr(self.config, "companions", None), "mode", "cold_start")
+        if mode == "turbo":
+            return set(requested) | {"compact", "infer"}, True
+        if mode == "off":
+            return (
+                self._legacy_companion_decision(requested, turn_index, topic_changed, fill_ratio),
+                True,
+            )
+        return self._cold_start_pressure(
+            requested, turn_index, topic_changed, fill_ratio, user_text
+        )
+
+    def _gate_perceive(self, user_text: str):
+        """Cheap perception pass used ONLY as the gate's sensor (decoupled from
+        the user-facing OBSERVED-block feature). Reuses this turn's already-
+        computed _last_perception when the perception feature is on."""
+        if getattr(self, "_last_perception", None):
+            return self._last_perception
+        try:
+            from sherlock.perception import perceive
+
+            return perceive(
+                user_text or "",
+                now=datetime.now(timezone.utc),
+                config=getattr(self.config, "perception", None),
+            )
+        except Exception:
+            return []
+
+    @staticmethod
+    def _is_short_message(text: str) -> bool:
+        return len(re.findall(r"\w+", text or "", flags=re.UNICODE)) <= 6
+
+    @staticmethod
+    def _has_recency_entity(cues) -> bool:
+        """A concrete current-thing anchor (a date or a URL span) corroborates a
+        freshness keyword into a real live-data need — vs a bare '뉴스/latest'."""
+        return any(
+            getattr(o, "channel", "") == "observed"
+            and getattr(o, "kind", "") in ("date_delta", "url")
+            for o in (cues or [])
+        )
+
+    def _cold_start_pressure(
+        self,
+        requested: set,
+        turn_index: int,
+        topic_changed: bool,
+        fill_ratio: float,
+        user_text: str,
+    ) -> tuple[set, bool]:
+        """Quiescence Gate: dual leaky-bucket signal-pressure controller.
+
+        Two accumulators — `_p3` (intent/LLM-3), `_p2` (memory/LLM-2) — decay
+        each turn (de-escalation = decay, never a counter) and gain pressure from
+        the free perception cues + topic-shift + fill-ratio + cross-turn signals.
+        Schmitt hysteresis (escalate ≥ esc, stay loud until < deesc) prevents
+        flapping. A strong single signal crosses esc the SAME turn. The DEEP tier
+        (notebook + proactive search) is gated on INSTANTANEOUS strong-signal
+        count this turn (not the accumulated float — fixes the temporal ratchet).
+        """
+        C = self.config.companions
+        # 1) DECAY FIRST — de-escalation is geometric decay, position-free.
+        self._p3 *= C.decay3
+        self._p2 *= C.decay2
+
+        # 2) read this turn's free signals.
+        cues = self._gate_perceive(user_text)
+        obs = {getattr(o, "kind", "") for o in cues if getattr(o, "channel", "") == "observed"}
+        prior = {
+            getattr(o, "kind", ""): (o.confidence if o.confidence is not None else 0.5)
+            for o in cues
+            if getattr(o, "channel", "") == "prior"
+        }
+        short = self._is_short_message(user_text)
+        consistency = bool(getattr(self, "_last_consistency", []))
+        prev_sum = getattr(self, "_prev_summary_result", None) or {}
+        prev_inf = getattr(self, "_prev_infer_value", None) or {}
+        conf_floor = float(getattr(self.config.inference, "confidence_threshold", 0.4) or 0.0)
+        n_strong = 0  # instantaneous strong-signal count → deep tier
+
+        # --- intent pressure (_p3) ---
+        fresh = "freshness" in obs
+        if fresh and (("anaphora" in prior) or topic_changed or self._has_recency_entity(cues)):
+            self._p3 += 0.7
+            n_strong += 1
+        elif fresh:
+            self._p3 += 0.35  # lone '뉴스/날씨/latest' → MEDIUM, below esc3 (no useless search)
+        if "anaphora" in prior:
+            self._p3 += 0.45 * prior["anaphora"]
+        if "hedge" in prior:
+            self._p3 += 0.35 * prior["hedge"]
+        if topic_changed and short:
+            self._p3 += 0.5
+            n_strong += 1
+        if consistency:
+            self._p3 += 0.7
+            n_strong += 1
+        if prev_sum.get("worth_digging") or prev_sum.get("predicted_directions"):
+            self._p3 += 0.6  # LLM-2 → LLM-3 cascade (next-turn effect)
+            n_strong += 1
+        if prev_inf.get("premise_conflict") or prev_inf.get("max_conf", 0.0) >= conf_floor:
+            self._p3 = max(self._p3, C.esc3)  # detective still productive → sustain
+        if "infer" in requested:
+            self._p3 = max(self._p3, C.esc3)  # LLM-1 self-tag = hard floor
+
+        # --- memory pressure (_p2) — anchored to the fill cliff ---
+        self._p2 += max(0.0, fill_ratio - 0.65) * 2.0  # ramps only NEAR the 0.80 cliff
+        self._p2 += min(0.5, 0.10 * self._spans_since_compact)  # capped durable-fact accumulator
+        if consistency:
+            self._p2 += 0.5
+        if "compact" in requested:
+            self._p2 = max(self._p2, C.esc2)
+
+        # 3) clamp
+        self._p3 = min(self._p3, 2.0)
+        self._p2 = min(self._p2, 2.0)
+
+        # 4) Schmitt threshold (escalate > de-escalate; band kills flapping).
+        esc3 = C.esc3_weak if getattr(C, "profile", "strong") == "weak" else C.esc3
+        fire3 = (self._p3 >= (esc3 if not self._p3_loud else C.deesc3)) or ("infer" in requested)
+        self._p3_loud = fire3
+        fill_cliff = float(getattr(self.config.memory, "compact_at_fill_ratio", 0.80) or 0.0)
+        fire2 = (
+            (self._p2 >= (C.esc2 if not self._p2_loud else C.deesc2))
+            or ("compact" in requested)
+            or (fill_cliff > 0.0 and fill_ratio >= fill_cliff)  # HARD backstop
+        )
+        self._p2_loud = fire2
+
+        # 5) DEEP tier — instantaneous strong-signal count THIS turn (not the
+        #    accumulated float → a repeated lone freshness can't ratchet into it).
+        deep = n_strong >= int(getattr(C, "esc3_deep_signals", 2))
+
+        # span accumulator reset/advance on the MAIN thread (no cross-thread write)
+        if fire2:
+            self._spans_since_compact = 0
+        else:
+            self._spans_since_compact += len(obs & {"url", "ip", "uuid", "date_delta", "email"})
+
+        out = set(requested)
+        if fire2 and self._summarizer is not None:
+            out.add("compact")
+        if fire3 and self._inferer is not None:
+            out.add("infer")
+        self._emit(
+            "companion.gate",
+            "gate",
+            {
+                "p3": round(self._p3, 3),
+                "p2": round(self._p2, 3),
+                "fire2": fire2,
+                "fire3": fire3,
+                "deep": deep,
+                "n_strong": n_strong,
+                "fill": round(fill_ratio, 3),
+            },
+        )
+        return out, deep
+
+    def _reseed_companion_pressure_from_last_user(self, last_user_text: str | None) -> None:
+        """v1.6: on session switch, re-seed intent pressure from the last user
+        message so a reloaded sustained-need conversation doesn't restart cold
+        (a free stdlib perception pass). Only active in cold_start mode."""
+        if getattr(getattr(self.config, "companions", None), "mode", "cold_start") != "cold_start":
+            return
+        if not last_user_text:
+            return
+        try:
+            cues = self._gate_perceive(last_user_text)
+            obs = {getattr(o, "kind", "") for o in cues if getattr(o, "channel", "") == "observed"}
+            prior = {getattr(o, "kind", "") for o in cues if getattr(o, "channel", "") == "prior"}
+            seed = 0.0
+            if "freshness" in obs:
+                seed += 0.35
+            if "anaphora" in prior:
+                seed += 0.3
+            self._p3 = min(seed, self.config.companions.esc3)
+        except Exception:
+            self._p3 = 0.0
+
     def _run_post_response(
         self,
         conv_id: str,
@@ -3411,6 +3657,7 @@ class Sherlock:
         search_results: list,
         hypotheses_out: list,
         turn_state: "TurnState",
+        deep: bool = True,
     ) -> None:
         """Companion (LLM-3 + LLM-2) + decay work that runs AFTER the main
         reply is returned. Runs inline (background=False) or in the worker
@@ -3437,6 +3684,8 @@ class Sherlock:
                 self._last_compact_turn = turn_index
                 if isinstance(summary_result, dict):
                     self._emit("compact.done", "llm2", dict(summary_result))
+                    # v1.6: carry worth_digging/predicted_directions to next turn's gate.
+                    self._prev_summary_result = summary_result
             except Exception as exc:
                 import sys
 
@@ -3499,22 +3748,36 @@ class Sherlock:
                         "freshness_required": infer_result.get("freshness_required", []) or [],
                     }
                 )
-                self._run_inference_search_loop(
-                    conv_id=conv_id,
-                    turn_index=turn_index,
-                    hypotheses=hypotheses,
-                    initial_queries=infer_result.get("freshness_required", []) or [],
-                    search_results=search_results,
-                )
-                # v1.5 Stage 4: recursive inference notebook (off by default). Runs
-                # AFTER the search loop so it can quote any web facts gathered this
-                # turn; rides the NEXT turn's slot like the inference extras above.
-                if getattr(self.config.inference, "inference_notebook", False):
-                    nb = self._run_inference_notebook(
-                        conv_id, turn_index, infer_result, search_results
+                # v1.6: carry the detective's value forward (premise_conflict + the
+                # top hypothesis confidence) so a productive read sustains pressure.
+                self._prev_infer_value = {
+                    "premise_conflict": infer_result.get("premise_conflict") or [],
+                    "max_conf": max(
+                        (
+                            float(h.get("probability") or 0.0)
+                            for h in hypotheses
+                            if isinstance(h, dict)
+                        ),
+                        default=0.0,
+                    ),
+                }
+                # v1.6 DEEP tier gate: proactive search + notebook run only when the
+                # Quiescence Gate armed `deep` (off/turbo → always armed). A cheap
+                # intent read still runs above; this skips the expensive bits.
+                if deep:
+                    self._run_inference_search_loop(
+                        conv_id=conv_id,
+                        turn_index=turn_index,
+                        hypotheses=hypotheses,
+                        initial_queries=infer_result.get("freshness_required", []) or [],
+                        search_results=search_results,
                     )
-                    if nb:
-                        self._pending_notebook = nb
+                    if getattr(self.config.inference, "inference_notebook", False):
+                        nb = self._run_inference_notebook(
+                            conv_id, turn_index, infer_result, search_results
+                        )
+                        if nb:
+                            self._pending_notebook = nb
             except Exception as exc:
                 import sys
 
@@ -3888,6 +4151,15 @@ class Sherlock:
         mode = getattr(self.config.memory, "memory_consistency_check", "off")
         if mode == "off":
             return []
+        candidates = self._memory_consistency_raw(user_text, entries)
+        if mode == "code+llm2" and candidates:
+            candidates = self._llm2_confirm_contradictions(user_text, candidates)
+        return candidates
+
+    def _memory_consistency_raw(self, user_text: str, entries: list) -> list[dict]:
+        """Pure code contradiction-check (no mode gate). Reused by BOTH the slot
+        cue (`_check_memory_consistency`) and the v1.6 gate signal — so the gate
+        sees contradictions even when the user-facing cue is off."""
         u_sub = self._substantive_tokens(user_text)
         if not u_sub:
             return []
@@ -3907,8 +4179,6 @@ class Sherlock:
                 candidates.append({"fact": content, "fact_id": getattr(e, "id", None)})
             if len(candidates) >= 5:
                 break
-        if mode == "code+llm2" and candidates:
-            candidates = self._llm2_confirm_contradictions(user_text, candidates)
         return candidates
 
     def _llm2_confirm_contradictions(self, user_text: str, candidates: list[dict]) -> list[dict]:
@@ -4210,8 +4480,19 @@ class Sherlock:
                 )
         # v1.5 Stage 3: LLM-2 memory-consistency anchor. Code-first contradiction
         # check of the new message vs pinned facts; surfaced same-turn so LLM-1 can
-        # reconcile rather than silently override. OFF by default → byte-identical.
-        consistency = self._check_memory_consistency(user_text, all_entries)
+        # reconcile rather than silently override. Cue is OFF by default →
+        # byte-identical. v1.6: the RAW check feeds the gate signal UNCONDITIONALLY
+        # (must-fix: overwrite with [] when clean so a cleared conflict can't stick).
+        _raw_consistency = self._memory_consistency_raw(user_text, all_entries)
+        self._last_consistency = _raw_consistency
+        _cmode = getattr(self.config.memory, "memory_consistency_check", "off")
+        consistency: list = []
+        if _cmode != "off" and _raw_consistency:
+            consistency = (
+                self._llm2_confirm_contradictions(user_text, _raw_consistency)
+                if _cmode == "code+llm2"
+                else _raw_consistency
+            )
         if consistency:
             tier3_parts.append(self._render_consistency_block(consistency))
             self._emit(
@@ -4866,15 +5147,16 @@ class Sherlock:
         # caching keeps the cost low; at it, compaction evicts summarized turns.
         # LLM-1's explicit compact tag still fires anytime. `infer` auto-fires
         # selectively (see MemoryConfig.auto_infer).
-        fill_threshold = float(getattr(self.config.memory, "compact_at_fill_ratio", 0.80) or 0.0)
-        if (
-            "compact" not in requested
-            and self._summarizer is not None
-            and fill_threshold > 0.0
-            and self._last_fill_ratio >= fill_threshold
-        ):
-            requested = set(requested) | {"compact"}
-        requested = self._maybe_auto_infer(requested, turn_index, topic_changed)
+        # v1.6 Quiescence Gate: decide which background companions fire this turn
+        # and whether the deep tier (notebook + proactive search) is armed. Runs
+        # AFTER the reply is produced — never delays the user.
+        requested, _deep = self._companion_pressure(
+            requested=requested,
+            turn_index=turn_index,
+            topic_changed=topic_changed,
+            fill_ratio=self._last_fill_ratio,
+            user_text=user_input,
+        )
 
         self._prev_user_text = user_input
 
@@ -4925,6 +5207,7 @@ class Sherlock:
                 search_results,
                 hypotheses_out,
                 turn_state,
+                _deep,
             )
         else:
             self._run_post_response(
@@ -4935,6 +5218,7 @@ class Sherlock:
                 search_results,
                 hypotheses_out,
                 turn_state,
+                _deep,
             )
         return response.text
 
@@ -5131,15 +5415,14 @@ class Sherlock:
         # auto-compact when the assembled prompt reaches compact_at_fill_ratio of
         # the window (not a fixed turn cadence) + selective auto-infer, so async
         # memory and inference never starve when LLM-1 under-emits tags.
-        fill_threshold = float(getattr(self.config.memory, "compact_at_fill_ratio", 0.80) or 0.0)
-        if (
-            "compact" not in requested
-            and self._summarizer is not None
-            and fill_threshold > 0.0
-            and self._last_fill_ratio >= fill_threshold
-        ):
-            requested = set(requested) | {"compact"}
-        requested = self._maybe_auto_infer(requested, turn_index, topic_changed)
+        # v1.6 Quiescence Gate (parity with sync): decide companions + deep tier.
+        requested, _deep = self._companion_pressure(
+            requested=requested,
+            turn_index=turn_index,
+            topic_changed=topic_changed,
+            fill_ratio=self._last_fill_ratio,
+            user_text=user_input,
+        )
 
         self._storage.add_message(
             conv.id,
@@ -5187,6 +5470,7 @@ class Sherlock:
                 self._last_compact_turn = turn_index
                 if isinstance(summary_result, dict):
                     self._emit("compact.done", "llm2", dict(summary_result))
+                    self._prev_summary_result = summary_result  # v1.6 gate signal
             except Exception:
                 pass
 
@@ -5247,25 +5531,38 @@ class Sherlock:
                             "freshness_required": infer_result.get("freshness_required", []) or [],
                         }
                     )
-                    await asyncio.to_thread(
-                        self._run_inference_search_loop,
-                        conv_id=conv.id,
-                        turn_index=turn_index,
-                        hypotheses=hypotheses,
-                        initial_queries=infer_result.get("freshness_required", []) or [],
-                        search_results=search_results,
-                    )
-                    # v1.5 Stage 4: recursive inference notebook (off by default).
-                    if getattr(_inf, "inference_notebook", False):
-                        nb = await asyncio.to_thread(
-                            self._run_inference_notebook,
-                            conv.id,
-                            turn_index,
-                            infer_result,
-                            search_results,
+                    # v1.6: carry the detective's value forward for the gate.
+                    self._prev_infer_value = {
+                        "premise_conflict": infer_result.get("premise_conflict") or [],
+                        "max_conf": max(
+                            (
+                                float(h.get("probability") or 0.0)
+                                for h in hypotheses
+                                if isinstance(h, dict)
+                            ),
+                            default=0.0,
+                        ),
+                    }
+                    # v1.6 DEEP tier gate (parity with sync): only when armed.
+                    if _deep:
+                        await asyncio.to_thread(
+                            self._run_inference_search_loop,
+                            conv_id=conv.id,
+                            turn_index=turn_index,
+                            hypotheses=hypotheses,
+                            initial_queries=infer_result.get("freshness_required", []) or [],
+                            search_results=search_results,
                         )
-                        if nb:
-                            self._pending_notebook = nb
+                        if getattr(_inf, "inference_notebook", False):
+                            nb = await asyncio.to_thread(
+                                self._run_inference_notebook,
+                                conv.id,
+                                turn_index,
+                                infer_result,
+                                search_results,
+                            )
+                            if nb:
+                                self._pending_notebook = nb
             except Exception:
                 pass
 
@@ -5391,11 +5688,17 @@ class Sherlock:
         # --- v1.5 Stage 2: evidence-grounded LLM-3 (off by default) ---
         evidence_grounding: bool = False,
         premise_conflict: bool = False,
-        # --- v1.5 Stage 3: LLM-2 memory-consistency (off by default) ---
-        memory_consistency_check: str = "off",
+        # --- v1.5 Stage 3: LLM-2 memory-consistency (None → resolved by mode) ---
+        memory_consistency_check: str | None = None,
         # --- v1.5 Stage 4: recursive inference notebook (off by default) ---
         inference_notebook: bool = False,
         notebook_max_rounds: int = 3,
+        # --- v1.6: dynamic companion gating. "cold_start" (default) is cheap —
+        # single-model until signal-pressure escalates LLM-3/LLM-2; "turbo" fires
+        # every turn (the prior all-on); "off" = legacy smart auto_infer. None →
+        # the SHERLOCK_COMPANIONS env (used to keep the test suite hermetic on
+        # legacy) else "cold_start". ---
+        companions_mode: str | None = None,
     ) -> "Sherlock":
         """Bring-your-own-LLM constructor.
 
@@ -5615,8 +5918,21 @@ class Sherlock:
             execution=ExecutionConfig(background=background),
         )
 
-        # v1.5 Stage 1: opt in to the perception layer (off by default). Accept
-        # ``True`` (enable with defaults) or a dict of PerceptionConfig overrides.
+        # v1.6: companion mode + profile defaults. cold_start (the default) turns
+        # the cheap deterministic sensors ON (perception cues + code consistency)
+        # so the gate is well-sensored and LLM-1 gets the free OBSERVED facts — an
+        # EXPLICIT perception=/memory_consistency_check= always wins.
+        if companions_mode is None:
+            companions_mode = os.environ.get("SHERLOCK_COMPANIONS") or "cold_start"
+        if companions_mode in ("off", "cold_start", "turbo"):
+            cfg.companions.mode = companions_mode
+        if perception is None:
+            perception = companions_mode == "cold_start"
+        if memory_consistency_check is None:
+            memory_consistency_check = "code" if companions_mode == "cold_start" else "off"
+
+        # v1.5 Stage 1: opt in to the perception layer. Accept ``True`` (enable
+        # with defaults) or a dict of PerceptionConfig overrides.
         if perception:
             if isinstance(perception, dict):
                 cfg.perception = PerceptionConfig(**{"enabled": True, **perception})

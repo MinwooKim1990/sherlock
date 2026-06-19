@@ -253,6 +253,46 @@ class InferenceConfig(BaseModel):
     notebook_max_rounds: int = 3
 
 
+class CompanionsConfig(BaseModel):
+    """v1.6 — dynamic companion gating ("Quiescence Gate").
+
+    Decides per turn whether the BACKGROUND companions (LLM-2 compaction, LLM-3
+    inference + notebook + proactive search) wake up. LLM-1 always answers
+    immediately regardless — this only gates the background brain, so it never
+    delays the user's reply.
+
+    Modes:
+      - ``"off"``        → byte-identical to the legacy default (smart auto_infer
+                           + fill-ratio compaction gate). For migration safety.
+      - ``"cold_start"`` → DEFAULT. Two leaky-bucket pressure accumulators (intent
+                           ``p3`` / memory ``p2``) fed by the free perception
+                           signals; Schmitt-trigger hysteresis; geometric decay =
+                           emergent dwell (NO turn counter). A strong single
+                           signal (e.g. a stock-price freshness cue) crosses the
+                           escalate threshold the SAME turn — nothing is delayed.
+      - ``"turbo"``      → the prior all-on: every turn fires {compact, infer} +
+                           the deep tier (notebook + proactive search).
+    """
+
+    mode: Literal["off", "cold_start", "turbo"] = "cold_start"
+    # Deployment-time model-strength profile (static config, NOT a runtime index).
+    # A weak model lowers the intent escalate threshold so more turns get help.
+    profile: Literal["strong", "weak"] = "strong"
+    # Geometric decay per quiet turn: intent is message-local (fast), memory
+    # integrates (slow). De-escalation IS this decay — never a turn count.
+    decay3: float = 0.5
+    decay2: float = 0.8
+    # Schmitt thresholds: escalate at esc, stay loud until pressure < deesc.
+    esc3: float = 0.6
+    deesc3: float = 0.3
+    esc2: float = 0.30
+    deesc2: float = 0.15
+    # Deep tier (notebook + proactive search) needs ≥2 strong signals THIS turn.
+    esc3_deep_signals: int = 2
+    # weak-profile override for esc3 (applied when profile == "weak").
+    esc3_weak: float = 0.45
+
+
 class PerceptionConfig(BaseModel):
     """v1.5 Stage 1: pure-stdlib per-turn perception layer.
 
@@ -328,6 +368,7 @@ class Config(BaseModel):
     search: SearchConfig = Field(default_factory=SearchConfig)
     inference: InferenceConfig = Field(default_factory=InferenceConfig)
     perception: PerceptionConfig = Field(default_factory=PerceptionConfig)
+    companions: CompanionsConfig = Field(default_factory=CompanionsConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     bootstrap: BootstrapConfig = Field(default_factory=BootstrapConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)

@@ -98,6 +98,9 @@ def build_agent(session: Session, system_prompt: str, settings: dict):
         # v1.5 Stage 4: recursive inference notebook (background-only, bounded).
         inference_notebook=settings.get("inference_notebook", True),
         notebook_max_rounds=settings.get("notebook_max_rounds", 3),
+        # v1.6: dynamic companion gating. "cold_start" (default) = cheap, escalate
+        # on signal pressure; "turbo" = the prior all-on; "off" = legacy.
+        companions_mode=settings.get("companions_mode", "cold_start"),
     )
     agent.set_event_sink(session.emit)
     session.agent = agent
