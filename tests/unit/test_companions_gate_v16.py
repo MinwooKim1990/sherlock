@@ -11,8 +11,28 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from sherlock import Sherlock
 from sherlock.perception import Observation
+
+_INFER_JSON = json.dumps(
+    {
+        "hypotheses": [
+            {
+                "intent": "x",
+                "probability": 0.5,
+                "evidence": ["e"],
+                "search_keywords": [],
+                "reasoning_type": "deduction",
+            }
+        ],
+        "tools_recommended": [],
+        "freshness_required": [],
+        "confidence_overall": 0.5,
+        "evolution_signals": {},
+    }
+)
 
 
 def _obs(channel, kind, confidence=None):
@@ -187,3 +207,86 @@ def test_reset_zeroes_pressure(tmp_path):
     assert a._p3 > 0
     a.new_session()
     assert a._p3 == 0.0 and a._p3_loud is False and a._spans_since_compact == 0
+
+
+# ---------- audit regressions ----------------------------------------------
+def test_off_mode_equals_legacy(tmp_path, monkeypatch):
+    # AUDIT locked principle #1: mode="off" is byte-identical to the legacy
+    # fill-gate + smart auto_infer decision across signal combinations.
+    monkeypatch.setenv("SHERLOCK_AUTO_INFER", "smart")
+    a, _ = _agent(tmp_path, "offeq", "off")
+    for req in (set(), {"compact"}, {"infer"}, {"compact", "infer"}):
+        for topic in (False, True):
+            for fill in (0.1, 0.79, 0.85):
+                for ti in (1, 5):
+                    out, deep = a._companion_pressure(
+                        requested=set(req),
+                        turn_index=ti,
+                        topic_changed=topic,
+                        fill_ratio=fill,
+                        user_text="x",
+                    )
+                    expected = a._legacy_companion_decision(set(req), ti, topic, fill)
+                    assert out == expected and deep is True, (req, topic, fill, ti)
+
+
+def test_low_fill_spans_never_compact(tmp_path):
+    # AUDIT BUG-1: a low-fill URL-heavy session must NOT fire LLM-2 compaction
+    # before the fill cliff (durable-span pressure gated on fill proximity).
+    a, _ = _agent(tmp_path, "spans", "cold_start")
+    for _ in range(12):
+        out, _d = _press(a, set(), fill=0.01, perception=[_obs("observed", "url")])
+        assert "compact" not in out
+
+
+def test_sustained_lone_freshness_never_escalates(tmp_path):
+    # AUDIT BUG-2: repeated bare freshness must stay below esc3 forever (its decay
+    # fixed point sits under the threshold) — no LLM-3 ratchet.
+    a, _ = _agent(tmp_path, "lonefresh", "cold_start")
+    for _ in range(12):
+        out, deep = _press(a, set(), perception=[_obs("observed", "freshness")])
+        assert "infer" not in out and deep is False
+
+
+def test_turbo_deep_always_armed(tmp_path):
+    a, _ = _agent(tmp_path, "turbodeep", "turbo")
+    out, deep = a._companion_pressure(
+        requested=set(), turn_index=1, topic_changed=False, fill_ratio=0.1, user_text="x"
+    )
+    assert "infer" in out and deep is True
+
+
+def test_fill_backstop_compacts_at_cliff(tmp_path):
+    a, _ = _agent(tmp_path, "backstop", "cold_start")
+    out, _d = _press(a, set(), fill=0.85)  # ≥ compact_at_fill_ratio (0.80) → hard backstop
+    assert "compact" in out
+
+
+@pytest.mark.asyncio
+async def test_async_gate_quiet_no_infer(tmp_path):
+    # AUDIT gap: the gate works on the async path too — a quiet first turn stays
+    # single-model (no LLM-3) just like sync.
+    counts = {"infer": 0}
+
+    def infer_cb(m):
+        counts["infer"] += 1
+        return _INFER_JSON
+
+    async def main(m):
+        return "ok."
+
+    a = Sherlock.with_callable(
+        main_chat=main,
+        inference_chat=infer_cb,
+        summary_chat=lambda m: "{}",
+        system_prompt="x",
+        storage_dir=tmp_path / "asyncq",
+        context_window=128_000,
+        embedding="fake",
+        main_search_engine=None,
+        inference_search_engine=None,
+        companions_mode="cold_start",
+        background=False,
+    )
+    await a.achat("a plain calm first message about nothing in particular")
+    assert counts["infer"] == 0

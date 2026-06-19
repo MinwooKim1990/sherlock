@@ -3558,7 +3558,10 @@ class Sherlock:
             self._p3 += 0.7
             n_strong += 1
         elif fresh:
-            self._p3 += 0.35  # lone '뉴스/날씨/latest' → MEDIUM, below esc3 (no useless search)
+            # lone '뉴스/날씨/latest' → its decay fixed point (0.25/(1-decay3)=0.5)
+            # stays BELOW esc3 (0.6) even when sustained, so a bare-freshness
+            # stream never ratchets LLM-3 on. LLM-1 still searches via its own cue.
+            self._p3 += 0.25
         if "anaphora" in prior:
             self._p3 += 0.45 * prior["anaphora"]
         if "hedge" in prior:
@@ -3578,10 +3581,15 @@ class Sherlock:
             self._p3 = max(self._p3, C.esc3)  # LLM-1 self-tag = hard floor
 
         # --- memory pressure (_p2) — anchored to the fill cliff ---
-        self._p2 += max(0.0, fill_ratio - 0.65) * 2.0  # ramps only NEAR the 0.80 cliff
-        self._p2 += min(0.5, 0.10 * self._spans_since_compact)  # capped durable-fact accumulator
+        # The fill cliff is the real compaction trigger; durable spans only
+        # MODULATE timing once memory is actually filling (≥0.65). Below that,
+        # spans add NOTHING — a low-fill URL-heavy session must not compact early
+        # (BUG: re-adding the cumulative span count crossed esc2 at ~1% fill).
+        if fill_ratio >= 0.65:
+            self._p2 += (fill_ratio - 0.65) * 2.0  # ramps toward the 0.80 cliff
+            self._p2 += min(0.5, 0.10 * self._spans_since_compact)  # capped span modulator
         if consistency:
-            self._p2 += 0.5
+            self._p2 += 0.5  # a contradiction to reconcile is genuine memory work
         if "compact" in requested:
             self._p2 = max(self._p2, C.esc2)
 
