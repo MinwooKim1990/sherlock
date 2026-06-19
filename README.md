@@ -547,7 +547,7 @@ sherlock evaluate --config sherlock.yaml --conversation evaluation/dummy_convers
       --config sherlock.live.yaml --report logs/probe.json
   ```
 
-- The full pytest suite (460 tests) runs hermetically — scripted
+- The full pytest suite (450+ tests) runs hermetically — scripted
   callables + fake engines, no network or keys needed: `pytest -q`.
 - **Measure it yourself**: the playground's A/B mode runs every prompt
   against the same model with and without Sherlock (the baseline gets the

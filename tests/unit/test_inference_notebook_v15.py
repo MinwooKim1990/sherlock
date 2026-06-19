@@ -295,7 +295,22 @@ async def test_achat_v15_parity(tmp_path):
         "open_questions": [],
         "converged": True,
     }
+    # Spy on infer() to assert the v1.5 kwargs are ACTUALLY threaded through async
+    # (not just that side-effects happened) — a tighter regression guard.
+    seen = {}
+    _orig = a._inferer.infer
+
+    def _spy(**kw):
+        seen.update(kw)
+        return _orig(**kw)
+
+    a._inferer.infer = _spy
     await a.achat("should I buy the pass early before the trip")
+    # the v1.5 kwargs reach infer() on the async path:
+    assert seen.get("ground_evidence") is True
+    assert seen.get("premise_conflict") is True
+    assert seen.get("grounding_cap") == 0.35
+    assert "observations" in seen  # perception block passed (None or text)
     # v1.2 implied-chain carry-forward now lands on the async path (was dropped):
     assert a._pending_inference_extras.get("really_asking")
     # v1.5 inference notebook now runs on the async path (was never produced):
