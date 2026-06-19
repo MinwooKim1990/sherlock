@@ -32,7 +32,7 @@ storage:
   embedding:
     # Real semantic memory. `local` = on-device multilingual embedder
     # (fastembed, no API key, Korean+English). REQUIRES the extra:
-    #   pip install sherlock[embeddings]
+    #   pip install "sherlock-context[embeddings]"
     # If fastembed/the model is unavailable it falls back to `fake` with a
     # stderr warning. `fake` is a deterministic hash embedder — fine for
     # tests, but NOT semantic (recall/decay are meaningless). For hosted
