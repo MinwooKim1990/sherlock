@@ -54,19 +54,25 @@ def _make_engine():
     return DuckDuckGoSearch()
 
 
-PROMPT = (
+PROMPT = os.environ.get("SHERLOCK_AB_PROMPT") or (
     "올해 12월 21일에서 26일까지 삿포로에서 하는 행사, 27일에 아오모리에서 하는 행사, "
     "28일 아키타에서 하는 행사, 29일 모리오카에서 하는 행사, 30일부터 1월 6일까지 "
     "도쿄에서 하는 행사 있는거 딥리서치 해서 알려줘."
 )
 
-BASELINE_QUERIES = [
-    "삿포로 12월 겨울 축제 이벤트 2026 일루미네이션",
-    "아오모리 12월 겨울 행사 2026",
-    "아키타 12월 겨울 행사 이벤트 2026",
-    "모리오카 이와테 12월 겨울 행사 2026",
-    "도쿄 12월 연말 1월 신년 초일출 행사 2026 2027",
-]
+# Baseline one-shot RAG queries — override with SHERLOCK_AB_QUERIES (||-separated).
+_q_env = os.environ.get("SHERLOCK_AB_QUERIES")
+BASELINE_QUERIES = (
+    [q.strip() for q in _q_env.split("||") if q.strip()]
+    if _q_env
+    else [
+        "삿포로 12월 겨울 축제 이벤트 2026 일루미네이션",
+        "아오모리 12월 겨울 행사 2026",
+        "아키타 12월 겨울 행사 이벤트 2026",
+        "모리오카 이와테 12월 겨울 행사 2026",
+        "도쿄 12월 연말 1월 신년 초일출 행사 2026 2027",
+    ]
+)
 
 
 def _raw_chat(prompt: str):

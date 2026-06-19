@@ -1,6 +1,6 @@
 # SPEC — Project Sherlock System Specification
 
-> Version: v0.3 · 2026-05-08
+> Version: v0.4 · 2026-06-19 (adds M11 — perception v1.5 + Quiescence Gate v1.6)
 > Authoritative source for what the system does and how it is structured.
 > If this document conflicts with anything you remember from training data, this document wins.
 
@@ -408,6 +408,7 @@ inference:
   confidence_threshold: 0.4
 
 execution:
+  # advisory / NOT enforced today (single background worker; no spend gate):
   parallel_when_possible: true
   max_concurrent_background_tasks: 3
   cost_cap_per_turn_usd: 0.50
@@ -544,6 +545,29 @@ Each milestone has explicit Exit criteria. The agent runs them and only proceeds
 - React/TypeScript UI
 - Multi-user (server mode)
 - Distributed memory (Redis / Postgres)
+
+### M11 — Perception + dynamic gating (v1.5 / v1.6)
+- **Perception layer (v1.5)** — a pure-stdlib, deterministic per-turn sensor:
+  OBSERVED facts (date arithmetic, script/locale, structural spans, exact
+  arithmetic, freshness keywords) and probabilistic PRIOR cues (anaphora,
+  hedging, topic shift) injected into the LLM-1 slot. Off by default →
+  slot byte-identical for existing users.
+- **Evidence-grounded LLM-3 (v1.5)** — span-grounded evidence cap +
+  `premise_conflict` detection (a false user premise routes to web verification).
+- **LLM-2 memory-consistency check (v1.5)** — code-first detection of a new
+  message contradicting a pinned fact (negation / number divergence, gated by
+  topical overlap); optional one-call LLM-2 confirmation.
+- **Quiescence Gate (v1.6)** — dynamic companion gating. Two leaky-bucket
+  pressure accumulators (intent `p3` / memory `p2`) fed by the free perception
+  signals, Schmitt-trigger hysteresis, and geometric decay as emergent dwell
+  (NO turn counter). Modes: `off` (byte-identical v1.4), `cold_start` (default —
+  single-model until a real signal escalates), `turbo` (all companions every
+  turn). LLM-1 always answers regardless, so gating never delays the reply.
+
+**Exit:** off-mode is SHA-identical to v1.4; cold_start stays single-model on
+calm turns and escalates the same turn a strong signal appears, de-escalating
+via decay with no turn counter; every new feature is behind a default-off
+kill-switch and adversarially audited per stage.
 
 ---
 

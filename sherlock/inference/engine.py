@@ -8,6 +8,7 @@ search keywords / tools / freshness needs back to the orchestrator.
 from __future__ import annotations
 
 import json
+import re
 
 from sherlock.jsonish import (
     chat_json_with_retry,
@@ -237,6 +238,71 @@ JSON only. No prose around it. No markdown fences. Just the object.
 """
 
 
+# v1.5 Stage 2 — appended to the LLM-3 prompt ONLY when the kill-switch is on.
+# Kept OUT of DEFAULT_LLM3_PROMPT so the constant + its VALID EXAMPLE schema stay
+# byte-identical when the feature is off.
+EVIDENCE_GROUNDING_EXTENSION = """\
+--- EVIDENCE GROUNDING (system-enabled) ---
+Trust EVIDENCE, not conclusions. For EACH hypothesis, at least one item in
+`evidence` MUST be a VERBATIM quote — copy an exact phrase (≥2 words, or the
+exact CJK span) out of the conversation, the CODE OBSERVATIONS, or the ledger,
+wrapped in double quotes, e.g. "should I email". You may add interpretive
+evidence too, but the verbatim quote is mandatory. A hypothesis whose evidence
+contains no verifiable quote is speculation and the system will DOWN-WEIGHT it
+to ≤0.35. Never fabricate a quote — if you cannot quote support for a reading,
+give it a low probability honestly."""
+
+PREMISE_CONFLICT_EXTENSION = """\
+--- PREMISE / KNOWLEDGE-GAP DETECTION (system-enabled) ---
+When the user's request rests on a premise that CONFLICTS with your own
+knowledge, do NOT silently "correct" the user and do NOT silently comply.
+Treat the discrepancy as a CLUE and ask the root question — "why are they
+asking this?" Maybe your knowledge is stale, maybe they know something you do
+not, maybe they misspoke. Flag the topic for external verification instead of
+asserting your prior. Example: "show me SpaceX stock price" — you believe
+SpaceX is private, so WHY do they ask? Your knowledge may be out of date →
+flag "SpaceX stock / IPO status" for a web check rather than replying "SpaceX
+is private."
+
+Add ONE extra field to your JSON output:
+  "premise_conflict": ["<short topic to verify>", ...]   // [] when none
+Populate it ONLY when a user premise genuinely conflicts with your knowledge
+AND fresh external data could resolve it. Empty array is the norm."""
+
+
+# v1.5 Stage 4: the recursive INFERENCE NOTEBOOK system prompt (used only when
+# InferenceConfig.inference_notebook is on). Mirrors the deep-research discipline
+# but for INTENT: bounded, grounded, anchored. Every step must cite a verbatim
+# quote from the evidence — ungrounded self-talk is discarded by the system so
+# the notebook can't amplify its own bias.
+NOTEBOOK_PROMPT = """\
+You are LLM-3 keeping a bounded INFERENCE NOTEBOOK — deepening your read of what
+the user actually needs across a few rounds. This is NOT free brainstorming.
+
+IRON RULE — GROUNDING: every reasoning step MUST be anchored to a VERBATIM quote
+(≥2 words, copied exactly) from the EVIDENCE you are given (the conversation, the
+code OBSERVATIONS, or web facts). A step whose `evidence` is not a real quote
+from the evidence will be DISCARDED by the system. Never invent a quote. If you
+cannot quote support for a thought, do not write it down.
+
+You are given: the open question(s) to deepen, the notebook so far, and the
+EVIDENCE corpus. Think like a detective assembling micro-clues, not a pundit.
+
+Produce STRICT JSON only:
+{
+  "steps": [
+    {"question": "a precise sub-question you are resolving",
+     "answer": "the answer, one or two lines",
+     "evidence": "a VERBATIM quote from the corpus that supports the answer"}
+  ],
+  "conclusions": ["1-3 distilled reads of what the user really needs, each tied to the steps"],
+  "open_questions": ["what is STILL genuinely unresolved and high-value — ≤2, [] if the picture is clear"],
+  "converged": true|false
+}
+Set "converged": true when more digging would not change the conclusion. Keep it
+tight — quality of grounding over quantity. JSON only, no prose, no fences."""
+
+
 @dataclass
 class InferenceResult:
     hypotheses: list[dict] = field(default_factory=list)
@@ -247,6 +313,10 @@ class InferenceResult:
     freshness_required: list[str] = field(default_factory=list)
     confidence_overall: float = 0.0
     evolution_signals: dict = field(default_factory=dict)
+    # v1.5 Stage 2: topics where a user premise conflicts with the model's
+    # knowledge → routed to the inference-search loop. Empty by default, so the
+    # dict shape is stable and OFF is behaviorally identical.
+    premise_conflict: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -258,7 +328,83 @@ class InferenceResult:
             "freshness_required": self.freshness_required,
             "confidence_overall": self.confidence_overall,
             "evolution_signals": self.evolution_signals,
+            "premise_conflict": self.premise_conflict,
         }
+
+
+# v1.5 Stage 2: span-grounded evidence verification (pure code, no LLM call).
+# Extract quoted spans across ASCII, smart, and CJK 「」/『』 quote pairs (the
+# prompt asks for an exact CJK span too — query-language i18n).
+_QUOTE_PATTERNS = (
+    re.compile(r"[\"“”]([^\"“”]{1,}?)[\"“”]"),
+    re.compile(r"['‘’]([^'‘’]{1,}?)['‘’]"),
+    re.compile(r"「([^「」]{1,}?)」"),
+    re.compile(r"『([^『』]{1,}?)』"),
+)
+_CJK = (
+    (0xAC00, 0xD7A3),
+    (0x1100, 0x11FF),
+    (0x3040, 0x30FF),
+    (0x3400, 0x4DBF),
+    (0x4E00, 0x9FFF),
+    (0xF900, 0xFAFF),
+)
+
+
+def _has_cjk(s: str) -> bool:
+    return any(any(lo <= ord(ch) <= hi for (lo, hi) in _CJK) for ch in s)
+
+
+def _quote_grounds(q: str, corpus_cf: str) -> bool:
+    """A quote grounds only if it is SUBSTANTIAL (not a trivial 2-char token a
+    speculation could borrow from any corpus) AND appears verbatim. Multi-word
+    spans match at word boundaries; CJK spans (no word breaks) match as a dense
+    ≥2-char substring. Whitespace is collapsed so a double-space variant of a
+    real quote still matches."""
+    q = re.sub(r"\s+", " ", q.strip()).casefold()
+    if len(q) < 2:
+        return False
+    if _has_cjk(q):
+        return q in corpus_cf
+    multiword = " " in q
+    if not multiword and len(q) < 4:
+        return False  # reject the trivial single short token ("in", "to")
+    return re.search(r"(?<!\w)" + re.escape(q) + r"(?!\w)", corpus_cf) is not None
+
+
+def _hyp_has_grounded_quote(hyp: dict, corpus_cf: str) -> bool:
+    """True iff some evidence item of the hypothesis carries a VERBATIM,
+    substantial quote present in the grounding corpus (transcript + current
+    message + OBSERVED block + ledger), case-insensitive and Unicode-literal."""
+    for ev in hyp.get("evidence") or []:
+        text = str(ev)
+        for rx in _QUOTE_PATTERNS:
+            for q in rx.findall(text):
+                if _quote_grounds(q, corpus_cf):
+                    return True
+    return False
+
+
+def _apply_span_grounding(result: InferenceResult, corpus: str, cap: float) -> int:
+    """Down-weight any hypothesis whose evidence carries NO verifiable verbatim
+    quote to <= cap — ungrounded speculation must not reach LLM-1's slot as a
+    high-probability read. Mutates hypotheses in place (so the persisted
+    confidence reflects the cap). Returns the number capped."""
+    # Collapse whitespace so a double-space quote variant still matches.
+    corpus_cf = re.sub(r"\s+", " ", corpus).casefold()
+    capped = 0
+    for h in result.hypotheses:
+        if not isinstance(h, dict) or _hyp_has_grounded_quote(h, corpus_cf):
+            continue
+        try:
+            p = float(h.get("probability") or 0.0)
+        except (TypeError, ValueError):
+            p = 0.0
+        if p > cap:
+            h["probability"] = cap
+            h["grounding"] = "uncited — capped"
+            capped += 1
+    return capped
 
 
 class InferenceEngine:
@@ -310,6 +456,10 @@ class InferenceEngine:
         recent_turns: list[ChatMessage],
         llm2_predictions: list[dict] | None = None,
         bypass_cold_start: bool = False,
+        observations: str | None = None,
+        ground_evidence: bool = False,
+        grounding_cap: float = 0.35,
+        premise_conflict: bool = False,
     ) -> dict:
         # P0-3: when LLM-1 explicitly requested inference via the
         # <<sherlock-companions: infer>> tag, the agent passes
@@ -372,8 +522,19 @@ class InferenceEngine:
                 lines.append(f"- [{conf}] {direction} | evidence: {ev_str}")
             predictions_block = "\n".join(lines) + "\n"
 
+        # v1.5 Stage 2: feed the deterministic perception OBSERVED/PRIOR block so
+        # LLM-3 grounds its deductions in code-verified facts. When None/empty the
+        # user_msg is byte-identical to the pre-feature path.
+        obs_block = ""
+        if observations and observations.strip():
+            obs_block = (
+                "CODE OBSERVATIONS (deterministic facts about THIS message — "
+                "ground your deductions in these):\n" + observations.strip() + "\n\n"
+            )
+
         user_msg = (
-            ledger_block
+            obs_block
+            + ledger_block
             + ("\n" + predictions_block if predictions_block else "")
             + f"\n--- TRANSCRIPT (most-recent last) ---\n{transcript}\n--- END ---\n\n"
             f"Current user message:\n{user_text}\n\n" + probe_instruction
@@ -406,6 +567,30 @@ class InferenceEngine:
             evolution_signals=dict(parsed.get("evolution_signals") or {}),
         )
 
+        # v1.5 Stage 2: premise/knowledge-gap detection — GATED on the kill-switch.
+        # Parsing AND routing only run when enabled, so OFF leaves freshness_required
+        # byte-identical even if a model emits the extra key (legacy/scripted
+        # callables and real models both can). Hardened against malformed types: a
+        # scalar string must NOT explode into characters; non-str items are dropped.
+        if premise_conflict:
+            pc_raw = parsed.get("premise_conflict")
+            if isinstance(pc_raw, list):
+                result.premise_conflict = [
+                    x.strip() for x in pc_raw if isinstance(x, str) and x.strip()
+                ][:4]
+            if result.premise_conflict:
+                # A gap is a knowledge hole → route it to the SAME inference-search
+                # loop as freshness needs (external check, not silent "correction").
+                result.freshness_required = list(
+                    dict.fromkeys(result.freshness_required + result.premise_conflict)
+                )
+
+        # v1.5 Stage 2: span-grounded evidence cap. Only when explicitly enabled —
+        # OFF leaves every probability exactly as the model emitted it.
+        if ground_evidence:
+            corpus = "\n".join(p for p in (obs_block, ledger_block, transcript, user_text) if p)
+            _apply_span_grounding(result, corpus, grounding_cap)
+
         # Persist hypotheses as INFERENCE memories. Filter by confidence
         # threshold for slot injection at retrieval time, but always store.
         for h in result.hypotheses:
@@ -426,6 +611,79 @@ class InferenceEngine:
                 tags=str(h.get("reasoning_type", "")),
             )
         return result.to_dict()
+
+    def deepen_notebook(
+        self,
+        *,
+        open_questions: list[str],
+        notebook_state: dict,
+        corpus: str,
+        round_index: int,
+        max_rounds: int,
+        usage_sink=None,
+    ) -> dict:
+        """v1.5 Stage 4: one round of the recursive inference notebook. Returns
+        {steps, conclusions, open_questions, converged}. Best-effort — any
+        failure returns {} so the orchestrator stops cleanly. The orchestrator
+        (agent) grounds each step against the corpus before keeping it."""
+        oq = "; ".join([q for q in (open_questions or []) if q][:3]) or (
+            "(none — confirm or refine the current read)"
+        )
+        try:
+            state_txt = json.dumps(notebook_state, ensure_ascii=False)[:1500]
+        except Exception:
+            state_txt = str(notebook_state)[:1500]
+        user_msg = (
+            f"OPEN QUESTION(S) TO DEEPEN (round {round_index}/{max_rounds}):\n{oq}\n\n"
+            f"NOTEBOOK SO FAR:\n{state_txt}\n\n"
+            f"EVIDENCE CORPUS (quote ONLY from inside here):\n{(corpus or '')[:4000]}\n\n"
+            "Produce the JSON."
+        )
+        messages = [
+            ChatMessage(
+                role="system",
+                content=NOTEBOOK_PROMPT,
+                cache_stable_prefix_chars=len(NOTEBOOK_PROMPT),
+            ),
+            ChatMessage(role="user", content=user_msg),
+        ]
+        parsed, resp = chat_json_with_retry(self._provider, messages, want=dict)
+        if usage_sink is not None and resp is not None:
+            try:
+                usage_sink(getattr(resp, "usage", None))
+            except Exception:
+                pass
+        if not isinstance(parsed, dict):
+            return {}
+        # Guard every field against non-list LLM output — a scalar string must NOT
+        # be iterated character-by-character ("hi" → ['h','i']).
+        steps = parsed.get("steps")
+        concl = parsed.get("conclusions")
+        oq = parsed.get("open_questions")
+        return {
+            "steps": (
+                [
+                    {
+                        "question": str(s.get("question") or "").strip(),
+                        "answer": str(s.get("answer") or "").strip(),
+                        "evidence": str(s.get("evidence") or "").strip(),
+                    }
+                    for s in steps
+                    if isinstance(s, dict)
+                ][:5]
+                if isinstance(steps, list)
+                else []
+            ),
+            "conclusions": (
+                [str(c).strip() for c in concl if str(c).strip()][:3]
+                if isinstance(concl, list)
+                else []
+            ),
+            "open_questions": (
+                [str(q).strip() for q in oq if str(q).strip()][:2] if isinstance(oq, list) else []
+            ),
+            "converged": bool(parsed.get("converged")),
+        }
 
     def review_search(
         self,

@@ -475,6 +475,17 @@ function renderSlot(d) {
   pre.innerHTML = esc(d.system_prompt || "").replace(/(TIER\s*\d[^\n]*)/g, '<span class="font-bold text-indigo-600">$1</span>');
   root.appendChild(h("div", "text-xs font-semibold text-slate-500 mt-2 mb-1", "Assembled system prompt"));
   root.appendChild(pre);
+  // v1.5: the FINAL user message — the per-turn SYSTEM-ANALYSIS block where the
+  // perception OBSERVED/PRIOR, memory-consistency cue, and inference notebook are
+  // injected. Highlight those headers so the upgrade's effect is visible.
+  if (d.final_user_message) {
+    const fpre = h("pre", "mono text-[11px] bg-white border rounded p-3 whitespace-pre-wrap leading-relaxed");
+    fpre.innerHTML = esc(d.final_user_message)
+      .replace(/(═══[^\n]*═══)/g, '<span class="font-bold text-slate-500">$1</span>')
+      .replace(/(OBSERVED \(code-verified[^\n]*|PRIOR \(probabilistic[^\n]*|MEMORY-CONSISTENCY CHECK[^\n]*|INFERENCE NOTEBOOK[^\n]*|RAW STEPS[^\n]*|CONCLUSIONS[^\n]*|live\/time-sensitive[^\n]*)/g, '<span class="font-bold text-emerald-700">$1</span>');
+    root.appendChild(h("div", "text-xs font-semibold text-slate-500 mt-3 mb-1", "Final user message (TIER 3 — this-turn SYSTEM ANALYSIS + the user's question)"));
+    root.appendChild(fpre);
+  }
   if ((d.tail || []).length) {
     const t = h("details", "mt-2 bg-white border rounded p-2");
     t.appendChild(h("summary", "text-xs font-semibold", `K-turn tail (${d.tail.length} messages)`));

@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 # Distribution name (PyPI "sherlock" is a locks library; the famous OSINT
 # tool also owns the brand). The IMPORT package stays `sherlock`.
 name = "sherlock-context"
-version = "1.4.0"
+version = "1.6.0"
 description = "Bring-your-own-LLM context curation: memory with provenance, implied-intent inference, multilingual deep research — any model, even small local ones, acts smarter."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -62,7 +62,7 @@ embeddings = [
 ]
 # Tavily is the only search provider needing an extra client lib; DuckDuckGo
 # (default), Brave, and Valyu work from the base install (Brave/Valyu need only
-# an API key). Install with `pip install sherlock[search]` for Tavily.
+# an API key). Install with `pip install "sherlock-context[search]"` for Tavily.
 search = [
     "tavily-python>=0.5",
 ]

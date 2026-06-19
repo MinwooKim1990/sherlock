@@ -108,6 +108,24 @@ def _build_agent(probe: Probe, llm_factory, tmp_path: Path):
     from sherlock import Sherlock
 
     main_chat, summary_chat, inference_chat, captured = llm_factory()
+    # When run with --config, evaluate the REAL operational feature config from the
+    # YAML (perception / evidence grounding / premise_conflict / inference notebook
+    # / memory consistency / slot budget / context window) — so --config actually
+    # validates the config a user ships, not just the provider. Search stays off
+    # (probes must not hit the network) and the probe keeps its own persona.
+    feat: dict = {}
+    _cfg = captured.get("config") if isinstance(captured, dict) else None
+    if _cfg is not None:
+        feat = {
+            "perception": bool(getattr(_cfg.perception, "enabled", False)),
+            "evidence_grounding": bool(getattr(_cfg.inference, "evidence_grounding", False)),
+            "premise_conflict": bool(getattr(_cfg.inference, "premise_conflict", False)),
+            "inference_notebook": bool(getattr(_cfg.inference, "inference_notebook", False)),
+            "notebook_max_rounds": int(getattr(_cfg.inference, "notebook_max_rounds", 3)),
+            "memory_consistency_check": getattr(_cfg.memory, "memory_consistency_check", "off"),
+            "context_window": getattr(_cfg.models.main, "context_window", None),
+            "slot_budget_profile": getattr(_cfg.memory, "slot_budget_profile", "auto"),
+        }
     agent = Sherlock.with_callable(
         main_chat=main_chat,
         summary_chat=summary_chat,
@@ -118,6 +136,7 @@ def _build_agent(probe: Probe, llm_factory, tmp_path: Path):
         # disable real web search by default — probes shouldn't hit the network
         main_search_engine=None,
         inference_search_engine=None,
+        **feat,
     )
     return agent, captured
 
@@ -417,6 +436,12 @@ def _real_llm_factory_from_yaml(config_path: Path):
         "companions_tags": set(),
         "memory_tool_calls": [],
         "latest_hypotheses": [],
+        # Carry the loaded YAML config so _build_agent can evaluate the REAL
+        # operational settings (perception / evidence grounding / premise_conflict
+        # / inference notebook / memory consistency / slot budget / context
+        # window) — not just the provider. Network search stays disabled for
+        # probe safety; the probe's own persona/system prompt is preserved.
+        "config": cfg,
     }
 
     from sherlock.providers import ChatMessage as _CM

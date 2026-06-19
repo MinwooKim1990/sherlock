@@ -128,6 +128,13 @@ class MemoryConfig(BaseModel):
     # K-turn tail (they stay in SQLite + memory tools). Kill switch.
     compaction_frontier: bool = True
 
+    # v1.5 Stage 3: LLM-2 memory-consistency check. "off" (default) → no check,
+    # slot byte-identical. "code" → pure-code contradiction check of the new
+    # message vs pinned facts (negation/number divergence), surfaced same-turn.
+    # "code+llm2" → also confirm the rare code-flagged candidates with one LLM-2
+    # call (ambiguous-case escalation only).
+    memory_consistency_check: Literal["off", "code", "code+llm2"] = "off"
+
     # v0.5.0: redact secrets/PII before writing to long-term memory/RAG
     # (the raw transcript is never redacted — only the memory write path).
     redact_secrets: bool = False
@@ -226,6 +233,86 @@ class InferenceConfig(BaseModel):
     # v0.7: LLM-3 background iterative inference-search loop (self-evaluating).
     max_search_rounds: int = 10
     search_results_per_round: int = 4
+    # v1.5 Stage 2: evidence-grounded LLM-3. When on, the perception OBSERVED
+    # block is fed to LLM-3, the prompt requires a VERBATIM quote per hypothesis,
+    # and any hypothesis without a verifiable quote is capped to ≤0.35. Off →
+    # LLM-3 prompt + output byte-identical (kill switch).
+    evidence_grounding: bool = False
+    evidence_grounding_cap: float = 0.35
+    # v1.5 Stage 2: premise/knowledge-gap detection. When on, the prompt gains a
+    # `premise_conflict` field — topics where a user premise conflicts with the
+    # model's knowledge → routed to the existing inference-search loop for
+    # external verification (gap detection, not silent "correction"). Off → the
+    # DEFAULT_LLM3_PROMPT and schema stay byte-identical.
+    premise_conflict: bool = False
+    # v1.5 Stage 4: recursive inference notebook. When on, LLM-3 (background only)
+    # deepens high-value open questions over a few grounded rounds and rides a
+    # "half raw reasoning / half conclusions" notebook to the next turn's slot.
+    # Off → never runs, slot byte-identical. Deep research is untouched (mirror).
+    inference_notebook: bool = False
+    notebook_max_rounds: int = 3
+
+
+class CompanionsConfig(BaseModel):
+    """v1.6 — dynamic companion gating ("Quiescence Gate").
+
+    Decides per turn whether the BACKGROUND companions (LLM-2 compaction, LLM-3
+    inference + notebook + proactive search) wake up. LLM-1 always answers
+    immediately regardless — this only gates the background brain, so it never
+    delays the user's reply.
+
+    Modes:
+      - ``"off"``        → byte-identical to the legacy default (smart auto_infer
+                           + fill-ratio compaction gate). For migration safety.
+      - ``"cold_start"`` → DEFAULT. Two leaky-bucket pressure accumulators (intent
+                           ``p3`` / memory ``p2``) fed by the free perception
+                           signals; Schmitt-trigger hysteresis; geometric decay =
+                           emergent dwell (NO turn counter). A strong single
+                           signal (e.g. a stock-price freshness cue) crosses the
+                           escalate threshold the SAME turn — nothing is delayed.
+      - ``"turbo"``      → the prior all-on: every turn fires {compact, infer} +
+                           the deep tier (notebook + proactive search).
+    """
+
+    mode: Literal["off", "cold_start", "turbo"] = "cold_start"
+    # Deployment-time model-strength profile (static config, NOT a runtime index).
+    # A weak model lowers the intent escalate threshold so more turns get help.
+    profile: Literal["strong", "weak"] = "strong"
+    # Geometric decay per quiet turn: intent is message-local (fast), memory
+    # integrates (slow). De-escalation IS this decay — never a turn count.
+    decay3: float = 0.5
+    decay2: float = 0.8
+    # Schmitt thresholds: escalate at esc, stay loud until pressure < deesc.
+    esc3: float = 0.6
+    deesc3: float = 0.3
+    esc2: float = 0.30
+    deesc2: float = 0.15
+    # Deep tier (notebook + proactive search) needs ≥2 strong signals THIS turn.
+    esc3_deep_signals: int = 2
+    # weak-profile override for esc3 (applied when profile == "weak").
+    esc3_weak: float = 0.45
+
+
+class PerceptionConfig(BaseModel):
+    """v1.5 Stage 1: pure-stdlib per-turn perception layer.
+
+    Deterministic OBSERVED facts (date arithmetic, script/locale, structural
+    spans, exact arithmetic, freshness keywords) + probabilistic PRIOR cues
+    injected into the LLM-1 slot (and, from Stage 2, LLM-3). ``enabled``
+    defaults to ``False`` so the slot stays byte-identical for existing users;
+    the playground turns it on. Per-primitive toggles let a noisy primitive be
+    silenced without disabling the layer.
+    """
+
+    enabled: bool = False
+    max_observations: int = 12
+    dates: bool = True
+    scripts: bool = True
+    arithmetic: bool = True
+    spans: bool = True
+    code: bool = True
+    discourse: bool = True
+    freshness: bool = True
 
 
 class ToolsConfig(BaseModel):
@@ -243,10 +330,17 @@ class BootstrapConfig(BaseModel):
 
 
 class ExecutionConfig(BaseModel):
-    parallel_when_possible: bool = True
-    max_concurrent_background_tasks: int = 3
-    cost_cap_per_turn_usd: float = 0.50
-    fallback_to_sequential_on_local: bool = True
+    # NOTE (honesty): the following three are ADVISORY / NOT ENFORCED today. The
+    # background companion worker is a single-thread executor (max_workers=1) for
+    # deterministic replay, so `parallel_when_possible` /
+    # `max_concurrent_background_tasks` do not change concurrency, and
+    # `cost_cap_per_turn_usd` is not wired to any spend check (no per-turn USD
+    # cap is enforced). They are kept for forward-compat config stability; treat
+    # them as documentation of intent, not active controls.
+    parallel_when_possible: bool = True  # advisory — not enforced (single bg worker)
+    max_concurrent_background_tasks: int = 3  # advisory — not enforced (single bg worker)
+    cost_cap_per_turn_usd: float = 0.50  # advisory — NOT enforced (no spend gate)
+    fallback_to_sequential_on_local: bool = True  # advisory — not enforced
     # v0.5.0: run companions (LLM-2/LLM-3) + decay in a background worker so
     # chat() returns the main reply immediately. False = inline (deterministic
     # for tests/eval/replay).
@@ -273,6 +367,8 @@ class Config(BaseModel):
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     search: SearchConfig = Field(default_factory=SearchConfig)
     inference: InferenceConfig = Field(default_factory=InferenceConfig)
+    perception: PerceptionConfig = Field(default_factory=PerceptionConfig)
+    companions: CompanionsConfig = Field(default_factory=CompanionsConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     bootstrap: BootstrapConfig = Field(default_factory=BootstrapConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)

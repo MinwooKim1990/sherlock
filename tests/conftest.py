@@ -50,6 +50,10 @@ def _hermetic_auto_embedding(monkeypatch):
     # make topic_changed over-trigger). Tag-driven infer still works; tests
     # that exercise auto-infer set this env to "smart"/"always" explicitly.
     monkeypatch.setenv("SHERLOCK_AUTO_INFER", "off")
+    # v1.6: the package default is the dynamic "cold_start" companion gate, but
+    # the hermetic suite pins legacy "off" so existing tests stay deterministic.
+    # Tests that exercise the gate pass companions_mode="cold_start"/"turbo".
+    monkeypatch.setenv("SHERLOCK_COMPANIONS", "off")
 
 
 @pytest.fixture

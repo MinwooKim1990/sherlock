@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from sherlock import Sherlock
 
 _HYP = json.dumps(
@@ -183,3 +185,28 @@ def test_worth_digging_triggers_infer(tmp_path):
     agent.chat("something worth a deeper look")
     # infer fired off the LLM-2 cascade (hypotheses produced) despite no infer tag
     assert agent.inspect_last_turn().hypotheses, "worth_digging did not cascade into infer"
+
+
+@pytest.mark.asyncio
+async def test_worth_digging_triggers_infer_async(tmp_path):
+    """Async parity (audit P1): a compact-only achat() turn whose LLM-2 surfaces
+    worth_digging must STILL cascade into LLM-3 — previously async ran infer BEFORE
+    compaction, so the cascade could never fire on the async path."""
+
+    async def _amain(messages):
+        return "ok.\n<<sherlock-companions: compact>>"  # compact only, NO infer tag
+
+    agent = Sherlock.with_callable(
+        main_chat=_amain,
+        summary_chat=lambda m: _summary(worth_digging=[{"thread": "dig here", "evidence": ["e"]}]),
+        inference_chat=lambda m: _HYP,
+        system_prompt="x",
+        storage_dir=tmp_path,
+        embedding="fake",
+        background=False,
+        main_search_engine=None,
+        inference_search_engine=None,
+    )
+    agent._turn_index = 10
+    await agent.achat("something worth a deeper look")
+    assert agent.inspect_last_turn().hypotheses, "async worth_digging did not cascade into infer"

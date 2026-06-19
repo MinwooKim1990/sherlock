@@ -86,6 +86,21 @@ def build_agent(session: Session, system_prompt: str, settings: dict):
         main_search_engine=engine,
         inference_search_engine=engine,
         search_api_key=settings.get("search_api_key") or None,
+        # v1.5 Stage 1: deterministic perception layer ON in the playground so
+        # OBSERVED/PRIOR observations surface for human verification.
+        perception=settings.get("perception", True),
+        # v1.5 Stage 2: evidence-grounded LLM-3 — feed perception to LLM-3, cap
+        # uncited hypotheses, and let premise-conflicts trigger a web check.
+        evidence_grounding=settings.get("evidence_grounding", True),
+        premise_conflict=settings.get("premise_conflict", True),
+        # v1.5 Stage 3: LLM-2 memory-consistency — code-first (fast, inline).
+        memory_consistency_check=settings.get("memory_consistency_check", "code"),
+        # v1.5 Stage 4: recursive inference notebook (background-only, bounded).
+        inference_notebook=settings.get("inference_notebook", True),
+        notebook_max_rounds=settings.get("notebook_max_rounds", 3),
+        # v1.6: dynamic companion gating. "cold_start" (default) = cheap, escalate
+        # on signal pressure; "turbo" = the prior all-on; "off" = legacy.
+        companions_mode=settings.get("companions_mode", "cold_start"),
     )
     agent.set_event_sink(session.emit)
     session.agent = agent
