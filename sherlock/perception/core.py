@@ -720,7 +720,6 @@ _FRESH_STRONG = (
     "속보",
     "뉴스",
     "날씨",
-    "今",
     "株価",
     "為替",
     "最新",
@@ -730,14 +729,45 @@ _SOFTWARE_AFTER = re.compile(
     r"(?i)\b(?:latest|newest)\s+(?:version|release|update|build|patch|driver|sdk|stable)\b"
 )
 
+# Korean single-char particles that legitimately follow a noun keyword (so the
+# keyword is still a standalone word: "뉴스를", "주가가"). Anything else Hangul/Han
+# right after the keyword means it's a PREFIX of a longer compound, not the word.
+_KO_PARTICLE = set("은는이가을를에의도만로으와과나야여요죠네다서까지부께랑든")
+
+
+def _cjk_keyword_boundary_ok(text: str, end: int) -> bool:
+    """True when a CJK freshness keyword ending at `end` is a whole word, not a
+    prefix of a longer compound (뉴스레터/최신화/시세표/今度/最新版 → False)."""
+    if end >= len(text):
+        return True  # end of string → boundary
+    o = ord(text[end])
+    is_han = 0x4E00 <= o <= 0x9FFF or 0x3400 <= o <= 0x4DBF or 0xF900 <= o <= 0xFAFF
+    is_hangul = 0xAC00 <= o <= 0xD7A3
+    if is_han:
+        return False  # a following Kanji/Hanja extends the word (最新版, 今度)
+    if is_hangul and text[end] not in _KO_PARTICLE:
+        return False  # a following Hangul syllable extends the word (뉴스레터, 최신화)
+    return True  # Hiragana/Katakana grammar, particle, space, punctuation → boundary
+
 
 def _observe_freshness(msg: str) -> list[Observation]:
     low = msg.lower()
     hit = []
     for kw in _FRESH_STRONG:
-        probe = kw.lower()
-        if (probe if probe.isascii() else kw) in (low if probe.isascii() else msg):
-            hit.append(kw)
+        if kw.isascii():
+            if kw.lower() in low:
+                hit.append(kw)
+        else:
+            # CJK has no spaces → require a real word boundary to avoid matching
+            # an innocuous longer word that merely starts with the keyword. Scan
+            # ALL occurrences so a true word still counts even if an earlier hit
+            # was a compound prefix ("뉴스레터 말고 뉴스 줘").
+            start = msg.find(kw)
+            while start >= 0:
+                if _cjk_keyword_boundary_ok(msg, start + len(kw)):
+                    hit.append(kw)
+                    break
+                start = msg.find(kw, start + 1)
     if _SOFTWARE_AFTER.search(low):
         hit = [k for k in hit if k not in ("latest", "newest")]
     if not hit:

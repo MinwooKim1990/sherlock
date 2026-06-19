@@ -162,6 +162,46 @@ def test_decay_de_escalates_over_quiet_turns(tmp_path):
     assert a._p3_loud is False  # de-escalated without any turn counter
 
 
+def test_prior_infer_does_not_latch_p3(tmp_path):
+    # AUDIT B1: a productive infer leaves a prior read (max_conf), but that must
+    # only ADD decaying pressure — never pin _p3 at esc3. A *typical* mid-conf
+    # prior (0.5, below esc3) used to latch infer ON every quiet turn forever.
+    a, _ = _agent(tmp_path, "b1mid", "cold_start")
+    _press(a, {"infer"})  # escalate once
+    fired = []
+    for t in range(7):
+        # only the turn right after infer ran carries a prior; then quiet
+        prev = {"max_conf": 0.5, "premise_conflict": False} if t == 0 else None
+        out, _deep = _press(a, set(), prev_infer=prev)
+        fired.append("infer" in out)
+    assert fired[0] is True  # consumes the one productive prior
+    assert not any(fired[1:])  # then de-escalates and STAYS single-model
+    assert a._p3_loud is False
+
+
+def test_high_conf_prior_still_decays_below_esc3(tmp_path):
+    # AUDIT B1: even a genuinely high-conf prior (0.95) settles below esc3 — the
+    # decaying nudge has a fixed point under the escalation threshold.
+    a, _ = _agent(tmp_path, "b1hi", "cold_start")
+    _press(a, {"infer"})
+    for t in range(8):
+        prev = {"max_conf": 0.95, "premise_conflict": False} if t == 0 else None
+        out, _deep = _press(a, set(), prev_infer=prev)
+    assert a._p3_loud is False and a._p3 < 0.6
+
+
+def test_premise_conflict_prior_escalates_once_then_drains(tmp_path):
+    # AUDIT B1: a premise_conflict is a real gap → escalate (and count as strong),
+    # but it is one-shot — cleared after consumption so it can't re-fire forever.
+    a, _ = _agent(tmp_path, "b1pc", "cold_start")
+    out0, _ = _press(a, set(), prev_infer={"max_conf": 0.3, "premise_conflict": True})
+    assert "infer" in out0  # the conflict escalates the turn it's seen
+    fired = [("infer" in _press(a, set())[0]) for _ in range(6)]
+    assert a._p3_loud is False  # de-escalated — no latch
+    assert fired[-1] is False  # quiet by the end
+    assert sum(fired) <= 1  # at most a one-turn follow-up tail, never a sustain
+
+
 def test_schmitt_latch_stays_loud_in_band(tmp_path):
     a, _ = _agent(tmp_path, "schmitt", "cold_start")
     # push p3 between deesc3 (0.3) and esc3 (0.6) AFTER being loud → stays loud
@@ -290,3 +330,65 @@ async def test_async_gate_quiet_no_infer(tmp_path):
     )
     await a.achat("a plain calm first message about nothing in particular")
     assert counts["infer"] == 0
+
+
+def test_invalid_companions_mode_raises(tmp_path):
+    # AUDIT M1: an off-by-case / typo'd mode must fail loud, not silently leave
+    # the gate in cold_start with its sensors dark.
+    with pytest.raises(ValueError, match="companions_mode"):
+        Sherlock.with_callable(
+            main_chat=lambda m: "ok.",
+            system_prompt="x",
+            storage_dir=tmp_path / "badmode",
+            context_window=128_000,
+            embedding="fake",
+            main_search_engine=None,
+            inference_search_engine=None,
+            companions_mode="COLD_START",
+        )
+
+
+@pytest.mark.asyncio
+async def test_async_gate_tag_escalates(tmp_path):
+    # AUDIT M5 gap: the async path honors an LLM-1 self-tag → LLM-3 fires, proving
+    # escalation (not just the quiet case) is wired through achat()'s gate seam.
+    counts = {"infer": 0}
+
+    def infer_cb(m):
+        counts["infer"] += 1
+        return _INFER_JSON
+
+    async def main(m):
+        return "ok.\n<<sherlock-companions: infer>>"
+
+    a = Sherlock.with_callable(
+        main_chat=main,
+        inference_chat=infer_cb,
+        summary_chat=lambda m: "{}",
+        system_prompt="x",
+        storage_dir=tmp_path / "asynctag",
+        context_window=128_000,
+        embedding="fake",
+        main_search_engine=None,
+        inference_search_engine=None,
+        companions_mode="cold_start",
+        background=False,
+    )
+    await a.achat("please dig into the discrepancy here")
+    assert counts["infer"] == 1
+
+
+def test_gate_survives_perceive_failure(tmp_path, monkeypatch):
+    # AUDIT M6 gap: if the perception sensor blows up, the gate must degrade to
+    # "no free cues" (return []) and still make a decision — never crash the turn.
+    import sherlock.perception as _perc
+
+    def _boom(*a, **k):
+        raise RuntimeError("sensor exploded")
+
+    monkeypatch.setattr(_perc, "perceive", _boom)
+    a, counts = _agent(tmp_path, "permapanic", "cold_start")
+    a._last_perception = []  # force the live perceive() path inside the gate
+    out = a.chat("a calm ordinary message with no special signal")
+    assert out  # turn completed
+    assert counts["infer"] == 0  # quiet turn, no escalation despite the failure

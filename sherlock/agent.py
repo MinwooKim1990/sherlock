@@ -3575,8 +3575,16 @@ class Sherlock:
         if prev_sum.get("worth_digging") or prev_sum.get("predicted_directions"):
             self._p3 += 0.6  # LLM-2 → LLM-3 cascade (next-turn effect)
             n_strong += 1
-        if prev_inf.get("premise_conflict") or prev_inf.get("max_conf", 0.0) >= conf_floor:
-            self._p3 = max(self._p3, C.esc3)  # detective still productive → sustain
+        # Sustain on a productive prior read — but ADD decaying pressure, never a
+        # hard floor, and gate on a GENUINELY high prior (premise_conflict or conf
+        # ≥ esc3), NOT the 0.4 floor. (Floor + max() latched _p3 at esc3 forever
+        # after one escalation, defeating decay → infer fired every quiet turn.)
+        prev_conf = float(prev_inf.get("max_conf", 0.0) or 0.0)
+        if prev_inf.get("premise_conflict"):
+            self._p3 += 0.6  # a detected false premise → escalate once (one-shot; can't latch)
+            n_strong += 1
+        elif prev_conf >= C.esc3:
+            self._p3 += 0.4 * (prev_conf - conf_floor)  # decaying nudge, drains on quiet turns
         if "infer" in requested:
             self._p3 = max(self._p3, C.esc3)  # LLM-1 self-tag = hard floor
 
@@ -3613,11 +3621,20 @@ class Sherlock:
         #    accumulated float → a repeated lone freshness can't ratchet into it).
         deep = n_strong >= int(getattr(C, "esc3_deep_signals", 2))
 
-        # span accumulator reset/advance on the MAIN thread (no cross-thread write)
+        # span accumulator reset/advance on the MAIN thread (no cross-thread write).
+        # Clamped at 5 — its effect already saturates (min(0.5, 0.10*spans)) there,
+        # so this stays behavior-preserving while not being an unbounded counter.
         if fire2:
             self._spans_since_compact = 0
         else:
-            self._spans_since_compact += len(obs & {"url", "ip", "uuid", "date_delta", "email"})
+            self._spans_since_compact = min(
+                5,
+                self._spans_since_compact + len(obs & {"url", "ip", "uuid", "date_delta", "email"}),
+            )
+        # B1(c): the cross-turn signals are ONE-SHOT — clear after consumption so a
+        # single productive infer / LLM-2 cascade can't re-fire the gate every turn.
+        self._prev_summary_result = None
+        self._prev_infer_value = None
 
         out = set(requested)
         if fire2 and self._summarizer is not None:
@@ -5936,8 +5953,15 @@ class Sherlock:
         # EXPLICIT perception=/memory_consistency_check= always wins.
         if companions_mode is None:
             companions_mode = os.environ.get("SHERLOCK_COMPANIONS") or "cold_start"
-        if companions_mode in ("off", "cold_start", "turbo"):
-            cfg.companions.mode = companions_mode
+        if companions_mode not in ("off", "cold_start", "turbo"):
+            raise ValueError(
+                "companions_mode must be 'off', 'cold_start', or 'turbo' "
+                f"(got {companions_mode!r}). Fix the argument or the "
+                "SHERLOCK_COMPANIONS environment variable."
+            )
+        # Derive the sensor defaults from the RESOLVED mode so an off-by-case
+        # value can never leave the gate running cold_start with dark sensors.
+        cfg.companions.mode = companions_mode
         if perception is None:
             perception = companions_mode == "cold_start"
         if memory_consistency_check is None:

@@ -46,7 +46,7 @@ from sherlock.providers import (
     FakeProvider,
 )
 
-__version__ = "1.4.0"
+__version__ = "1.6.0"
 __all__ = [
     "BaseProvider",
     "CallableProvider",

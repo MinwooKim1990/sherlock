@@ -64,9 +64,33 @@ search:
   # Optional (R17): LLMLingua-2 compression of fetched page text before it
   # enters deep-research prompts. Quality-preserving — drops boilerplate
   # tokens inside each page, never restricts which results/pages are used.
-  # Requires `pip install "sherlock[compress]"`; without the extra installed
-  # Sherlock falls back to plain truncation (zero behavior change).
+  # Requires `pip install "sherlock-context[compress]"`; without the extra
+  # installed Sherlock falls back to plain truncation (zero behavior change).
   # compress_fetched: true
+
+# Companion gating (v1.6) — decides per turn whether the BACKGROUND brain
+# (LLM-2 compaction, LLM-3 inference) wakes up. LLM-1 always answers, so this
+# never delays the user's reply; it only spends companion tokens when a real
+# signal appears.
+companions:
+  mode: cold_start      # default. "off" = byte-identical v1.4; "turbo" = all-on
+  profile: strong       # "weak" lowers the escalate threshold for small models
+  # The leaky-bucket controls below are tuned defaults — change only if you
+  # know the dynamics (decay = de-escalation, Schmitt esc/deesc = hysteresis):
+  # decay3: 0.5         # intent (LLM-3) pressure decay per quiet turn
+  # decay2: 0.8         # memory (LLM-2) pressure decay per quiet turn
+  # esc3: 0.6           # escalate LLM-3 at this pressure; stay loud until < deesc3
+  # deesc3: 0.3
+  # esc3_deep_signals: 2  # deep tier (notebook + proactive search) needs ≥2 strong signals this turn
+
+# Perception layer (v1.5) — deterministic, pure-stdlib OBSERVED facts (date math,
+# script/locale, structural spans, exact arithmetic, freshness) + PRIOR cues fed
+# to LLM-1 (and LLM-3). Off by default for slot byte-stability; cold_start turns
+# it on automatically via with_callable. Set enabled: true to force it on here.
+perception:
+  enabled: false
+  # max_observations: 12   # per-primitive toggles: dates / scripts / arithmetic /
+  # freshness: true        # spans / code / discourse / freshness (all default true)
 
 execution:
   # NOTE: the next three are ADVISORY / NOT ENFORCED today. The background

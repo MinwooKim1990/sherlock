@@ -101,8 +101,8 @@ pip install -e ".[playground]"            # + the Live Inspector web app
 Or build and share a wheel:
 
 ```bash
-pip install build && python -m build      # → dist/sherlock_context-1.4.0-py3-none-any.whl
-pip install "sherlock-context[embeddings,playground] @ file:./dist/sherlock_context-1.4.0-py3-none-any.whl"
+pip install build && python -m build      # → dist/sherlock_context-<version>-py3-none-any.whl
+pip install "sherlock-context[embeddings,playground] @ file://$(ls -1 ./dist/sherlock_context-*-py3-none-any.whl | tail -1)"
 ```
 
 > Distribution name is **`sherlock-context`** (PyPI `sherlock` is an
@@ -308,10 +308,32 @@ results back as a synthetic message, and re-calls your LLM — up to
 `execution.max_tool_rounds` (default 3) per turn. Tags are always
 stripped from the user-visible reply.
 
-If your LLM under-emits the companion tag, a safety net keeps the
-companions alive: `compact` auto-fires every N turns
+### Companion gating — when LLM-2/LLM-3 actually run (v1.6)
+
+By default Sherlock runs in **`cold_start`** mode: a signal-driven gate
+keeps each turn single-model (LLM-1 only) until the conversation genuinely
+needs a companion — then it escalates LLM-2/LLM-3 and de-escalates on its
+own as things settle, with no fixed turn counter. On strong models this
+spends far fewer tokens on calm turns while still firing the instant a
+real signal (topic shift, contradiction, implied intent, fill pressure)
+appears. Pick the mode at construction:
+
+```python
+Sherlock.with_callable(..., companions_mode="cold_start")  # default
+# "off"   — legacy v1.4 behavior, byte-identical (uses the safety net below)
+# "turbo" — every companion, every turn (maximum signal, maximum cost)
+```
+
+> **Migration from ≤ v1.4:** the default changed from always-on companions
+> to `cold_start`. Pass `companions_mode="off"` (or set
+> `SHERLOCK_COMPANIONS=off`) to restore the exact v1.4 behavior.
+
+In **`off`** mode a safety net keeps the companions alive when your LLM
+under-emits the tag: `compact` auto-fires every N turns
 (`memory.summarize_every_n_turns`) and `infer` auto-fires on topic
 shifts (`memory.auto_infer`: `"smart"` default | `"off"` | `"always"`).
+Under `cold_start`/`turbo` the gate owns that decision, so `auto_infer`
+is inert.
 
 ### Web search engines
 
@@ -326,7 +348,7 @@ agent = Sherlock.with_callable(
 ```
 
 Engines: `duckduckgo` (no key; non-commercial terms, weak for news),
-`tavily` (needs `pip install sherlock[search]`), `brave`, `valyu`,
+`tavily` (needs `pip install "sherlock-context[search]"`), `brave`, `valyu`,
 `stub` (tests). Pass `None` to disable search for a role. Native
 tool-calling adapters (`make_openai_tools()`, `make_anthropic_tools()`,
 `make_openai_memory_tool()`, `dispatch_tool_call`, `dispatch_memory`)
@@ -676,7 +698,7 @@ caching, deep-research trust, memory reconciliation — lives in
   system prompt now marks TWO cache zones (protocol / TIER-2) so pinned-fact
   churn no longer invalidates the protocol cache; optional LLMLingua-2
   compression packs ~2.5× more relevant page text into the same research
-  budget (`pip install "sherlock[compress]"`).
+  budget (`pip install "sherlock-context[compress]"`).
 
 ### v1.0 — research strategy, fragment reassembly, infinite memory, cache-native prompts
 - **Research strategy step**: before a deep research run, LLM-1 drafts a short
