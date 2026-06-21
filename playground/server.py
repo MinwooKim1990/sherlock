@@ -9,9 +9,11 @@ Endpoints:
   WS   /ws/{sid}                                      -> per-session event stream
   GET  /                                              -> the single-page UI
 
-Providers: gemini | openai | anthropic | local (any OpenAI-compatible server —
-Ollama, LM Studio, vLLM...). API keys stay in the server-side Session and are
-never echoed back to the browser.
+Providers: gemini | openai | anthropic | deepinfra | together | openrouter |
+local (any OpenAI-compatible server — Ollama, LM Studio, vLLM...). The three
+open-source-model aggregators are descriptor-driven (see playground/providers.py
+``OPENAI_COMPAT``). API keys stay in the server-side Session and are never
+echoed back to the browser.
 
 Run:  python -m uvicorn playground.server:app --reload   (then open http://localhost:8000)
 """

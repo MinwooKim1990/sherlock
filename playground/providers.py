@@ -8,6 +8,12 @@ Supported providers (all through litellm, so Sherlock itself stays BYO-LLM):
   local      any OpenAI-compatible server    -> litellm "openai/<model>" + api_base
              (Ollama, LM Studio, vLLM, llama.cpp server, ...)
 
+  Open-source-model aggregators (OpenAI-compatible, descriptor-driven via
+  ``OPENAI_COMPAT`` below — adding the next one is a one-row dict entry):
+  deepinfra  DeepInfra key                   -> litellm "deepinfra/<org/model>"
+  together   Together AI key                 -> litellm "together_ai/<org/model>"
+  openrouter OpenRouter key                  -> litellm "openrouter/<org/model>"
+
 API keys live ONLY in the server-side Session — they are sent once from the
 browser to /api/models and /api/session and never echoed back.
 """
@@ -32,6 +38,43 @@ _OPENAI_NON_CHAT_RE = re.compile(
     r"(embed|whisper|tts|audio|realtime|image|dall-e|moderation|transcribe|search|davinci|babbage|instruct)"
 )
 
+# Open-source-model aggregators. All three are the SAME OpenAI-compatible API
+# behind three base URLs — the only differences (base URL, litellm route prefix,
+# whether /models needs the key, and the /models JSON shape) are DATA, not logic.
+# A descriptor table keeps adding the next aggregator (Fireworks, Novita, ...) a
+# one-row change instead of another if-ladder. Verified live 2026-06-19.
+OPENAI_COMPAT = {
+    "deepinfra": {
+        "label": "DeepInfra",
+        "litellm_prefix": "deepinfra/",
+        "models_url": "https://api.deepinfra.com/v1/openai/models",
+        "models_need_key": False,  # public; a NON-EMPTY invalid key 401s → never send it to list
+        "list_shape": "data",  # {"data": [{id, metadata:{tags, context_length}}]}
+        "chat_filter": "deepinfra",  # keep metadata.tags ∋ "chat"
+        "extra_headers": {},
+    },
+    "together": {
+        "label": "Together AI",
+        "litellm_prefix": "together_ai/",
+        "models_url": "https://api.together.ai/v1/models",
+        "models_need_key": True,
+        "list_shape": "bare_array",  # TOP-LEVEL [ {...} ] — NO {"data": ...} envelope
+        "chat_filter": "together",  # keep type == "chat"
+        "extra_headers": {},
+    },
+    "openrouter": {
+        "label": "OpenRouter",
+        "litellm_prefix": "openrouter/",
+        "models_url": "https://openrouter.ai/api/v1/models",
+        "models_need_key": False,  # public list
+        "list_shape": "data",  # {"data": [{id, architecture:{output_modalities}}]}
+        "chat_filter": "openrouter",  # keep text-output models
+        # X-Title shows up in the user's OpenRouter dashboard; purely cosmetic,
+        # never required, no fake referrer URL shipped.
+        "extra_headers": {"X-Title": "Sherlock"},
+    },
+}
+
 
 def _normalize_local_base(base_url: str) -> str:
     """'http://localhost:11434' -> 'http://localhost:11434/v1' (Ollama/LM Studio
@@ -50,6 +93,8 @@ def list_models(provider: str, api_key: str = "", base_url: str = "") -> list[di
     """Live model list for one provider: ``[{id, display, ...}]``, newest-ish
     first. Raises on HTTP/auth failure so the caller can surface the error."""
     provider = (provider or "gemini").lower()
+    if provider in OPENAI_COMPAT:
+        return _list_openai_compat(provider, api_key)
     if provider == "gemini":
         return _list_gemini(api_key)
     if provider == "openai":
@@ -123,6 +168,85 @@ def _list_local(base_url: str, api_key: str = "") -> list[dict]:
     return out
 
 
+def _chat_models_deepinfra(items: list[dict]) -> list[dict]:
+    """DeepInfra /models mixes chat with embed/image/tts/stt — keep tags ∋ 'chat'."""
+    out = []
+    for m in items:
+        meta = m.get("metadata") or {}
+        if "chat" not in (meta.get("tags") or []):
+            continue
+        mid = m.get("id") or ""
+        if mid:
+            out.append({"id": mid, "display": mid, "input_limit": meta.get("context_length")})
+    out.sort(key=lambda x: x["id"])
+    return out
+
+
+def _chat_models_together(items: list[dict]) -> list[dict]:
+    """Together model objects carry a ``type`` enum (chat|language|code|image|
+    embedding|...) — keep only chat."""
+    out = []
+    for m in items:
+        if (m.get("type") or "") != "chat":
+            continue
+        mid = m.get("id") or ""
+        if mid:
+            out.append(
+                {
+                    "id": mid,
+                    "display": m.get("display_name") or mid,
+                    "created": m.get("created") or 0,
+                }
+            )
+    out.sort(key=lambda x: (-(x.get("created") or 0), x["id"]))
+    return out
+
+
+def _chat_models_openrouter(items: list[dict]) -> list[dict]:
+    """OpenRouter lists a few non-text-output models — drop anything whose
+    architecture can't emit text."""
+    out = []
+    for m in items:
+        outs = (m.get("architecture") or {}).get("output_modalities") or []
+        if outs and "text" not in outs:
+            continue
+        mid = m.get("id") or ""
+        if mid:
+            out.append(
+                {"id": mid, "display": m.get("name") or mid, "created": m.get("created") or 0}
+            )
+    out.sort(key=lambda x: (-(x.get("created") or 0), x["id"]))
+    return out
+
+
+_OSS_CHAT_FILTERS = {
+    "deepinfra": _chat_models_deepinfra,
+    "together": _chat_models_together,
+    "openrouter": _chat_models_openrouter,
+}
+
+
+def _list_openai_compat(name: str, api_key: str = "") -> list[dict]:
+    """Generic model lister for the OpenAI-compatible aggregators in
+    ``OPENAI_COMPAT``. Normalizes the three /models response shapes into one
+    ``[{id, display, ...}]`` list and applies the per-aggregator chat filter.
+    Auth is sent ONLY when the endpoint requires it (DeepInfra/OpenRouter list
+    publicly, and DeepInfra 401s on a non-empty invalid key — keyless listing is
+    the robust path)."""
+    d = OPENAI_COMPAT[name]
+    headers = dict(d.get("extra_headers") or {})
+    if d["models_need_key"] and api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    r = httpx.get(d["models_url"], headers=headers, timeout=20.0)
+    r.raise_for_status()
+    body = r.json()
+    if d["list_shape"] == "bare_array":
+        items = body if isinstance(body, list) else body.get("data", [])
+    else:  # "data": {"data": [...]} (with or without an "object":"list" wrapper)
+        items = body.get("data", []) if isinstance(body, dict) else (body or [])
+    return _OSS_CHAT_FILTERS[d["chat_filter"]](items)
+
+
 def resolve_model_spec(spec, providers: dict) -> tuple[str, dict]:
     """Turn a role's model spec into (litellm_model_id, extra litellm kwargs).
 
@@ -137,6 +261,14 @@ def resolve_model_spec(spec, providers: dict) -> tuple[str, dict]:
         model = (spec or {}).get("model", "")
     creds = (providers or {}).get(provider, {})
     key = creds.get("api_key", "")
+    if provider in OPENAI_COMPAT:
+        d = OPENAI_COMPAT[provider]
+        # litellm knows each prefix's base URL + cost map natively; the key is
+        # passed explicitly so no env-var mirroring is needed on this path.
+        extra = {"api_key": key}
+        if d.get("extra_headers"):
+            extra["extra_headers"] = dict(d["extra_headers"])
+        return f"{d['litellm_prefix']}{model}", extra
     if provider == "gemini":
         return f"gemini/{model}", {"api_key": key}
     if provider == "openai":

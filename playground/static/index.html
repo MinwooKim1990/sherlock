@@ -46,7 +46,7 @@
   <div class="bg-white rounded-2xl shadow-xl w-full max-w-2xl p-7 space-y-5">
     <div>
       <h1 class="text-2xl font-bold tracking-tight">🔍 Sherlock Live Inspector</h1>
-      <p class="text-sm text-slate-500 mt-1">Bring any LLM — Gemini, OpenAI, Anthropic, or a local OpenAI-compatible server — and watch Sherlock curate its context in real time.</p>
+      <p class="text-sm text-slate-500 mt-1">Bring any LLM — Gemini, OpenAI, Anthropic, an open-source-model host (DeepInfra · Together · OpenRouter), or a local OpenAI-compatible server — and watch Sherlock curate its context in real time.</p>
     </div>
 
     <div class="space-y-2">
@@ -69,6 +69,24 @@
           <input id="key-anthropic" type="password" placeholder="sk-ant-…" class="flex-1 border rounded-lg px-3 py-1.5 text-xs mono" />
           <button data-prov="anthropic" class="connectBtn bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg shrink-0">Connect</button>
           <span id="st-anthropic" class="text-[11px] text-slate-400 w-20 text-right shrink-0"></span>
+        </div>
+        <div class="flex gap-2 items-center">
+          <span class="w-[72px] text-xs font-semibold shrink-0">DeepInfra</span>
+          <input id="key-deepinfra" type="password" placeholder="open-source models (Llama · Qwen · DeepSeek…)" class="flex-1 border rounded-lg px-3 py-1.5 text-xs mono" />
+          <button data-prov="deepinfra" class="connectBtn bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg shrink-0">Connect</button>
+          <span id="st-deepinfra" class="text-[11px] text-slate-400 w-20 text-right shrink-0"></span>
+        </div>
+        <div class="flex gap-2 items-center">
+          <span class="w-[72px] text-xs font-semibold shrink-0">Together</span>
+          <input id="key-together" type="password" placeholder="Together AI key" class="flex-1 border rounded-lg px-3 py-1.5 text-xs mono" />
+          <button data-prov="together" class="connectBtn bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg shrink-0">Connect</button>
+          <span id="st-together" class="text-[11px] text-slate-400 w-20 text-right shrink-0"></span>
+        </div>
+        <div class="flex gap-2 items-center">
+          <span class="w-[72px] text-xs font-semibold shrink-0">OpenRouter</span>
+          <input id="key-openrouter" type="password" placeholder="sk-or-v1-…" class="flex-1 border rounded-lg px-3 py-1.5 text-xs mono" />
+          <button data-prov="openrouter" class="connectBtn bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg shrink-0">Connect</button>
+          <span id="st-openrouter" class="text-[11px] text-slate-400 w-20 text-right shrink-0"></span>
         </div>
         <div class="flex gap-2 items-center">
           <span class="w-[72px] text-xs font-semibold shrink-0">Local</span>

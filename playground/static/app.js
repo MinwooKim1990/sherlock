@@ -34,7 +34,7 @@ const S = { prov: {}, sid: null, ws: null, llmio: {}, research: {} };
 
 /* ---------------- setup: multi-provider connect ---------------- */
 // S.prov = { gemini: {creds:{api_key}, models:[...]}, openai: {...}, anthropic: {...}, local: {creds:{base_url,api_key}, models:[...]} }
-const PROV_LABEL = { gemini: "Gemini", openai: "OpenAI", anthropic: "Anthropic", local: "Local" };
+const PROV_LABEL = { gemini: "Gemini", openai: "OpenAI", anthropic: "Anthropic", deepinfra: "DeepInfra", together: "Together", openrouter: "OpenRouter", local: "Local" };
 
 document.querySelectorAll(".connectBtn").forEach((btn) => {
   btn.onclick = async () => {
@@ -59,9 +59,12 @@ document.querySelectorAll(".connectBtn").forEach((btn) => {
 
 // Sensible default per role: a mid-size model for LLM-1, small/cheap for companions.
 const ROLE_PREF = {
-  main: [/gemini-.*flash(?!-lite)(?!.*8b)/i, /gpt-4o(?!-mini)/i, /claude-sonnet/i, /gpt-4\./i],
-  summary: [/flash-lite|flash-8b/i, /gpt-4o-mini|gpt-4\.1-mini|gpt-4\.1-nano/i, /claude-haiku/i, /mini|small|lite/i],
-  inference: [/flash-lite|flash-8b/i, /gpt-4o-mini|gpt-4\.1-mini|gpt-4\.1-nano/i, /claude-haiku/i, /mini|small|lite/i],
+  main: [/gemini-.*flash(?!-lite)(?!.*8b)/i, /gpt-4o(?!-mini)/i, /claude-sonnet/i, /gpt-4\./i,
+    /llama-3\.[13]-70b|qwen.*2\.5-72b|qwen3.*(72b|235b)|deepseek-(v3|r1)|mixtral-8x22/i],
+  summary: [/flash-lite|flash-8b/i, /gpt-4o-mini|gpt-4\.1-mini|gpt-4\.1-nano/i, /claude-haiku/i,
+    /(llama-3\.[12]-)?8b|qwen.*7b|mistral-7b|mini|small|lite/i],
+  inference: [/flash-lite|flash-8b/i, /gpt-4o-mini|gpt-4\.1-mini|gpt-4\.1-nano/i, /claude-haiku/i,
+    /(llama-3\.[12]-)?8b|qwen.*7b|mistral-7b|mini|small|lite/i],
 };
 function allModelOptions() {
   // [{value:"prov::id", label, prov}]

@@ -38,6 +38,11 @@ class LiteLLMProvider(BaseProvider):
             "xai": "XAI_API_KEY",
             "groq": "GROQ_API_KEY",
             "cohere": "COHERE_API_KEY",
+            # Open-source-model aggregators — names litellm reads for each.
+            "deepinfra": "DEEPINFRA_API_KEY",
+            "together": "TOGETHERAI_API_KEY",
+            "together_ai": "TOGETHERAI_API_KEY",
+            "openrouter": "OPENROUTER_API_KEY",
         }.get(provider.lower())
 
     @property

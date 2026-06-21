@@ -42,14 +42,21 @@ class ModelConfig(BaseModel):
             return None
         return os.environ.get(self.api_key_env)
 
+    # Friendly aliases → litellm's exact provider slug. Open-source-model
+    # aggregators are OpenAI-compatible and litellm-native; "together" is the
+    # name users reach for, but litellm's slug is "together_ai".
+    _PROVIDER_ALIASES = {"together": "together_ai", "togetherai": "together_ai"}
+
     def litellm_model_id(self) -> str:
         """Return the model id in litellm's expected format.
 
         litellm expects "anthropic/claude-...", "openai/gpt-...",
-        "gemini/gemini-...", "ollama/...", "openrouter/...", etc.
-        Some providers (openai) don't need the prefix. We normalise here.
+        "gemini/gemini-...", "ollama/...", "deepinfra/...", "together_ai/...",
+        "openrouter/...", etc. Some providers (openai) don't need the prefix.
+        We normalise here.
         """
         prov = self.provider.lower()
+        prov = self._PROVIDER_ALIASES.get(prov, prov)
         if prov in {"openai"}:
             return self.model
         return f"{prov}/{self.model}"

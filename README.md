@@ -227,13 +227,20 @@ fastest way to verify the system end to end with real models.
 | **Gemini** | AI Studio key (`AIza…`) | live model list from your key |
 | **OpenAI** | API key (`sk-…`) | chat-capable models, newest first |
 | **Anthropic** | API key (`sk-ant-…`) | official models list |
+| **DeepInfra / Together / OpenRouter** | API key | open-source-model hosts (Llama, Qwen, DeepSeek, Mixtral…); paste a key and the live model list loads |
 | **Local** | base URL (e.g. `http://localhost:11434`) | any OpenAI-compatible server: Ollama, LM Studio, vLLM, llama.cpp |
 
-Then pick a model for each role — e.g. a local Qwen for LLM-1 with
-GPT-4o-mini companions, or Gemini Flash everywhere. Selections can be
-changed mid-session from the top bar (takes effect next turn). API keys
-stay in the server-side session and are never echoed back to the
-browser.
+Then pick a model for each role — e.g. a Together-hosted Llama-3.3-70B for
+LLM-1 with a small Qwen for the companions, a local Qwen everywhere, or
+Gemini Flash with GPT-4o-mini. Selections can be changed mid-session from
+the top bar (takes effect next turn). API keys stay in the server-side
+session and are never echoed back to the browser.
+
+> The three aggregators are OpenAI-compatible and route through litellm's
+> native prefixes (`deepinfra/`, `together_ai/`, `openrouter/`), so they
+> work as a **package** too — `ModelConfig(provider="together", model="…")`
+> or the YAML `models:` block. Any *other* OpenAI-compatible host works via
+> the **Local** tile (just give its base URL).
 
 What the inspector shows (one tab per concern):
 
@@ -738,7 +745,8 @@ caching, deep-research trust, memory reconciliation — lives in
   back instead of wasting the whole companion call.
 
 ### v0.9 — hardening + universal playground
-- Playground is **multi-provider**: Gemini, OpenAI, Anthropic, and any
+- Playground is **multi-provider**: Gemini, OpenAI, Anthropic, the
+  open-source-model hosts (DeepInfra · Together · OpenRouter), and any
   local OpenAI-compatible server, mixable per role; cumulative token
   bar; WS auto-reconnect; per-turn LLM call history; IME-safe input.
 - Deep research correctness from an adversarial multi-agent audit (30

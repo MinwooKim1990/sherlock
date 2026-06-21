@@ -25,6 +25,14 @@ models:
     model: gpt-5.4-mini
     api_key_env: OPENAI_API_KEY
 
+  # Open-source-model hosts (OpenAI-compatible, via litellm) work the same way —
+  # set provider + the host's model id (as shown on its site) + the key env var.
+  # Browse exact model ids in the playground, or each host's /models endpoint.
+  #   provider: deepinfra    model: meta-llama/Meta-Llama-3.1-70B-Instruct   api_key_env: DEEPINFRA_API_KEY
+  #   provider: together     model: meta-llama/Llama-3.3-70B-Instruct-Turbo  api_key_env: TOGETHER_API_KEY
+  #   provider: openrouter   model: deepseek/deepseek-r1                     api_key_env: OPENROUTER_API_KEY
+  # Any other OpenAI-compatible host: use provider: openai + api_base: https://…/v1
+
 storage:
   sqlite_path: ./sherlock.db
   vector_db: chroma
