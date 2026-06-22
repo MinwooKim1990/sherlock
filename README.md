@@ -87,26 +87,30 @@ Three LLM roles, all wired by you (they can be one function or three):
 
 ## Install
 
-From a checkout:
-
 ```bash
-cd project_sherlock_spec
-python3.12 -m venv .venv && source .venv/bin/activate
-pip install -e .                          # base — incl. free DuckDuckGo search + page fetch
-pip install -e ".[embeddings]"            # + real local semantic memory (recommended)
-pip install -e ".[embeddings,search]"     # + Tavily provider (Brave/Valyu need only a key)
-pip install -e ".[playground]"            # + the Live Inspector web app
-```
-
-Or build and share a wheel:
-
-```bash
-pip install build && python -m build      # → dist/sherlock_context-<version>-py3-none-any.whl
-pip install "sherlock-context[embeddings,playground] @ file://$(ls -1 ./dist/sherlock_context-*-py3-none-any.whl | tail -1)"
+pip install sherlock-context                       # base — incl. free DuckDuckGo search + page fetch
+pip install "sherlock-context[embeddings]"         # + real local semantic memory (recommended)
+pip install "sherlock-context[embeddings,search]"  # + Tavily provider (Brave/Valyu need only a key)
+pip install "sherlock-context[playground]"         # + the Live Inspector web app
 ```
 
 > Distribution name is **`sherlock-context`** (PyPI `sherlock` is an
 > unrelated locks library); the import stays `import sherlock`.
+
+Latest from source (no PyPI needed):
+
+```bash
+pip install "git+https://github.com/MinwooKim1990/sherlock.git"
+pip install "sherlock-context[embeddings,playground] @ git+https://github.com/MinwooKim1990/sherlock.git"
+```
+
+Or develop from a checkout:
+
+```bash
+git clone https://github.com/MinwooKim1990/sherlock.git && cd sherlock
+python3.12 -m venv .venv && source .venv/bin/activate
+pip install -e ".[embeddings,playground]"
+```
 
 Targets Python 3.12 (3.11 / 3.13 also work). `litellm` is imported
 lazily so `import sherlock` stays fast. The embedding default is
