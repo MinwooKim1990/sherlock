@@ -37,6 +37,35 @@
   .prose-md blockquote { border-left:3px solid #cbd5e1; padding-left:.6em; color:#64748b; margin:.35em 0; }
   .prose-md a { color:#2563eb; text-decoration:underline; }
   .prose-md hr { border-top:1px solid #e2e8f0; margin:.5em 0; }
+  .prose-md table { border-collapse:collapse; margin:.45em 0; font-size:.92em; display:block; overflow-x:auto; }
+  .prose-md th, .prose-md td { border:1px solid #e2e8f0; padding:.3em .55em; text-align:left; white-space:nowrap; }
+  .prose-md th { background:#f8fafc; font-weight:600; }
+  /* copy button on assistant messages (hover) */
+  .msg-wrap { position:relative; }
+  .msg-copy { position:absolute; top:2px; right:-26px; opacity:0; transition:opacity .15s; font-size:13px; cursor:pointer; color:#94a3b8; }
+  .msg-wrap:hover .msg-copy { opacity:1; }
+  .msg-copy:hover { color:#2563eb; }
+  /* streaming caret */
+  .stream-caret::after { content:"▋"; margin-left:1px; animation:blink 1s step-end infinite; color:#94a3b8; }
+  @keyframes blink { 50% { opacity:0; } }
+  /* ---------- dark mode ---------- */
+  html.dark body { background:#0b1220 !important; color:#e2e8f0; }
+  html.dark .bg-white { background:#111827 !important; }
+  html.dark .bg-slate-50 { background:#0f172a !important; }
+  html.dark .bg-slate-100 { background:#1e293b !important; }
+  html.dark .text-slate-800, html.dark .text-slate-700 { color:#e5e7eb !important; }
+  html.dark .text-slate-600, html.dark .text-slate-500 { color:#9ca3af !important; }
+  html.dark .text-slate-400 { color:#6b7280 !important; }
+  html.dark .border, html.dark .border-r, html.dark .border-t, html.dark .border-b { border-color:#293548 !important; }
+  html.dark input, html.dark textarea, html.dark select { background:#0f172a !important; color:#e5e7eb !important; border-color:#293548 !important; }
+  html.dark .prose-md code { background:#1e293b; }
+  html.dark .prose-md th { background:#1e293b; }
+  html.dark .prose-md th, html.dark .prose-md td { border-color:#293548; }
+  html.dark .prose-md blockquote { color:#9ca3af; border-color:#334155; }
+  html.dark .prose-md a { color:#60a5fa; }
+  html.dark .prose-md hr { border-color:#293548; }
+  html.dark .tabbtn.active { background:#1d4ed8; }
+  textarea#msg { resize:none; max-height:160px; min-height:38px; line-height:1.4; }
 </style>
 </head>
 <body class="bg-slate-100 text-slate-800 h-screen overflow-hidden">
@@ -44,13 +73,27 @@
 <!-- ============ SETUP SCREEN ============ -->
 <div id="setup" class="h-full flex items-center justify-center p-4">
   <div class="bg-white rounded-2xl shadow-xl w-full max-w-2xl p-7 space-y-5">
-    <div>
-      <h1 class="text-2xl font-bold tracking-tight">🔍 Sherlock Live Inspector</h1>
-      <p class="text-sm text-slate-500 mt-1">Bring any LLM — Gemini, OpenAI, Anthropic, an open-source-model host (DeepInfra · Together · OpenRouter), or a local OpenAI-compatible server — and watch Sherlock curate its context in real time.</p>
+    <div class="flex items-start justify-between gap-3">
+      <div>
+        <h1 class="text-2xl font-bold tracking-tight">🔍 Sherlock Live Inspector</h1>
+        <p class="text-sm text-slate-500 mt-1" data-i18n="subtitle">Bring any LLM — Gemini, OpenAI, Anthropic, an open-source-model host (DeepInfra · Together · OpenRouter), or a local OpenAI-compatible server — and watch Sherlock curate its context in real time.</p>
+      </div>
+      <div class="flex gap-2 shrink-0">
+        <select id="langSel" class="border rounded-lg px-2 py-1 text-xs" title="UI language" aria-label="UI language">
+          <option value="en">English</option>
+          <option value="ko">한국어</option>
+          <option value="zh">中文</option>
+          <option value="ja">日本語</option>
+          <option value="fr">Français</option>
+          <option value="de">Deutsch</option>
+          <option value="es">Español</option>
+        </select>
+        <button id="darkToggle" class="border rounded-lg px-2 py-1 text-sm" title="toggle dark mode" aria-label="toggle dark mode">🌙</button>
+      </div>
     </div>
 
     <div class="space-y-2">
-      <label class="text-sm font-semibold">Providers <span class="text-slate-400 font-normal">— connect at least one; mix freely per role</span></label>
+      <label class="text-sm font-semibold"><span data-i18n="providers">Providers</span> <span class="text-slate-400 font-normal" data-i18n="providers_hint">— connect at least one; mix freely per role</span></label>
       <div class="grid gap-1.5">
         <div class="flex gap-2 items-center">
           <span class="w-[72px] text-xs font-semibold shrink-0">Gemini</span>
@@ -101,45 +144,52 @@
 
     <div class="grid grid-cols-3 gap-3">
       <div>
-        <label class="text-xs font-semibold text-blue-700">Main · LLM-1</label>
+        <label class="text-xs font-semibold text-blue-700"><span data-i18n="role_main">Main</span> · LLM-1</label>
         <select id="modelMain" class="w-full border rounded-lg px-2 py-2 text-xs mono mt-1" disabled></select>
       </div>
       <div>
-        <label class="text-xs font-semibold text-green-700">Summarizer · LLM-2</label>
+        <label class="text-xs font-semibold text-green-700"><span data-i18n="role_summary">Summarizer</span> · LLM-2</label>
         <select id="modelSummary" class="w-full border rounded-lg px-2 py-2 text-xs mono mt-1" disabled></select>
       </div>
       <div>
-        <label class="text-xs font-semibold text-purple-700">Inferencer · LLM-3</label>
+        <label class="text-xs font-semibold text-purple-700"><span data-i18n="role_infer">Inferencer</span> · LLM-3</label>
         <select id="modelInference" class="w-full border rounded-lg px-2 py-2 text-xs mono mt-1" disabled></select>
       </div>
     </div>
 
     <div>
-      <label class="text-sm font-semibold">System prompt (LLM-1 persona)</label>
+      <label class="text-sm font-semibold" data-i18n="sysprompt_label">System prompt (LLM-1 persona)</label>
       <textarea id="systemPrompt" rows="3" class="w-full border rounded-lg px-3 py-2 text-sm mt-1">You are a warm, perceptive personal assistant. Keep replies concise.</textarea>
     </div>
 
-    <div class="flex flex-wrap gap-4 text-sm">
-      <label class="flex items-center gap-2"><input id="optForce" type="checkbox" checked /> <b>🔬 Always run reasoning</b> (LLM-2 + LLM-3 every turn)</label>
-      <label class="flex items-center gap-2"><input id="optBackground" type="checkbox" checked /> Background</label>
-      <label class="flex items-center gap-2"><input id="optRedact" type="checkbox" checked /> Redact secrets</label>
+    <div class="flex flex-wrap gap-4 text-sm items-center">
+      <label class="flex items-center gap-2">
+        <b>🔬 <span data-i18n="companions">Companions</span></b>
+        <select id="companionsMode" class="border rounded-lg px-2 py-1 text-xs">
+          <option value="turbo" data-i18n="companions_turbo">turbo — LLM-2 + LLM-3 every turn</option>
+          <option value="cold_start" data-i18n="companions_cold">cold_start — only when a signal needs them</option>
+          <option value="off" data-i18n="companions_off">off — single model (legacy)</option>
+        </select>
+      </label>
+      <label class="flex items-center gap-2"><input id="optBackground" type="checkbox" checked /> <span data-i18n="background">Background</span></label>
+      <label class="flex items-center gap-2"><input id="optRedact" type="checkbox" checked /> <span data-i18n="redact">Redact secrets</span></label>
     </div>
 
     <div class="flex items-center gap-2 text-sm">
-      <label class="font-semibold">🌐 Web search</label>
+      <label class="font-semibold" data-i18n="websearch">🌐 Web search</label>
       <select id="searchEngine" class="border rounded-lg px-2 py-1.5 text-xs">
-        <option value="duckduckgo">DuckDuckGo (free, no key)</option>
-        <option value="brave">Brave (key)</option>
-        <option value="tavily">Tavily (key)</option>
-        <option value="valyu">Valyu (key)</option>
-        <option value="off">Off</option>
+        <option value="duckduckgo" data-i18n="engine_ddg">DuckDuckGo (free, no key)</option>
+        <option value="brave" data-i18n="engine_brave">Brave (key)</option>
+        <option value="tavily" data-i18n="engine_tavily">Tavily (key)</option>
+        <option value="valyu" data-i18n="engine_valyu">Valyu (key)</option>
+        <option value="off" data-i18n="engine_off">Off</option>
       </select>
-      <input id="searchKey" type="password" placeholder="search API key" class="flex-1 border rounded-lg px-3 py-1.5 text-xs mono hidden" />
+      <input id="searchKey" type="password" placeholder="search API key" data-i18n-ph="searchkey_ph" class="flex-1 border rounded-lg px-3 py-1.5 text-xs mono hidden" />
     </div>
-    <p class="text-xs text-slate-500 -mt-2">LLM-1 (search + fetch) and LLM-3 (freshness) both use this engine. DuckDuckGo is free but weak for news; Brave/Tavily/Valyu give far better results with a key.</p>
-    <p class="text-xs text-slate-500 -mt-2">💡 With <b>Always run reasoning</b> on, every message you send triggers LLM-3 inference + LLM-2 compaction — so the 🧠 Inference / 🗜 Compaction panels always fill, no matter what you type.</p>
+    <p class="text-xs text-slate-500 -mt-2" data-i18n="websearch_help">LLM-1 (search + fetch) and LLM-3 (freshness) both use this engine. DuckDuckGo is free but weak for news; Brave/Tavily/Valyu give far better results with a key.</p>
+    <p class="text-xs text-slate-500 -mt-2" data-i18n="companions_help">💡 <b>turbo</b> runs LLM-3 inference + LLM-2 compaction every turn (the 🧠 Inference / 🗜 Compaction panels always fill). <b>cold_start</b> keeps it single-model until a real signal needs the companions; <b>off</b> is the legacy gate.</p>
 
-    <button id="startBtn" class="w-full bg-slate-900 hover:bg-black text-white font-semibold py-2.5 rounded-lg disabled:opacity-40" disabled>Start session</button>
+    <button id="startBtn" class="w-full bg-slate-900 hover:bg-black text-white font-semibold py-2.5 rounded-lg disabled:opacity-40" disabled data-i18n="start_session">Start session</button>
     <p id="startStatus" class="text-xs text-slate-500 text-center"></p>
   </div>
 </div>
@@ -152,10 +202,16 @@
     <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-blue-400"></span>L1 <select id="liveMain" class="bg-slate-800 rounded px-1 py-0.5 mono"></select></span>
     <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-green-400"></span>L2 <select id="liveSummary" class="bg-slate-800 rounded px-1 py-0.5 mono"></select></span>
     <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-purple-400"></span>L3 <select id="liveInference" class="bg-slate-800 rounded px-1 py-0.5 mono"></select></span>
+    <span class="flex items-center gap-1" title="companion gating — change live"><span>🔬</span> <select id="liveCompanions" class="bg-slate-800 rounded px-1 py-0.5 mono">
+      <option value="turbo">turbo</option>
+      <option value="cold_start">cold_start</option>
+      <option value="off">off</option>
+    </select></span>
     <span id="tokBar" class="ml-auto mono text-slate-300" title="cumulative tokens this session (in+out per role)"></span>
     <span id="wsStatus" class="text-slate-400">ws: …</span>
-    <button id="exportBtn" class="bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded" title="download this session as a markdown debugging doc">⬇ export</button>
-    <button id="newSession" class="bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded">new session</button>
+    <button id="darkToggle2" class="bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded" title="toggle dark mode" aria-label="toggle dark mode">🌙</button>
+    <button id="exportBtn" class="bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded" title="download this session as a markdown debugging doc" data-i18n="export">⬇ export</button>
+    <button id="newSession" class="bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded" data-i18n="new_session">new session</button>
   </div>
 
   <div id="cols" class="flex-1 flex min-h-0">
@@ -163,35 +219,35 @@
     <div id="colSherlock" class="min-w-[240px] flex flex-col border-r bg-white" style="flex:0 0 40%">
       <div id="chat" class="flex-1 overflow-y-auto scroll p-4 space-y-3"></div>
       <div id="thinking" class="hidden px-4 py-1 text-xs text-purple-600 items-center gap-2">
-        <span class="w-2 h-2 rounded-full bg-purple-500 pulse-dot"></span> <span id="thinkingLabel">Sherlock is thinking…</span>
+        <span class="w-2 h-2 rounded-full bg-purple-500 pulse-dot"></span> <span id="thinkingLabel" data-i18n="thinking">Sherlock is thinking…</span>
       </div>
       <div id="examples" class="px-3 pt-2 flex flex-wrap gap-1.5 text-[11px]">
-        <span class="text-slate-400 self-center">try:</span>
-        <button class="ex-chip border rounded-full px-2 py-0.5 hover:bg-slate-100">딸 유진이가 땅콩 알레르기가 있어</button>
-        <button class="ex-chip border rounded-full px-2 py-0.5 hover:bg-slate-100">회사 그만둘까 고민이야</button>
-        <button class="ex-chip border rounded-full px-2 py-0.5 hover:bg-slate-100">다음 주 도쿄 가는데 호텔 추천해줘</button>
-        <button class="ex-chip border rounded-full px-2 py-0.5 hover:bg-slate-100">오늘 서울 날씨 검색해줘</button>
-        <button class="ex-chip border rounded-full px-2 py-0.5 hover:bg-slate-100">내가 아까 뭐라고 했는지 기억해?</button>
+        <span class="text-slate-400 self-center" data-i18n="try">try:</span>
+        <button class="ex-chip border rounded-full px-2 py-0.5 hover:bg-slate-100" data-i18n="ex1">딸 유진이가 땅콩 알레르기가 있어</button>
+        <button class="ex-chip border rounded-full px-2 py-0.5 hover:bg-slate-100" data-i18n="ex2">회사 그만둘까 고민이야</button>
+        <button class="ex-chip border rounded-full px-2 py-0.5 hover:bg-slate-100" data-i18n="ex3">다음 주 도쿄 가는데 호텔 추천해줘</button>
+        <button class="ex-chip border rounded-full px-2 py-0.5 hover:bg-slate-100" data-i18n="ex4">오늘 서울 날씨 검색해줘</button>
+        <button class="ex-chip border rounded-full px-2 py-0.5 hover:bg-slate-100" data-i18n="ex5">내가 아까 뭐라고 했는지 기억해?</button>
       </div>
       <!-- v0.7: deep-research approval banner -->
       <div id="drBanner" class="hidden mx-3 mb-2 rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-2 text-xs">
-        <div class="font-semibold text-indigo-800">🔬 Deep research proposed</div>
+        <div class="font-semibold text-indigo-800" data-i18n="dr_proposed">🔬 Deep research proposed</div>
         <div id="drBannerPlan" class="text-indigo-700 mt-0.5 leading-snug"></div>
         <div class="flex gap-2 mt-2">
-          <button id="drApprove" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-3 py-1 rounded">Approve</button>
-          <button id="drSkip" class="bg-white border border-slate-300 hover:bg-slate-100 px-3 py-1 rounded">Skip</button>
-          <span class="self-center text-slate-500">…or just reply “yes”.</span>
+          <button id="drApprove" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-3 py-1 rounded" data-i18n="approve">Approve</button>
+          <button id="drSkip" class="bg-white border border-slate-300 hover:bg-slate-100 px-3 py-1 rounded" data-i18n="skip">Skip</button>
+          <span class="self-center text-slate-500" data-i18n="dr_or_yes">…or just reply “yes”.</span>
         </div>
       </div>
-      <div class="p-3 pt-2 border-t flex gap-2">
-        <select id="chatMode" class="border rounded-lg px-2 py-2 text-xs shrink-0" title="who answers: Sherlock, the bare model, or both side-by-side">
+      <div class="p-3 pt-2 border-t flex gap-2 items-end">
+        <select id="chatMode" class="border rounded-lg px-2 py-2 text-xs shrink-0 self-stretch" title="who answers: Sherlock, the bare model, or both side-by-side" data-i18n-title="chatmode_title">
           <option value="sherlock">Sherlock</option>
-          <option value="single">Single LLM</option>
-          <option value="both">비교 (A/B)</option>
+          <option value="single" data-i18n="mode_single">Single LLM</option>
+          <option value="both" data-i18n="mode_both">비교 (A/B)</option>
         </select>
-        <label id="baselineSearchWrap" class="hidden items-center gap-1 text-[10px] text-slate-500 shrink-0" title="공정 비교: Single LLM에도 같은 검색엔진으로 1회 검색 결과를 줍니다"><input id="baselineSearch" type="checkbox" checked />🔎single</label>
-        <input id="msg" placeholder="Say something…" class="flex-1 border rounded-lg px-3 py-2 text-sm" />
-        <button id="send" class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 rounded-lg">Send</button>
+        <label id="baselineSearchWrap" class="hidden items-center gap-1 text-[10px] text-slate-500 shrink-0" title="공정 비교: Single LLM에도 같은 검색엔진으로 1회 검색 결과를 줍니다" data-i18n-title="baseline_search_title"><input id="baselineSearch" type="checkbox" checked /><span data-i18n="single_search">🔎single</span></label>
+        <textarea id="msg" rows="1" placeholder="Say something…" data-i18n-ph="msg_ph" class="flex-1 border rounded-lg px-3 py-2 text-sm"></textarea>
+        <button id="send" class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2 rounded-lg shrink-0" data-i18n="send">Send</button>
       </div>
     </div>
 
@@ -200,7 +256,7 @@
 
     <!-- MIDDLE: Single-LLM chat (visible only in 비교 A/B mode) -->
     <div id="colSingle" class="min-w-[240px] hidden flex-col border-r bg-white" style="flex:0 0 28%">
-      <div class="px-3 py-1.5 text-[10px] font-bold text-slate-500 uppercase tracking-wide border-b bg-slate-50 shrink-0">⚖ Single LLM (baseline)</div>
+      <div class="px-3 py-1.5 text-[10px] font-bold text-slate-500 uppercase tracking-wide border-b bg-slate-50 shrink-0" data-i18n="single_baseline">⚖ Single LLM (baseline)</div>
       <div id="chatB" class="flex-1 overflow-y-auto scroll p-4 space-y-3"></div>
     </div>
 
@@ -210,14 +266,14 @@
     <!-- RIGHT: internals -->
     <div id="colPanel" class="flex-1 flex flex-col min-w-[240px] bg-slate-50">
       <div class="flex gap-1 px-3 pt-2 text-xs border-b bg-white overflow-x-auto scroll">
-        <button data-tab="flow" class="tabbtn active px-3 py-1.5 rounded-t-lg font-semibold">⚡ Flow</button>
-        <button data-tab="slot" class="tabbtn px-3 py-1.5 rounded-t-lg font-semibold">🧱 Slot</button>
-        <button data-tab="llmio" class="tabbtn px-3 py-1.5 rounded-t-lg font-semibold">💬 LLM I/O</button>
-        <button data-tab="infer" class="tabbtn px-3 py-1.5 rounded-t-lg font-semibold text-purple-700">🧠 Inference</button>
-        <button data-tab="compact" class="tabbtn px-3 py-1.5 rounded-t-lg font-semibold text-green-700">🗜 Compaction</button>
-        <button data-tab="memory" class="tabbtn px-3 py-1.5 rounded-t-lg font-semibold text-amber-700">🗃 Memory</button>
-        <button data-tab="carry" class="tabbtn px-3 py-1.5 rounded-t-lg font-semibold text-rose-700">↪ Carry</button>
-        <button data-tab="research" class="tabbtn px-3 py-1.5 rounded-t-lg font-semibold text-indigo-700">🔬 Research</button>
+        <button data-tab="flow" class="tabbtn active px-3 py-1.5 rounded-t-lg font-semibold" data-i18n="tab_flow">⚡ Flow</button>
+        <button data-tab="slot" class="tabbtn px-3 py-1.5 rounded-t-lg font-semibold" data-i18n="tab_slot">🧱 Slot</button>
+        <button data-tab="llmio" class="tabbtn px-3 py-1.5 rounded-t-lg font-semibold" data-i18n="tab_llmio">💬 LLM I/O</button>
+        <button data-tab="infer" class="tabbtn px-3 py-1.5 rounded-t-lg font-semibold text-purple-700" data-i18n="tab_infer">🧠 Inference</button>
+        <button data-tab="compact" class="tabbtn px-3 py-1.5 rounded-t-lg font-semibold text-green-700" data-i18n="tab_compact">🗜 Compaction</button>
+        <button data-tab="memory" class="tabbtn px-3 py-1.5 rounded-t-lg font-semibold text-amber-700" data-i18n="tab_memory">🗃 Memory</button>
+        <button data-tab="carry" class="tabbtn px-3 py-1.5 rounded-t-lg font-semibold text-rose-700" data-i18n="tab_carry">↪ Carry</button>
+        <button data-tab="research" class="tabbtn px-3 py-1.5 rounded-t-lg font-semibold text-indigo-700" data-i18n="tab_research">🔬 Research</button>
       </div>
       <div class="flex-1 overflow-y-auto scroll p-3">
         <div id="tab-flow"></div>

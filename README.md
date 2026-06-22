@@ -342,6 +342,11 @@ shifts (`memory.auto_infer`: `"smart"` default | `"off"` | `"always"`).
 Under `cold_start`/`turbo` the gate owns that decision, so `auto_infer`
 is inert.
 
+The **playground** exposes the same three modes as a dropdown (default
+`turbo`, so the Inference / Compaction panels visibly fill every turn) —
+switch to `cold_start` to watch the gate stay single-model until a signal
+escalates it, or `off` for the legacy behavior.
+
 ### Web search engines
 
 ```python

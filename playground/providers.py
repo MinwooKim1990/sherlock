@@ -291,6 +291,68 @@ def _call_litellm(model: str, messages: list[dict], **extra):
     return litellm.completion(model=model, messages=messages, **extra)
 
 
+def _stopped(session) -> bool:
+    """True when the user pressed Stop for this session's current turn. Safe if
+    the agent / stop event isn't wired yet (returns False)."""
+    ev = getattr(getattr(session, "agent", None), "_stop_event", None)
+    return bool(ev is not None and ev.is_set())
+
+
+def _call_litellm_stream(model, messages, on_delta, should_stop, on_reasoning=None, **extra):
+    """Streaming variant of _call_litellm for the USER-VISIBLE main reply.
+
+    Calls ``on_delta(chunk_text)`` per answer token and ``on_reasoning(piece)``
+    per reasoning/"thinking" token (litellm normalizes provider reasoning into
+    ``delta.reasoning_content`` — DeepSeek-R1, GLM, o-series, Gemini/Anthropic
+    thinking). Breaks early if ``should_stop()`` flips. Returns a
+    ModelResponse-shaped object (full text + usage) rebuilt from the chunks, so
+    the caller's text/usage extraction is IDENTICAL to the non-streaming path.
+    The initial ``completion(stream=True)`` is intentionally outside the try
+    block: if it fails before any token, the exception propagates so the caller
+    can cleanly fall back to non-streaming; once tokens have streamed, a
+    mid-stream error keeps whatever arrived."""
+    import litellm
+    from types import SimpleNamespace
+
+    litellm.suppress_debug_info = True
+    stream = litellm.completion(model=model, messages=messages, stream=True, **extra)
+    chunks, parts = [], []
+    try:
+        for chunk in stream:
+            chunks.append(chunk)
+            try:
+                _delta = chunk.choices[0].delta
+            except Exception:
+                _delta = None
+            piece = (getattr(_delta, "content", None) or "") if _delta is not None else ""
+            if piece:
+                parts.append(piece)
+                on_delta(piece)
+            if on_reasoning is not None and _delta is not None:
+                rc = getattr(_delta, "reasoning_content", None) or ""
+                if rc:
+                    on_reasoning(rc)
+            if should_stop():
+                break
+    except Exception:
+        pass  # mid-stream error → keep the text we already streamed
+    try:
+        built = litellm.stream_chunk_builder(chunks, messages=messages)
+        if (
+            built
+            and getattr(built, "choices", None)
+            and built.choices[0].message.content is not None
+        ):
+            return built
+    except Exception:
+        pass
+    # Fallback shape so the caller reads .choices[0].message.content / .usage uniformly.
+    return SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content="".join(parts)))],
+        usage=SimpleNamespace(prompt_tokens=0, completion_tokens=0, total_tokens=0),
+    )
+
+
 def _spec_provider(spec) -> str:
     """Provider name for a role's model spec (legacy bare string = gemini)."""
     if isinstance(spec, str):
@@ -452,8 +514,70 @@ def make_role_callable(role: str, session, emit):
         try:
             model_id, extra = resolve_model_spec(spec, getattr(session, "providers", {}))
             send_messages = _apply_cache_hints(messages, cache_hints, _spec_provider(spec))
-            resp = _call_litellm(model_id, send_messages, **extra)
+            # Stream ONLY the user-visible main reply — companions (LLM-2/LLM-3)
+            # and internal deep-research prompts stay non-streaming (background,
+            # not shown live). Each main reply token is pushed to the browser as
+            # an `llm.delta` event; reasoning/"thinking" tokens go out as a
+            # separate `llm.reasoning_delta`. The full text is still returned to
+            # the core (its `f(messages)->str` contract is unchanged).
+            reasoning_streamed = []
+
+            def _emit_reasoning(piece: str) -> None:
+                reasoning_streamed.append(piece)
+                emit(
+                    {
+                        "type": "llm.reasoning_delta",
+                        "actor": actor,
+                        "turn": session.turn,
+                        "data": {"chunk": piece},
+                    }
+                )
+
+            if role == "main" and not _is_internal_research_prompt(messages):
+                answer_streamed = []
+
+                def _on_delta(piece: str) -> None:
+                    answer_streamed.append(piece)
+                    emit(
+                        {
+                            "type": "llm.delta",
+                            "actor": actor,
+                            "turn": session.turn,
+                            "data": {"chunk": piece},
+                        }
+                    )
+
+                try:
+                    resp = _call_litellm_stream(
+                        model_id,
+                        send_messages,
+                        _on_delta,
+                        lambda: _stopped(session),
+                        on_reasoning=_emit_reasoning,
+                        **extra,
+                    )
+                except Exception:
+                    # Provider/route can't stream → fall back (no deltas emitted yet).
+                    resp = _call_litellm(model_id, send_messages, **extra)
+                # If the stream produced no visible tokens AND no text (an empty
+                # or mid-error stream on some route), fall back to non-streaming so
+                # the reply is never blank — unless the user explicitly stopped.
+                _txt = (
+                    (resp.choices[0].message.content or "")
+                    if getattr(resp, "choices", None)
+                    else ""
+                )
+                if not answer_streamed and not _txt and not _stopped(session):
+                    resp = _call_litellm(model_id, send_messages, **extra)
+            else:
+                resp = _call_litellm(model_id, send_messages, **extra)
             text = (resp.choices[0].message.content or "") if resp.choices else ""
+            # Reasoning models that expose thinking only on the final message (or
+            # the non-streaming fallback) — emit it once if nothing streamed live.
+            if role == "main" and not reasoning_streamed and resp.choices:
+                _final_reasoning = getattr(resp.choices[0].message, "reasoning_content", None)
+                if _final_reasoning:
+                    _emit_reasoning(_final_reasoning)
             usage = getattr(resp, "usage", None)
             if usage is not None:
                 pt = getattr(usage, "prompt_tokens", 0) or 0

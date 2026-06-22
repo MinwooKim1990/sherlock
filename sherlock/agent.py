@@ -144,6 +144,35 @@ def _parse_tool_tags(text: str) -> tuple[str, list[tuple[str, str]]]:
     return cleaned, calls
 
 
+# Phase 1.5 — "announce-then-stop": a capable model that NARRATES an intent to
+# search/fetch ("I'll fetch the page", "가져오겠습니다") but emits no tool tag ends
+# the turn with nothing done. We detect a trailing promise-to-act (multilingual)
+# and nudge the model for ONE more round to actually emit the tag (or answer).
+_ACTION_PROMISE_RE = re.compile(
+    r"(i['’]?ll|i\s+will|let\s+me|i'?m\s+going\s+to|going\s+to)\s+"
+    r"(search|look|check|fetch|find|pull|verify|retrieve|grab|get|dig|see|browse)\b"
+    r"|(가져오|찾아보|찾아|확인해|확인하|검색해|검색하|조회|알아보|살펴보)[가-힣]*?겠"
+    r"|(調べ|取得し|確認し|検索し)(ます|てみます)"
+    r"|我(来|去|帮你)?(搜索|查|查询|查找|获取|确认)",
+    re.IGNORECASE,
+)
+# The nudge is an internal English control message (stripped from the user view).
+_TOOL_NUDGE = (
+    "[SHERLOCK] You ended your reply by saying you would look something up, but "
+    "you emitted no tool tag, so nothing ran. Emit the tag NOW on its own line — "
+    'e.g. <<sherlock-tool: search "QUERY">> or <<sherlock-tool: fetch URL>> — and '
+    "you will be re-invoked with the results to continue. If you cannot, answer "
+    "the user directly with what you already know. Do not just promise again."
+)
+
+
+def _is_unfulfilled_promise(text: str) -> bool:
+    """True when a reply (already known to carry NO tool tag) ends by promising to
+    search/fetch/look something up — the 'announce-then-stop' pattern."""
+    t = (text or "").strip()
+    return bool(t) and bool(_ACTION_PROMISE_RE.search(t[-200:]))
+
+
 def _extract_count(payload: str, default: int, cap: int) -> tuple[str, int]:
     """Pull an optional model-chosen result count (`k=N` / `n=N`) out of a
     search payload. Returns (cleaned_query, clamped_count). v0.7 — lets the
@@ -630,6 +659,12 @@ invoke by emitting a tag at the END of your reply, on its own line:
    - Sherlock executes the tag, injects the results into your next
      round, then expects a final tool-free reply. Maximum 3 tool
      rounds per turn.
+   - CRITICAL — emitting the tag IS the action. Do NOT narrate that you
+     will search/fetch/look something up ("I'll check", "let me fetch the
+     page", "가져오겠습니다") and then stop: that ends your turn with NOTHING
+     done. Emit the tag NOW, on its own line — you are immediately
+     re-invoked with the results to continue — or, if you cannot, answer
+     directly. Never end a reply with only a promise to act.
 
 3. Deep research — `<<sherlock-tool: deep_research "TOPIC">>`:
    - A SEPARATE, heavyweight capability: a multi-round (up to ~20) loop
@@ -998,6 +1033,10 @@ class Sherlock:
         self._deep_research_approver = None
         self._deep_researching: bool = False
         self._deep_research_counter: int = 0
+        # Cooperative stop: set by request_stop() (e.g. a playground Stop button),
+        # cleared at the start of every turn. Checked at tool-round boundaries and
+        # before companions fire. Inert unless request_stop() is called.
+        self._stop_event = _threading.Event()
         # v0.9: pending-proposal consumption must be atomic — UI Approve and a
         # chat "yes" can race and run the same research twice otherwise.
         self._dr_pending_lock = _threading.Lock()
@@ -1791,6 +1830,16 @@ class Sherlock:
             background=True,
             user_text=pending.get("user_text", ""),
         )
+
+    def request_stop(self) -> None:
+        """Cooperatively stop the current turn's ongoing work (e.g. a UI Stop
+        button). Halts further tool rounds, skips the post-response companions,
+        and cancels any pending deep-research proposal. Takes effect at the next
+        round/companion boundary (an in-flight non-streaming LLM call still
+        completes; a streaming playground reply stops between tokens). Cleared
+        automatically at the start of the next turn."""
+        self._stop_event.set()
+        self.cancel_deep_research()
 
     def cancel_deep_research(self) -> bool:
         """Clear a pending deep-research proposal (UI 'Skip'). Returns True if
@@ -4946,6 +4995,7 @@ class Sherlock:
         self._turn_index += 1
         turn_index = self._turn_index
         self._turn_index_for_emit = turn_index
+        self._stop_event.clear()  # fresh turn → clear any prior Stop request
         self._emit("turn.start", "system", {"user_text": user_input})
 
         # 1. Persist user turn to the transcript first (crash-safe). Capture its
@@ -5048,12 +5098,29 @@ class Sherlock:
         response = self._provider.chat(messages)
         executed_tool_calls: list[dict] = []
         round_idx = 0
+        nudged = False
         max_rounds = int(
             getattr(self.config.execution, "max_tool_rounds", _MAX_TOOL_ROUNDS_PER_TURN)
         )
         while round_idx < max_rounds:
+            if self._stop_event.is_set():
+                break  # user pressed Stop → no more tool rounds
             stripped_text, tool_calls = _parse_tool_tags(response.text)
             if not tool_calls:
+                # Phase 1.5: a capable model that PROMISED to search/fetch but
+                # emitted no tag → nudge ONCE to actually emit it (or answer),
+                # within the same max_tool_rounds cap.
+                if (
+                    not nudged
+                    and self._main_search_engine is not None
+                    and _is_unfulfilled_promise(response.text)
+                ):
+                    nudged = True
+                    messages.append(ChatMessage(role="assistant", content=stripped_text))
+                    messages.append(ChatMessage(role="user", content=_TOOL_NUDGE))
+                    round_idx += 1
+                    response = self._provider.chat(messages)
+                    continue
                 break
             for kind, payload in tool_calls:
                 executed_tool_calls.append(self._execute_tool_call(kind, payload))
@@ -5226,6 +5293,8 @@ class Sherlock:
 
         # 7-8. Companions + decay: background (fast response) or inline.
         hypotheses_out: list[dict] = []
+        if self._stop_event.is_set():
+            return response.text  # user pressed Stop → skip companions/decay this turn
         if self._background_enabled:
             self._submit_background(
                 self._run_post_response,
@@ -5272,6 +5341,7 @@ class Sherlock:
         self._turn_index += 1
         turn_index = self._turn_index
         self._turn_index_for_emit = turn_index
+        self._stop_event.clear()  # fresh turn → clear any prior Stop request
         self._emit("turn.start", "system", {"user_text": user_input})
 
         # 1. Persist user turn first (crash-safe); capture id to exclude from the
@@ -5360,12 +5430,28 @@ class Sherlock:
         # Tool-tag dispatch loop (mirrors sync chat()).
         executed_tool_calls: list[dict] = []
         round_idx = 0
+        nudged = False
         max_rounds = int(
             getattr(self.config.execution, "max_tool_rounds", _MAX_TOOL_ROUNDS_PER_TURN)
         )
         while round_idx < max_rounds:
+            if self._stop_event.is_set():
+                break  # user pressed Stop → no more tool rounds
             stripped_text, tool_calls = _parse_tool_tags(response.text)
             if not tool_calls:
+                # Phase 1.5: nudge a capable model that promised to search/fetch
+                # without emitting a tag — once, within the round cap (see chat()).
+                if (
+                    not nudged
+                    and self._main_search_engine is not None
+                    and _is_unfulfilled_promise(response.text)
+                ):
+                    nudged = True
+                    messages.append(ChatMessage(role="assistant", content=stripped_text))
+                    messages.append(ChatMessage(role="user", content=_TOOL_NUDGE))
+                    round_idx += 1
+                    response = await self._provider.achat(messages)
+                    continue
                 break
             for kind, payload in tool_calls:
                 executed_tool_calls.append(self._execute_tool_call(kind, payload))
@@ -5478,6 +5564,10 @@ class Sherlock:
                 "background": False,
             },
         )
+
+        # User pressed Stop → skip the companion pipeline + decay for this turn.
+        if self._stop_event.is_set():
+            return response.text
 
         # --- Companion pipeline (ordering parity with sync _run_post_response) ---
         # 7a. LLM-2 compaction FIRST so LLM-3 reasons over freshly-compacted memory

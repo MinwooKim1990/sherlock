@@ -14,6 +14,82 @@ const mdRender = (text) => {
   return esc(s).replace(/\n/g, "<br>");
 };
 
+/* ---------------- i18n: UI language (LLM output is untouched) ---------------- */
+// English is the source + fallback. The other languages are filled in below.
+const LANG = {
+  en: {
+    subtitle: "Bring any LLM — Gemini, OpenAI, Anthropic, an open-source-model host (DeepInfra · Together · OpenRouter), or a local OpenAI-compatible server — and watch Sherlock curate its context in real time.",
+    providers: "Providers", providers_hint: "— connect at least one; mix freely per role",
+    role_main: "Main", role_summary: "Summarizer", role_infer: "Inferencer",
+    sysprompt_label: "System prompt (LLM-1 persona)",
+    companions: "Companions",
+    companions_turbo: "turbo — LLM-2 + LLM-3 every turn",
+    companions_cold: "cold_start — only when a signal needs them",
+    companions_off: "off — single model (legacy)",
+    companions_help: "💡 <b>turbo</b> runs LLM-3 inference + LLM-2 compaction every turn (the 🧠 Inference / 🗜 Compaction panels always fill). <b>cold_start</b> keeps it single-model until a real signal needs the companions; <b>off</b> is the legacy gate.",
+    background: "Background", redact: "Redact secrets", websearch: "🌐 Web search",
+    engine_ddg: "DuckDuckGo (free, no key)", engine_brave: "Brave (key)",
+    engine_tavily: "Tavily (key)", engine_valyu: "Valyu (key)", engine_off: "Off",
+    searchkey_ph: "search API key",
+    websearch_help: "LLM-1 (search + fetch) and LLM-3 (freshness) both use this engine. DuckDuckGo is free but weak for news; Brave/Tavily/Valyu give far better results with a key.",
+    start_session: "Start session", export: "⬇ export", new_session: "new session",
+    thinking: "Sherlock is thinking…", stop: "Stop", try: "try:",
+    ex1: "My daughter Yujin has a peanut allergy",
+    ex2: "I'm torn about whether to quit my job",
+    ex3: "I'm going to Tokyo next week — recommend a hotel",
+    ex4: "Search today's weather in Seoul",
+    ex5: "Do you remember what I said earlier?",
+    dr_proposed: "🔬 Deep research proposed", approve: "Approve", skip: "Skip",
+    dr_or_yes: "…or just reply “yes”.",
+    chatmode_title: "who answers: Sherlock, the bare model, or both side-by-side",
+    mode_single: "Single LLM", mode_both: "Compare (A/B)",
+    baseline_search_title: "Fair comparison: the Single LLM also gets one search pass with the same engine",
+    single_search: "🔎single", msg_ph: "Say something…", send: "Send",
+    single_baseline: "⚖ Single LLM (baseline)",
+    tab_flow: "⚡ Flow", tab_slot: "🧱 Slot", tab_llmio: "💬 LLM I/O", tab_infer: "🧠 Inference",
+    tab_compact: "🗜 Compaction", tab_memory: "🗃 Memory", tab_carry: "↪ Carry", tab_research: "🔬 Research",
+    // dynamic (JS) strings
+    thinking_single: "Single LLM is thinking…", stopping: "stopping…",
+    building_agent: "building agent (first run downloads the embedder)…",
+    need_provider: "✗ connect a provider and pick models first",
+    dr_running: "🔬 deep research running…", dr_synth: "🔬 synthesising the final answer…",
+    dr_starting: "🔬 deep research starting…",
+  },
+  ko: {"subtitle":"아무 LLM이나 연결하세요 — Gemini, OpenAI, Anthropic, 오픈소스 모델 호스트(DeepInfra · Together · OpenRouter), 또는 로컬 OpenAI 호환 서버까지 — 그리고 Sherlock이 그 컨텍스트를 실시간으로 정리하는 모습을 지켜보세요.","providers":"제공자","providers_hint":"— 최소 하나는 연결하세요. 역할별로 자유롭게 조합 가능","role_main":"메인","role_summary":"요약기","role_infer":"추론기","sysprompt_label":"시스템 프롬프트 (LLM-1 페르소나)","companions":"컴패니언","companions_turbo":"turbo — 매 턴마다 LLM-2 + LLM-3","companions_cold":"cold_start — 신호가 필요할 때만","companions_off":"off — 단일 모델 (레거시)","companions_help":"💡 <b>turbo</b>는 매 턴마다 LLM-3 추론 + LLM-2 압축을 실행합니다(🧠 추론 / 🗜 압축 패널이 항상 채워짐). <b>cold_start</b>는 실제 신호로 컴패니언이 필요해질 때까지 단일 모델을 유지하고, <b>off</b>는 레거시 게이트입니다.","background":"백그라운드","redact":"비밀정보 가리기","websearch":"🌐 웹 검색","engine_ddg":"DuckDuckGo (무료, 키 불필요)","engine_brave":"Brave (키 필요)","engine_tavily":"Tavily (키 필요)","engine_valyu":"Valyu (키 필요)","engine_off":"끔","searchkey_ph":"검색 API 키","websearch_help":"LLM-1(검색 + 가져오기)과 LLM-3(최신성)이 모두 이 엔진을 사용합니다. DuckDuckGo는 무료지만 뉴스에는 약하고, Brave/Tavily/Valyu는 키만 있으면 훨씬 나은 결과를 줍니다.","start_session":"세션 시작","export":"⬇ 내보내기","new_session":"새 세션","thinking":"Sherlock이 생각 중…","stop":"중지","try":"예시:","ex1":"우리 딸 유진이가 땅콩 알레르기가 있어요","ex2":"회사를 그만둘지 말지 고민이에요","ex3":"다음 주에 부산 가는데 호텔 추천해줘","ex4":"오늘 서울 날씨 검색해줘","ex5":"내가 아까 한 말 기억해?","dr_proposed":"🔬 심층 리서치 제안됨","approve":"승인","skip":"건너뛰기","dr_or_yes":"…또는 그냥 “네”라고 답하세요.","chatmode_title":"누가 답하는지: Sherlock, 순수 모델, 또는 둘을 나란히","mode_single":"단일 LLM","mode_both":"비교 (A/B)","baseline_search_title":"공정한 비교: 단일 LLM도 동일한 엔진으로 한 번 검색을 수행합니다","single_search":"🔎단일","msg_ph":"메시지를 입력하세요…","send":"전송","single_baseline":"⚖ 단일 LLM (기준)","tab_flow":"⚡ 흐름","tab_slot":"🧱 슬롯","tab_llmio":"💬 LLM 입출력","tab_infer":"🧠 추론","tab_compact":"🗜 압축","tab_memory":"🗃 메모리","tab_carry":"↪ 이월","tab_research":"🔬 리서치","thinking_single":"단일 LLM이 생각 중…","stopping":"중지하는 중…","building_agent":"에이전트 구성 중 (첫 실행 시 임베더를 다운로드합니다)…","need_provider":"✗ 먼저 제공자를 연결하고 모델을 선택하세요","dr_running":"🔬 심층 리서치 실행 중…","dr_synth":"🔬 최종 답변 종합 중…","dr_starting":"🔬 심층 리서치 시작 중…"},
+  zh: {"subtitle":"接入任意 LLM —— Gemini、OpenAI、Anthropic、开源模型托管服务（DeepInfra · Together · OpenRouter），或本地的 OpenAI 兼容服务器 —— 实时观看 Sherlock 整理它的上下文。","providers":"提供方","providers_hint":"—— 至少连接一个；每个角色可自由搭配","role_main":"主模型","role_summary":"摘要器","role_infer":"推断器","sysprompt_label":"系统提示词（LLM-1 人设）","companions":"协同模型","companions_turbo":"turbo —— 每轮都运行 LLM-2 + LLM-3","companions_cold":"cold_start —— 仅在出现信号时才启用","companions_off":"off —— 单模型（旧版）","companions_help":"💡 <b>turbo</b> 每轮都运行 LLM-3 推断 + LLM-2 压缩（🧠 推断 / 🗜 压缩 面板始终有内容）。<b>cold_start</b> 在出现真实信号需要协同模型之前一直保持单模型；<b>off</b> 是旧版门控。","background":"后台运行","redact":"隐去敏感信息","websearch":"🌐 联网搜索","engine_ddg":"DuckDuckGo（免费，无需密钥）","engine_brave":"Brave（需密钥）","engine_tavily":"Tavily（需密钥）","engine_valyu":"Valyu（需密钥）","engine_off":"关闭","searchkey_ph":"搜索 API 密钥","websearch_help":"LLM-1（搜索 + 抓取）和 LLM-3（时效性）都使用此引擎。DuckDuckGo 免费但新闻检索能力较弱；配上密钥后，Brave/Tavily/Valyu 的结果要好得多。","start_session":"开始会话","export":"⬇ 导出","new_session":"新建会话","thinking":"Sherlock 正在思考…","stop":"停止","try":"试试：","ex1":"我女儿雨欣对花生过敏","ex2":"我在纠结要不要辞职","ex3":"我下周要去东京——推荐一家酒店吧","ex4":"查一下今天上海的天气","ex5":"你还记得我之前说过什么吗？","dr_proposed":"🔬 已建议深度研究","approve":"同意","skip":"跳过","dr_or_yes":"…或者直接回复\"好\"。","chatmode_title":"谁来回答：Sherlock、原始模型，还是两者并排对比","mode_single":"单个 LLM","mode_both":"对比（A/B）","baseline_search_title":"公平对比：单个 LLM 也会用同一引擎执行一次搜索","single_search":"🔎单次","msg_ph":"说点什么…","send":"发送","single_baseline":"⚖ 单个 LLM（基准）","tab_flow":"⚡ 流程","tab_slot":"🧱 槽位","tab_llmio":"💬 LLM 输入/输出","tab_infer":"🧠 推断","tab_compact":"🗜 压缩","tab_memory":"🗃 记忆","tab_carry":"↪ 携带","tab_research":"🔬 研究","thinking_single":"单个 LLM 正在思考…","stopping":"正在停止…","building_agent":"正在构建智能体（首次运行会下载嵌入模型）…","need_provider":"✗ 请先连接提供方并选择模型","dr_running":"🔬 深度研究进行中…","dr_synth":"🔬 正在综合最终答案…","dr_starting":"🔬 深度研究启动中…"},
+  ja: {"subtitle":"お好きなLLM — Gemini、OpenAI、Anthropic、オープンソースモデルのホスト（DeepInfra · Together · OpenRouter）、またはローカルのOpenAI互換サーバー — を接続すれば、Sherlockがそのコンテキストをリアルタイムで整える様子を見られます。","providers":"プロバイダー","providers_hint":"— 最低1つ接続してください。役割ごとに自由に組み合わせOK","role_main":"メイン","role_summary":"要約担当","role_infer":"推論担当","sysprompt_label":"システムプロンプト（LLM-1のペルソナ）","companions":"コンパニオン","companions_turbo":"turbo — 毎ターン LLM-2 + LLM-3 を実行","companions_cold":"cold_start — 必要な兆候があるときだけ起動","companions_off":"off — 単一モデル（レガシー）","companions_help":"💡 <b>turbo</b> は毎ターン LLM-3 の推論と LLM-2 の圧縮を実行します（🧠 推論 / 🗜 圧縮 パネルが常に埋まります）。<b>cold_start</b> は本物の兆候がコンパニオンを必要とするまで単一モデルのまま動作します。<b>off</b> はレガシーのゲートです。","background":"バックグラウンド","redact":"秘密情報を伏せる","websearch":"🌐 ウェブ検索","engine_ddg":"DuckDuckGo（無料・キー不要）","engine_brave":"Brave（キー要）","engine_tavily":"Tavily（キー要）","engine_valyu":"Valyu（キー要）","engine_off":"オフ","searchkey_ph":"検索APIキー","websearch_help":"LLM-1（検索＋取得）と LLM-3（鮮度チェック）はどちらもこのエンジンを使います。DuckDuckGo は無料ですがニュースには弱く、Brave / Tavily / Valyu はキーを使えばはるかに良い結果が得られます。","start_session":"セッション開始","export":"⬇ エクスポート","new_session":"新しいセッション","thinking":"Sherlock が考えています…","stop":"停止","try":"試してみる:","ex1":"娘の結衣がピーナッツアレルギーなんです","ex2":"仕事を辞めるべきか迷っています","ex3":"来週、京都に行くんだけどおすすめのホテルを教えて","ex4":"今日の東京の天気を調べて","ex5":"さっき私が言ったこと、覚えてる？","dr_proposed":"🔬 ディープリサーチを提案","approve":"承認","skip":"スキップ","dr_or_yes":"…または「はい」と返すだけでもOK。","chatmode_title":"誰が答えるか：Sherlock、素のモデル、または両方を並べて比較","mode_single":"単一LLM","mode_both":"比較（A/B）","baseline_search_title":"公平な比較：単一LLMも同じエンジンで1回検索を行います","single_search":"🔎単独","msg_ph":"メッセージを入力…","send":"送信","single_baseline":"⚖ 単一LLM（ベースライン）","tab_flow":"⚡ フロー","tab_slot":"🧱 スロット","tab_llmio":"💬 LLM入出力","tab_infer":"🧠 推論","tab_compact":"🗜 圧縮","tab_memory":"🗃 メモリ","tab_carry":"↪ 引き継ぎ","tab_research":"🔬 リサーチ","thinking_single":"単一LLM が考えています…","stopping":"停止中…","building_agent":"エージェントを構築中（初回はエンベッダーをダウンロードします）…","need_provider":"✗ まずプロバイダーを接続してモデルを選んでください","dr_running":"🔬 ディープリサーチを実行中…","dr_synth":"🔬 最終的な回答をまとめています…","dr_starting":"🔬 ディープリサーチを開始中…"},
+  fr: {"subtitle":"Connectez n'importe quel LLM — Gemini, OpenAI, Anthropic, un hébergeur de modèles open source (DeepInfra · Together · OpenRouter) ou un serveur local compatible OpenAI — et regardez Sherlock organiser son contexte en temps réel.","providers":"Fournisseurs","providers_hint":"— connectez-en au moins un ; combinez-les librement selon le rôle","role_main":"Principal","role_summary":"Synthétiseur","role_infer":"Inférenceur","sysprompt_label":"Prompt système (persona LLM-1)","companions":"Compagnons","companions_turbo":"turbo — LLM-2 + LLM-3 à chaque tour","companions_cold":"cold_start — uniquement quand un signal les requiert","companions_off":"off — modèle unique (hérité)","companions_help":"💡 <b>turbo</b> exécute l'inférence LLM-3 + la compaction LLM-2 à chaque tour (les panneaux 🧠 Inférence / 🗜 Compaction se remplissent toujours). <b>cold_start</b> reste en modèle unique jusqu'à ce qu'un véritable signal requière les compagnons ; <b>off</b> est le mécanisme hérité.","background":"Arrière-plan","redact":"Masquer les secrets","websearch":"🌐 Recherche web","engine_ddg":"DuckDuckGo (gratuit, sans clé)","engine_brave":"Brave (clé)","engine_tavily":"Tavily (clé)","engine_valyu":"Valyu (clé)","engine_off":"Désactivé","searchkey_ph":"clé API de recherche","websearch_help":"LLM-1 (recherche + récupération) et LLM-3 (fraîcheur) utilisent tous deux ce moteur. DuckDuckGo est gratuit mais faible pour l'actualité ; Brave/Tavily/Valyu donnent de bien meilleurs résultats avec une clé.","start_session":"Démarrer la session","export":"⬇ exporter","new_session":"nouvelle session","thinking":"Sherlock réfléchit…","stop":"Arrêter","try":"essayez :","ex1":"Ma fille Camille est allergique aux arachides","ex2":"J'hésite à démissionner de mon poste","ex3":"Je pars à Lyon la semaine prochaine — conseille-moi un hôtel","ex4":"Cherche la météo d'aujourd'hui à Paris","ex5":"Tu te souviens de ce que je t'ai dit tout à l'heure ?","dr_proposed":"🔬 Recherche approfondie proposée","approve":"Approuver","skip":"Ignorer","dr_or_yes":"…ou répondez simplement « oui ».","chatmode_title":"qui répond : Sherlock, le modèle brut, ou les deux côte à côte","mode_single":"LLM unique","mode_both":"Comparer (A/B)","baseline_search_title":"Comparaison équitable : le LLM unique bénéficie aussi d'une passe de recherche avec le même moteur","single_search":"🔎unique","msg_ph":"Écrivez quelque chose…","send":"Envoyer","single_baseline":"⚖ LLM unique (référence)","tab_flow":"⚡ Flux","tab_slot":"🧱 Emplacement","tab_llmio":"💬 E/S LLM","tab_infer":"🧠 Inférence","tab_compact":"🗜 Compaction","tab_memory":"🗃 Mémoire","tab_carry":"↪ Report","tab_research":"🔬 Recherche","thinking_single":"Le LLM unique réfléchit…","stopping":"arrêt en cours…","building_agent":"construction de l'agent (le premier lancement télécharge l'encodeur)…","need_provider":"✗ connectez un fournisseur et choisissez d'abord les modèles","dr_running":"🔬 recherche approfondie en cours…","dr_synth":"🔬 synthèse de la réponse finale…","dr_starting":"🔬 démarrage de la recherche approfondie…"},
+  de: {"subtitle":"Bring ein beliebiges LLM mit — Gemini, OpenAI, Anthropic, einen Host für Open-Source-Modelle (DeepInfra · Together · OpenRouter) oder einen lokalen, OpenAI-kompatiblen Server — und sieh Sherlock dabei zu, wie es dessen Kontext in Echtzeit kuratiert.","providers":"Anbieter","providers_hint":"— mindestens einen verbinden; pro Rolle frei kombinierbar","role_main":"Haupt","role_summary":"Zusammenfasser","role_infer":"Schlussfolgerer","sysprompt_label":"System-Prompt (LLM-1-Persona)","companions":"Begleiter","companions_turbo":"turbo — LLM-2 + LLM-3 in jedem Zug","companions_cold":"cold_start — nur wenn ein Signal sie erfordert","companions_off":"off — einzelnes Modell (Legacy)","companions_help":"💡 <b>turbo</b> führt in jedem Zug LLM-3-Inferenz + LLM-2-Verdichtung aus (die Panels 🧠 Inferenz / 🗜 Verdichtung füllen sich immer). <b>cold_start</b> bleibt beim Einzelmodell, bis ein echtes Signal die Begleiter erfordert; <b>off</b> ist das Legacy-Gate.","background":"Hintergrund","redact":"Geheimnisse schwärzen","websearch":"🌐 Websuche","engine_ddg":"DuckDuckGo (kostenlos, kein Schlüssel)","engine_brave":"Brave (Schlüssel)","engine_tavily":"Tavily (Schlüssel)","engine_valyu":"Valyu (Schlüssel)","engine_off":"Aus","searchkey_ph":"Such-API-Schlüssel","websearch_help":"LLM-1 (Suche + Abruf) und LLM-3 (Aktualität) nutzen beide diese Engine. DuckDuckGo ist kostenlos, aber schwach bei Nachrichten; Brave/Tavily/Valyu liefern mit einem Schlüssel deutlich bessere Ergebnisse.","start_session":"Sitzung starten","export":"⬇ exportieren","new_session":"neue Sitzung","thinking":"Sherlock denkt nach …","stop":"Stopp","try":"Probier:","ex1":"Meine Tochter Yujin hat eine Erdnussallergie","ex2":"Ich bin hin- und hergerissen, ob ich kündigen soll","ex3":"Ich fliege nächste Woche nach Tokio — empfiehl mir ein Hotel","ex4":"Suche nach dem heutigen Wetter in München","ex5":"Erinnerst du dich, was ich vorhin gesagt habe?","dr_proposed":"🔬 Deep Research vorgeschlagen","approve":"Bestätigen","skip":"Überspringen","dr_or_yes":"… oder antworte einfach mit „ja“.","chatmode_title":"wer antwortet: Sherlock, das blanke Modell oder beide nebeneinander","mode_single":"Einzelnes LLM","mode_both":"Vergleichen (A/B)","baseline_search_title":"Fairer Vergleich: Das einzelne LLM bekommt ebenfalls einen Suchdurchlauf mit derselben Engine","single_search":"🔎einzeln","msg_ph":"Sag etwas …","send":"Senden","single_baseline":"⚖ Einzelnes LLM (Baseline)","tab_flow":"⚡ Fluss","tab_slot":"🧱 Slot","tab_llmio":"💬 LLM-E/A","tab_infer":"🧠 Inferenz","tab_compact":"🗜 Verdichtung","tab_memory":"🗃 Speicher","tab_carry":"↪ Übertrag","tab_research":"🔬 Recherche","thinking_single":"Einzelnes LLM denkt nach …","stopping":"wird gestoppt …","building_agent":"Agent wird aufgebaut (beim ersten Lauf wird der Embedder heruntergeladen) …","need_provider":"✗ Verbinde zuerst einen Anbieter und wähle Modelle aus","dr_running":"🔬 Deep Research läuft …","dr_synth":"🔬 finale Antwort wird zusammengeführt …","dr_starting":"🔬 Deep Research startet …"},
+  es: {"subtitle":"Conecta cualquier LLM — Gemini, OpenAI, Anthropic, un host de modelos open source (DeepInfra · Together · OpenRouter) o un servidor local compatible con OpenAI — y observa cómo Sherlock organiza su contexto en tiempo real.","providers":"Proveedores","providers_hint":"— conecta al menos uno; combínalos libremente por rol","role_main":"Principal","role_summary":"Resumidor","role_infer":"Inferenciador","sysprompt_label":"Prompt de sistema (persona de LLM-1)","companions":"Acompañantes","companions_turbo":"turbo — LLM-2 + LLM-3 en cada turno","companions_cold":"cold_start — solo cuando una señal los necesita","companions_off":"off — modelo único (heredado)","companions_help":"💡 <b>turbo</b> ejecuta la inferencia de LLM-3 + la compactación de LLM-2 en cada turno (los paneles 🧠 Inferencia / 🗜 Compactación siempre se llenan). <b>cold_start</b> lo mantiene en modelo único hasta que una señal real necesite a los acompañantes; <b>off</b> es la compuerta heredada.","background":"Segundo plano","redact":"Ocultar secretos","websearch":"🌐 Búsqueda web","engine_ddg":"DuckDuckGo (gratis, sin clave)","engine_brave":"Brave (clave)","engine_tavily":"Tavily (clave)","engine_valyu":"Valyu (clave)","engine_off":"Desactivada","searchkey_ph":"clave de API de búsqueda","websearch_help":"LLM-1 (búsqueda + recuperación) y LLM-3 (actualidad) usan este motor. DuckDuckGo es gratis pero flojo para noticias; Brave/Tavily/Valyu dan resultados mucho mejores con una clave.","start_session":"Iniciar sesión","export":"⬇ exportar","new_session":"nueva sesión","thinking":"Sherlock está pensando…","stop":"Detener","try":"prueba:","ex1":"Mi hija Lucía tiene alergia al maní","ex2":"No sé si debería renunciar a mi trabajo","ex3":"Voy a Barcelona la próxima semana — recomiéndame un hotel","ex4":"Busca el clima de hoy en Madrid","ex5":"¿Recuerdas lo que te dije antes?","dr_proposed":"🔬 Investigación a fondo propuesta","approve":"Aprobar","skip":"Omitir","dr_or_yes":"…o simplemente responde «sí».","chatmode_title":"quién responde: Sherlock, el modelo a secas, o ambos en paralelo","mode_single":"LLM único","mode_both":"Comparar (A/B)","baseline_search_title":"Comparación justa: el LLM único también recibe una pasada de búsqueda con el mismo motor","single_search":"🔎único","msg_ph":"Escribe algo…","send":"Enviar","single_baseline":"⚖ LLM único (referencia)","tab_flow":"⚡ Flujo","tab_slot":"🧱 Ranura","tab_llmio":"💬 E/S de LLM","tab_infer":"🧠 Inferencia","tab_compact":"🗜 Compactación","tab_memory":"🗃 Memoria","tab_carry":"↪ Arrastre","tab_research":"🔬 Investigación","thinking_single":"El LLM único está pensando…","stopping":"deteniendo…","building_agent":"construyendo el agente (la primera ejecución descarga el embebedor)…","need_provider":"✗ conecta un proveedor y elige modelos primero","dr_running":"🔬 investigación a fondo en curso…","dr_synth":"🔬 sintetizando la respuesta final…","dr_starting":"🔬 iniciando investigación a fondo…"},
+};
+let LOCALE = (() => {
+  try { const s = localStorage.getItem("sherlock_lang"); if (s && LANG[s]) return s; } catch (e) {}
+  const n = (navigator.language || "en").slice(0, 2).toLowerCase();
+  return LANG[n] ? n : "en";
+})();
+function t(key, ...args) {
+  const d = LANG[LOCALE] || {};
+  let s = d[key] != null ? d[key] : (LANG.en[key] != null ? LANG.en[key] : key);
+  args.forEach((a, i) => { s = s.split("{" + i + "}").join(a); });
+  return s;
+}
+window.t = t;
+function applyI18n() {
+  const get = (k) => t(k);
+  document.querySelectorAll("[data-i18n]").forEach((el) => { el.innerHTML = get(el.getAttribute("data-i18n")); });
+  document.querySelectorAll("[data-i18n-ph]").forEach((el) => { el.placeholder = get(el.getAttribute("data-i18n-ph")); });
+  document.querySelectorAll("[data-i18n-title]").forEach((el) => { el.title = get(el.getAttribute("data-i18n-title")); });
+  if ($("langSel")) $("langSel").value = LOCALE;
+  document.documentElement.lang = LOCALE;
+}
+function setLang(code) {
+  LOCALE = LANG[code] ? code : "en";
+  try { localStorage.setItem("sherlock_lang", LOCALE); } catch (e) {}
+  applyI18n();
+}
+if ($("langSel")) $("langSel").onchange = (e) => setLang(e.target.value);
+applyI18n();
+
 const ACTOR = {
   llm1: { stripe: "bg-blue-500", text: "text-blue-700", soft: "bg-blue-50", n: "LLM-1" },
   llm2: { stripe: "bg-green-500", text: "text-green-700", soft: "bg-green-50", n: "LLM-2" },
@@ -97,40 +173,81 @@ function rebuildRoleSelects() {
 const parseSpec = (v) => { const i = (v || "").indexOf("::"); return i < 0 ? null : { provider: v.slice(0, i), model: v.slice(i + 2) }; };
 
 $("startBtn").onclick = async () => {
-  const models = { main: parseSpec($("modelMain").value), summary: parseSpec($("modelSummary").value), inference: parseSpec($("modelInference").value) };
-  if (!models.main) { $("startStatus").textContent = "✗ connect a provider and pick models first"; return; }
-  const providers = {};
-  for (const [p, info] of Object.entries(S.prov)) providers[p] = info.creds;
-  const settings = {
-    embedding: "local", background: $("optBackground").checked,
-    redact_secrets: $("optRedact").checked,
-    search_engine: $("searchEngine").value,
-    search_api_key: $("searchKey").value.trim() || null,
-    force_companions: $("optForce").checked,
-  };
-  $("startStatus").textContent = "building agent (first run downloads the embedder)…";
+  if (!currentModels().main) { $("startStatus").textContent = t("need_provider"); return; }
+  $("startStatus").textContent = t("building_agent");
   $("startBtn").disabled = true;
-  try {
-    const r = await fetch("/api/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ providers, models, system_prompt: $("systemPrompt").value, settings }) });
-    const j = await r.json();
-    if (j.error) { $("startStatus").textContent = "✗ " + j.error; $("startBtn").disabled = false; return; }
-    S.sid = j.session_id;
-    mirrorLive();
-    connectWS();
-    initPanels();
-    $("setup").classList.add("hidden");
-    $("main").classList.remove("hidden"); $("main").classList.add("flex");
-  } catch (e) { $("startStatus").textContent = "✗ " + e; $("startBtn").disabled = false; }
+  const ok = await createSession();
+  $("startBtn").disabled = false;
+  if (!ok) { $("startStatus").textContent = "✗ couldn't start the session"; return; }
+  initPanels();
+  $("setup").classList.add("hidden");
+  $("main").classList.remove("hidden"); $("main").classList.add("flex");
 };
 
 function mirrorLive() {
   for (const [sel, src, role] of [["liveMain", "modelMain", "main"], ["liveSummary", "modelSummary", "summary"], ["liveInference", "modelInference", "inference"]]) {
     const el = $(sel);
-    fillSelect(el, $(src).value);
+    fillSelect(el, el.value || $(src).value); // keep a mid-session choice on re-fill
     el.onchange = async () => {
       await fetch("/api/select_models", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: S.sid, models: { [role]: parseSpec(el.value) } }) });
     };
   }
+  // live companion-mode switch — mirrors the setup choice, changeable per turn
+  const lc = $("liveCompanions");
+  if (lc) {
+    lc.value = lc.value || ($("companionsMode") ? $("companionsMode").value : "turbo");
+    lc.onchange = async () => {
+      await fetch("/api/companions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: S.sid, mode: lc.value }) });
+    };
+  }
+}
+
+// Build the session config from the CURRENT controls — live top-bar selects (if a
+// mid-session change was made) win over the setup-screen selects.
+function pickVal(liveId, setupId) { const lv = $(liveId) && $(liveId).value; return lv || $(setupId).value; }
+function currentModels() {
+  return {
+    main: parseSpec(pickVal("liveMain", "modelMain")),
+    summary: parseSpec(pickVal("liveSummary", "modelSummary")),
+    inference: parseSpec(pickVal("liveInference", "modelInference")),
+  };
+}
+function currentSettings() {
+  const mode = ($("liveCompanions") && $("liveCompanions").value) || ($("companionsMode") && $("companionsMode").value) || "turbo";
+  return {
+    embedding: "local", background: $("optBackground").checked, redact_secrets: $("optRedact").checked,
+    search_engine: $("searchEngine").value, search_api_key: $("searchKey").value.trim() || null,
+    companions_mode: mode, force_companions: mode === "turbo",
+  };
+}
+// POST /api/session with the current config, swap the WebSocket. Returns true on
+// success (S.sid is the new session). Used by BOTH Start and New session.
+async function createSession() {
+  const models = currentModels();
+  if (!models.main) return false;
+  const providers = {};
+  for (const [p, info] of Object.entries(S.prov)) providers[p] = info.creds;
+  let j;
+  try {
+    const r = await fetch("/api/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ providers, models, system_prompt: $("systemPrompt").value, settings: currentSettings() }) });
+    j = await r.json().catch(() => ({ error: "bad response" }));
+  } catch (e) { return false; }
+  if (!j || j.error) return false;
+  const old = S.ws;
+  S.sid = j.session_id;            // old socket's handlers now no-op (sid mismatch)
+  if (old) { try { old.close(); } catch (e) {} }
+  mirrorLive(); connectWS();
+  return true;
+}
+// Wipe the chat + panels + counters for a fresh session, without leaving the app.
+function resetChatUI() {
+  $("chat").innerHTML = ""; if ($("chatB")) $("chatB").innerHTML = "";
+  if ($("tab-flow")) $("tab-flow").innerHTML = "";
+  initPanels();
+  for (const k of ["main", "summary", "inference"]) TOK[k] = { i: 0, o: 0, n: 0, c: 0 };
+  BASE.i = 0; BASE.o = 0; renderTokBar();
+  S.stream = null; S.llmio = {}; S.research = {}; S.busy = false; lastTurn = null;
+  setThinking(false); hideDRBanner();
 }
 
 // Show the API-key field only for keyed search engines.
@@ -139,40 +256,67 @@ $("searchEngine").onchange = () => {
   $("searchKey").classList.toggle("hidden", !keyed);
 };
 
-$("newSession").onclick = () => location.reload();
+// "new session" — fresh session in place, KEEPING the connected providers, model
+// picks and settings (no trip back to the API-key screen).
+$("newSession").onclick = async () => {
+  const btn = $("newSession");
+  btn.disabled = true; const label = btn.textContent; btn.textContent = "…";
+  const ok = await createSession();
+  btn.disabled = false; btn.textContent = label;
+  if (ok) resetChatUI();
+  else addBubble("system", "✗ couldn't start a new session");
+};
 
 // Session export: the browser downloads the markdown (Content-Disposition).
 $("exportBtn").onclick = () => { if (S.sid) window.open(`/api/export?session_id=${encodeURIComponent(S.sid)}`, "_blank"); };
 
 /* ---------------- websocket ---------------- */
 function connectWS() {
+  const mySid = S.sid; // the session THIS socket belongs to
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  S.ws = new WebSocket(`${proto}://${location.host}/ws/${S.sid}`);
-  S.ws.onopen = () => { $("wsStatus").textContent = "ws: live"; $("wsStatus").className = "ml-auto text-green-400"; };
-  S.ws.onclose = () => {
-    if (S.closed) { $("wsStatus").textContent = "ws: closed"; $("wsStatus").className = "ml-auto text-red-400"; return; }
-    // The server-side queue keeps buffering events while we're gone — just retry.
+  const ws = new WebSocket(`${proto}://${location.host}/ws/${mySid}`);
+  S.ws = ws;
+  ws.onopen = () => { if (S.sid === mySid) { $("wsStatus").textContent = "ws: live"; $("wsStatus").className = "ml-auto text-green-400"; } };
+  ws.onclose = () => {
+    if (S.sid !== mySid) return; // a new session superseded this socket → let it die
     $("wsStatus").textContent = "ws: reconnecting…"; $("wsStatus").className = "ml-auto text-amber-400";
-    setTimeout(connectWS, 2000);
+    setTimeout(() => { if (S.sid === mySid) connectWS(); }, 2000);
   };
-  S.ws.onmessage = (e) => { try { handleEvent(JSON.parse(e.data)); } catch (err) { console.error(err); } };
+  ws.onmessage = (e) => { if (S.sid === mySid) try { handleEvent(JSON.parse(e.data)); } catch (err) { console.error(err); } };
 }
 
 /* ---------------- chat ---------------- */
-$("send").onclick = sendMsg;
+// One composer button: Send when idle, Stop (red) while a turn is generating —
+// the ChatGPT/Claude/Gemini pattern. `S.busy` is driven by setThinking().
+function doStop() {
+  if (!S.sid) return;
+  fetch("/api/stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: S.sid }) }).catch(() => {});
+  setThinking(true, t("stopping"));
+}
+function setComposerBusy(on) {
+  S.busy = on;
+  const b = $("send");
+  if (!b) return;
+  b.textContent = on ? t("stop") : t("send");
+  b.classList.toggle("bg-blue-600", !on); b.classList.toggle("hover:bg-blue-700", !on);
+  b.classList.toggle("bg-red-500", on); b.classList.toggle("hover:bg-red-600", on);
+}
+$("send").onclick = () => (S.busy ? doStop() : sendMsg());
 $("msg").addEventListener("keydown", (e) => {
-  if (e.isComposing || e.keyCode === 229) return; // Enter during IME composition (Korean etc.)
-  if (e.key === "Enter") sendMsg();
+  if (e.isComposing || e.keyCode === 229) return; // IME composition (Korean/JP/CN) — never submit
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (!S.busy) sendMsg(); } // Enter=send, Shift+Enter=newline
 });
+// auto-grow the textarea up to the CSS max-height
+$("msg").addEventListener("input", () => { const m = $("msg"); m.style.height = "auto"; m.style.height = Math.min(m.scrollHeight, 160) + "px"; });
 async function sendMsg() {
-  const text = $("msg").value.trim(); if (!text || !S.sid) return;
+  const text = $("msg").value.trim(); if (!text || !S.sid || S.busy) return;
   const mode = $("chatMode") ? $("chatMode").value : "sherlock";
-  $("msg").value = "";
+  $("msg").value = ""; $("msg").style.height = "auto";
   addBubble("user", text);
   // "both": mirror the user message at the top of the MIDDLE column too, so
   // the sherlock + baseline replies align per turn.
   if (mode === "both") addBubble("user", text, $("chatB"));
-  setThinking(true, mode === "single" ? "Single LLM is thinking…" : undefined);
+  setThinking(true, mode === "single" ? t("thinking_single") : undefined);
   S.llmio = {};
   try {
     const r = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: S.sid, message: text, mode, baseline_search: $("baselineSearch") ? $("baselineSearch").checked : true }) });
@@ -190,14 +334,28 @@ async function sendMsg() {
   }
   catch (e) { addBubble("system", "✗ " + e); setThinking(false); }
 }
+// Hover-to-copy on assistant messages (copies the markdown source).
+function attachCopy(bubble, text) {
+  bubble.classList.add("msg-wrap");
+  const btn = h("div", "msg-copy", "⧉");
+  btn.title = "copy";
+  btn.onclick = () => {
+    try { navigator.clipboard.writeText(text); } catch (e) {}
+    btn.textContent = "✓"; setTimeout(() => (btn.textContent = "⧉"), 1200);
+  };
+  bubble.appendChild(btn);
+}
 function addBubble(role, text, target) {
   const box = target || $("chat");
   const wrap = h("div", "flex " + (role === "user" ? "justify-end" : "justify-start"));
   const cls = role === "user" ? "bg-blue-600 text-white" : role === "assistant" ? "bg-white border" : "bg-amber-100 text-amber-800 text-xs";
   // Assistant replies render as sanitized markdown; user/system bubbles stay
   // escaped plain text.
-  if (role === "assistant") wrap.appendChild(h("div", `max-w-[85%] px-3 py-2 rounded-2xl text-sm prose-md ${cls}`, mdRender(text)));
-  else wrap.appendChild(h("div", `max-w-[85%] px-3 py-2 rounded-2xl text-sm whitespace-pre-wrap ${cls}`, esc(text)));
+  const bubble = role === "assistant"
+    ? h("div", `max-w-[85%] px-3 py-2 rounded-2xl text-sm prose-md ${cls}`, mdRender(text))
+    : h("div", `max-w-[85%] px-3 py-2 rounded-2xl text-sm whitespace-pre-wrap ${cls}`, esc(text));
+  wrap.appendChild(bubble);
+  if (role === "assistant" && text) attachCopy(bubble, text);
   box.appendChild(wrap); box.scrollTop = box.scrollHeight;
 }
 function addMetaLine(text, target) {
@@ -205,6 +363,65 @@ function addMetaLine(text, target) {
   const wrap = h("div", "flex justify-start");
   wrap.appendChild(h("div", "text-[10px] text-slate-400 px-3 -mt-2", esc(text)));
   box.appendChild(wrap); box.scrollTop = box.scrollHeight;
+}
+
+/* ---------------- streaming: live assistant bubble + 💭 thinking ---------------- */
+// The main reply streams token-by-token into ONE live bubble per turn. Reasoning
+// ("thinking") tokens from reasoning models fill a collapsible panel above it.
+// On turn.completed the answer is replaced with the authoritative, tag-stripped
+// markdown so the final text is always clean even though the stream showed raw.
+function liveBubble(turn) {
+  if (S.stream && S.stream.turn === turn) return S.stream;
+  S.stream = null; // a new turn supersedes any stale handle
+  const box = $("chat");
+  const wrap = h("div", "flex justify-start");
+  const bubble = h("div", "max-w-[85%] px-3 py-2 rounded-2xl text-sm bg-white border");
+  const thinkWrap = h("details", "mb-1 text-xs hidden");
+  const summary = document.createElement("summary");
+  summary.className = "cursor-pointer text-purple-600 select-none";
+  summary.textContent = "💭 " + (window.t ? t("thinking") : "Thinking");
+  const thinkEl = h("div", "mt-1 whitespace-pre-wrap text-slate-500 max-h-48 overflow-auto border-l-2 border-purple-200 pl-2");
+  thinkWrap.appendChild(summary); thinkWrap.appendChild(thinkEl);
+  const answerEl = h("div", "whitespace-pre-wrap stream-caret");
+  bubble.appendChild(thinkWrap); bubble.appendChild(answerEl);
+  wrap.appendChild(bubble); box.appendChild(wrap);
+  S.stream = { turn, answer: "", reasoning: "", answerEl, thinkEl, thinkWrap, wrap, bubble };
+  return S.stream;
+}
+function streamAnswer(turn, chunk) {
+  if (!chunk) return;
+  const s = liveBubble(turn);
+  s.answer += chunk; s.answerEl.textContent = s.answer;
+  autoScroll();
+}
+function streamReasoning(turn, chunk) {
+  if (!chunk) return;
+  const s = liveBubble(turn);
+  s.reasoning += chunk; s.thinkEl.textContent = s.reasoning;
+  s.thinkWrap.classList.remove("hidden"); s.thinkWrap.open = true;
+  autoScroll();
+}
+// Replace the live answer with the clean final markdown; collapse (keep) thinking.
+// Returns false if there was no live bubble for this turn (caller adds one).
+function finalizeStream(turn, finalText) {
+  // Finalize whatever stream is live — the playground runs ONE turn at a time, so
+  // a turn-number drift between llm.delta (session.turn) and turn.completed (agent
+  // turn) must never strand a streamed reply.
+  if (!S.stream) return false;
+  const s = S.stream; S.stream = null;
+  const txt = finalText != null && finalText !== "" ? finalText : s.answer;
+  s.answerEl.className = "prose-md"; // drops the streaming caret
+  s.answerEl.innerHTML = mdRender(txt);
+  if (s.reasoning) s.thinkWrap.open = false; else s.thinkWrap.remove();
+  if (txt) attachCopy(s.bubble, txt);
+  autoScroll();
+  return true;
+}
+// Auto-scroll only when the user is already near the bottom — never yank them
+// back up while they're reading scroll-back (ChatGPT/Claude behavior).
+function autoScroll() {
+  const box = $("chat");
+  if (box.scrollHeight - box.scrollTop - box.clientHeight < 120) box.scrollTop = box.scrollHeight;
 }
 // A/B baseline: a clearly-labelled bare-model bubble + its own meta line.
 // In "both" mode it lives in the MIDDLE column; in "single" mode the middle
@@ -225,8 +442,22 @@ function renderBaseline(b, mode) {
 function setThinking(on, text) {
   $("thinking").classList.toggle("hidden", !on);
   $("thinking").classList.toggle("flex", on);
-  $("thinkingLabel").textContent = text || "Sherlock is thinking…";
+  $("thinkingLabel").textContent = text || t("thinking");
+  setComposerBusy(on); // Send↔Stop tracks the turn lifecycle
 }
+
+/* ---------------- dark mode ---------------- */
+function applyDark(on) {
+  document.documentElement.classList.toggle("dark", on);
+  try { localStorage.setItem("sherlock_dark", on ? "1" : "0"); } catch (e) {}
+  document.querySelectorAll("#darkToggle, #darkToggle2").forEach((b) => (b.textContent = on ? "☀️" : "🌙"));
+}
+(function initDark() {
+  let on = false;
+  try { const s = localStorage.getItem("sherlock_dark"); on = s === "1" || (s == null && window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches); } catch (e) {}
+  applyDark(on);
+  document.querySelectorAll("#darkToggle, #darkToggle2").forEach((b) => (b.onclick = () => applyDark(!document.documentElement.classList.contains("dark"))));
+})();
 
 /* ---------------- layout: compare column + draggable resizers ---------------- */
 // The middle (Single-LLM) column exists ONLY for mode === "both"; hidden, the
@@ -287,11 +518,20 @@ function handleEvent(ev) {
   appendFlow(ev);
   const d = ev.data || {};
   switch (ev.type) {
-    case "turn.completed":
+    case "turn.completed": {
       S.lastTurnTokens = { i: d.prompt_tokens || 0, o: d.completion_tokens || 0 };
-      if (d.error) addBubble("system", "⚠ " + (d.response_text || "provider error — check the LLM I/O panel"));
-      else addBubble("assistant", d.response_text || "");
+      // NEVER remove the message. A truthy `error` alongside real response_text
+      // just means the backend's _looks_like_error_response heuristic misfired on
+      // a valid reply — show it. Only fall back to a notice if there's nothing.
+      const txt = d.response_text || "";
+      if (!finalizeStream(ev.turn, txt)) {
+        if (txt) addBubble("assistant", txt);
+        else if (d.error) addBubble("system", "⚠ provider error — check the LLM I/O panel");
+      }
       break;
+    }
+    case "llm.delta": streamAnswer(ev.turn, d.chunk || ""); break;
+    case "llm.reasoning_delta": streamReasoning(ev.turn, d.chunk || ""); break;
     case "slot.assembled": renderSlot(d); break;
     case "llm.call": renderLLMIO(d); countTokens(d); break;
     case "infer.done": renderInference(d); break;
@@ -314,7 +554,7 @@ function handleEvent(ev) {
     case "deep_research.synthesizing":
       S.research.status = "synthesising"; S.research.stop_reason = d.stop_reason; S.research.rounds_total = d.rounds;
       addBubble("system", `🔬 ${d.rounds} rounds done (${d.stop_reason}) — writing the answer…`);
-      setThinking(true, "🔬 synthesising the final answer…"); renderResearch(); break;
+      setThinking(true, t("dr_synth")); renderResearch(); break;
     case "deep_research.input_folded": onDRFolded(d); break;
     case "deep_research.queued": addBubble("system", "📨 queued — will fold in at the next research checkpoint"); break;
     case "deep_research.documents": S.research.docs = d.docs || []; S.research.stop_reason = d.stop_reason; S.research.rounds_total = d.rounds; renderResearch(); break;
@@ -359,7 +599,7 @@ function onDRStart(d) {
   if (!S.research.topic) S.research = { topic: d.topic || "", rounds: [], docs: [], folded: [], answer: "" };
   S.research.status = "researching"; S.research.topic = d.topic || S.research.topic;
   if (d.plan) S.research.plan = d.plan;
-  setThinking(true, "🔬 deep research running…"); renderResearch(); flashTab("research");
+  setThinking(true, t("dr_running")); renderResearch(); flashTab("research");
 }
 function onDRRound(d) {
   (S.research.rounds = S.research.rounds || []).push(d);
@@ -421,6 +661,9 @@ const SUMMARY = {
 const trim = (s, n) => { s = (s || "").replace(/\s+/g, " "); return s.length > n ? s.slice(0, n) + "…" : s; };
 let lastTurn = null;
 function appendFlow(ev) {
+  // streaming deltas drive the live bubble + 💭 panel only — never the Flow log
+  // (otherwise every generated token would spam a Flow card).
+  if (ev.type === "llm.delta" || ev.type === "llm.reasoning_delta") return;
   const a = ACTOR[ev.actor] || ACTOR.system;
   if (ev.turn !== lastTurn && ev.type === "turn.start") {
     lastTurn = ev.turn;
@@ -718,7 +961,7 @@ function renderResearch() {
   }
 }
 $("drApprove").onclick = async () => {
-  hideDRBanner(); setThinking(true, "🔬 deep research starting…");
+  hideDRBanner(); setThinking(true, t("dr_starting"));
   try {
     const r = await fetch("/api/deep_research/approve", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: S.sid }) });
     const j = await r.json().catch(() => ({}));

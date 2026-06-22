@@ -255,6 +255,42 @@ async def api_select_models(req: SelectReq):
     return {"ok": True, "models": sess.models}
 
 
+class StopReq(BaseModel):
+    session_id: str
+
+
+@app.post("/api/stop")
+async def api_stop(req: StopReq):
+    """Stop button: cooperatively halt the current turn — stops the streaming
+    reply + further tool rounds, skips this turn's companions, and cancels any
+    pending deep research. Takes effect at the next token/round boundary."""
+    sess = SESSIONS.get(req.session_id)
+    if sess is None:
+        return {"error": "no such session"}
+    sess.agent.request_stop()
+    return {"ok": True}
+
+
+class CompanionsReq(BaseModel):
+    session_id: str
+    mode: str  # off | cold_start | turbo
+
+
+@app.post("/api/companions")
+async def api_companions(req: CompanionsReq):
+    """Live-switch the companion gating mode mid-session (takes effect next turn).
+    The gate reads ``config.companions.mode`` each turn, so this is immediate; in
+    turbo we also flip the force-companions tag so both panels fill every turn."""
+    sess = SESSIONS.get(req.session_id)
+    if sess is None:
+        return {"error": "no such session"}
+    if req.mode not in ("off", "cold_start", "turbo"):
+        return {"error": f"invalid mode: {req.mode}"}
+    sess.agent.config.companions.mode = req.mode
+    sess.settings["force_companions"] = req.mode == "turbo"
+    return {"ok": True, "mode": req.mode}
+
+
 def _md_text(text) -> str:
     """Inline short text as-is; fence multiline LLM text as a blockquote."""
     text = str(text or "").strip()
