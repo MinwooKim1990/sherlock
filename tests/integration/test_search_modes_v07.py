@@ -146,6 +146,7 @@ def test_llm3_loop_stops_when_satisfied(tmp_path):
     events: list[tuple[str, dict]] = []
 
     agent = Sherlock.with_callable(
+        background=False,  # inline: this test inspects companion output synchronously
         main_chat=lambda m: "ok.\n<<sherlock-companions: infer>>",
         inference_chat=_make_llm3(
             [
@@ -195,6 +196,7 @@ def test_llm3_loop_hard_caps_at_ten(tmp_path):
         return llm3
 
     agent = Sherlock.with_callable(
+        background=False,  # inline: this test inspects companion output synchronously
         main_chat=lambda m: "ok.\n<<sherlock-companions: infer>>",
         inference_chat=_make_greedy_llm3(),
         system_prompt="…",
@@ -215,6 +217,7 @@ def test_llm3_loop_persists_hits_as_memory(tmp_path):
     """Worthwhile hits are written as SEARCH_RESULT memories (carry-forward)."""
     eng = CountingEngine()
     agent = Sherlock.with_callable(
+        background=False,  # inline: this test inspects companion output synchronously
         main_chat=lambda m: "ok.\n<<sherlock-companions: infer>>",
         inference_chat=_make_llm3([_review_json(False, [])]),
         system_prompt="…",

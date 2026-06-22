@@ -166,8 +166,8 @@
       <label class="flex items-center gap-2">
         <b>🔬 <span data-i18n="companions">Companions</span></b>
         <select id="companionsMode" class="border rounded-lg px-2 py-1 text-xs">
+          <option value="cold_start" data-i18n="companions_cold" selected>cold_start — only when a signal needs them</option>
           <option value="turbo" data-i18n="companions_turbo">turbo — LLM-2 + LLM-3 every turn</option>
-          <option value="cold_start" data-i18n="companions_cold">cold_start — only when a signal needs them</option>
           <option value="off" data-i18n="companions_off">off — single model (legacy)</option>
         </select>
       </label>
@@ -203,9 +203,13 @@
     <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-green-400"></span>L2 <select id="liveSummary" class="bg-slate-800 rounded px-1 py-0.5 mono"></select></span>
     <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-purple-400"></span>L3 <select id="liveInference" class="bg-slate-800 rounded px-1 py-0.5 mono"></select></span>
     <span class="flex items-center gap-1" title="companion gating — change live"><span>🔬</span> <select id="liveCompanions" class="bg-slate-800 rounded px-1 py-0.5 mono">
+      <option value="cold_start" selected>cold_start</option>
       <option value="turbo">turbo</option>
-      <option value="cold_start">cold_start</option>
       <option value="off">off</option>
+    </select></span>
+    <span class="flex items-center gap-1" data-i18n-title="async_title" title="async — companions run in the background so the reply never waits (change live)"><span>⚡</span> <select id="liveBackground" class="bg-slate-800 rounded px-1 py-0.5 mono">
+      <option value="on" data-i18n="bg_on">async</option>
+      <option value="off" data-i18n="bg_off">inline</option>
     </select></span>
     <span id="tokBar" class="ml-auto mono text-slate-300" title="cumulative tokens this session (in+out per role)"></span>
     <span id="wsStatus" class="text-slate-400">ws: …</span>

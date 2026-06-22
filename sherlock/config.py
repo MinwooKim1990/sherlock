@@ -349,9 +349,14 @@ class ExecutionConfig(BaseModel):
     cost_cap_per_turn_usd: float = 0.50  # advisory — NOT enforced (no spend gate)
     fallback_to_sequential_on_local: bool = True  # advisory — not enforced
     # v0.5.0: run companions (LLM-2/LLM-3) + decay in a background worker so
-    # chat() returns the main reply immediately. False = inline (deterministic
-    # for tests/eval/replay).
-    background: bool = False
+    # chat() returns the main reply immediately. Default True (v1.8): the
+    # user-facing reply must never wait on companion work. Set False for inline
+    # execution (deterministic — used by tests/eval/replay, or when a caller
+    # wants to inspect companion output synchronously right after chat()). The
+    # bg worker uses non-daemon threads, so concurrent.futures' atexit hook
+    # drains pending work on normal exit — no memory loss for a script that
+    # exits right after chat().
+    background: bool = True
     # How long chat() waits at turn start for the PRIOR turn's background to
     # land its pending context before proceeding without it (seconds).
     background_pending_wait_s: float = 2.0

@@ -97,6 +97,19 @@ Tool recommendation discipline (LOAD-BEARING — biggest cause of failed evals):
 - Flag `url_fetch` only when a URL is given or referenced.
 - When in doubt, return [] for tools_recommended. Empty is safe.
 
+Freshness discipline (LOAD-BEARING — same bar as tools_recommended):
+- `freshness_required` MUST be EMPTY ([]) on the vast majority of turns.
+  It triggers a background web-search loop; flagging it when no live data
+  is genuinely needed burns rounds for nothing. Empty is safe.
+- Populate it ONLY when answering THIS turn truly requires CURRENT external
+  data the model cannot already know: real-time prices, live schedules,
+  breaking news, today's weather, just-released products. A greeting,
+  small talk, an emotional-support turn, a drafting task, a general-
+  knowledge question, or an off-topic pivot all take `freshness_required: []`.
+- Do NOT flag freshness merely because a topic *mentions* something current,
+  or to "double-check" stable facts. If your top hypothesis is below 0.50
+  confidence, prefer [] — a shaky read is not a reason to search.
+
 Web-search cross-verification discipline (when you DO request fresh data):
 - When you need fresh external data, also list the relevant topic(s) in
   `freshness_required`. The orchestrator will run the search for you;
@@ -747,6 +760,15 @@ class InferenceEngine:
             )
             if not isinstance(parsed, dict):
                 return stop
+            # Waste guard: if THIS round produced no usable results (empty, or only
+            # engine error-payloads), there is nothing to dig deeper on — force a
+            # stop so a weak LLM-3 can't keep requesting "more" against a dead or
+            # empty engine. Pure waste-elimination, not a result cap: a round that
+            # DID return results is still judged on its own merits below.
+            usable = [r for r in (results or []) if isinstance(r, dict) and not r.get("error")]
+            if not usable:
+                parsed["need_more"] = False
+                parsed["next_queries"] = []
             parsed.setdefault("need_more", False)
             parsed.setdefault("worth_saving", True)
             nq = parsed.get("next_queries") or []

@@ -166,29 +166,37 @@ async def api_chat(req: ChatReq):
             "data": {"latency_ms": sherlock_ms},
         }
     )
-    # Let the background companions finish, then push full snapshots. Skip the
-    # drain while a deep-research run is active — it would block this endpoint
-    # for the whole multi-minute run; the approve endpoint's _finish() task
-    # already snapshots after research completes.
-    if not sess.agent.is_deep_researching:
-        await loop.run_in_executor(None, sess.agent.drain)
-    sess.emit(
-        {
-            "type": "memory.snapshot",
-            "actor": "memory",
-            "turn": sess.turn,
-            "data": {"rows": memory_snapshot(sess.agent)},
-        }
-    )
-    sess.emit(
-        {
-            "type": "carry.snapshot",
-            "actor": "carry",
-            "turn": sess.turn,
-            "data": carry_snapshot(sess.agent),
-        }
-    )
-    sess.emit({"type": "turn.done", "actor": "system", "turn": sess.turn, "data": {}})
+    # LLM-1 has already answered (its turn.completed event streamed to the
+    # browser). The companions (LLM-2/LLM-3) keep running in the agent's OWN
+    # background thread — so DON'T block this response on them. Drain + snapshot
+    # in a detached task; the user gets the reply (and the composer) back
+    # immediately, and the memory/carry panels update over WS when companions
+    # finish. (Blocking here was what made "Sherlock thinking" linger and lock
+    # the input until the background work was done.)
+    turn_no = sess.turn
+
+    async def _finish():
+        if not sess.agent.is_deep_researching:
+            await loop.run_in_executor(None, sess.agent.drain)
+        sess.emit(
+            {
+                "type": "memory.snapshot",
+                "actor": "memory",
+                "turn": turn_no,
+                "data": {"rows": memory_snapshot(sess.agent)},
+            }
+        )
+        sess.emit(
+            {
+                "type": "carry.snapshot",
+                "actor": "carry",
+                "turn": turn_no,
+                "data": carry_snapshot(sess.agent),
+            }
+        )
+        sess.emit({"type": "turn.done", "actor": "system", "turn": turn_no, "data": {}})
+
+    asyncio.create_task(_finish())
     out = {"reply": reply, "latency_ms": sherlock_ms}
     if baseline is not None:
         out["baseline"] = baseline
@@ -289,6 +297,26 @@ async def api_companions(req: CompanionsReq):
     sess.agent.config.companions.mode = req.mode
     sess.settings["force_companions"] = req.mode == "turbo"
     return {"ok": True, "mode": req.mode}
+
+
+class BackgroundReq(BaseModel):
+    session_id: str
+    on: bool
+
+
+@app.post("/api/background")
+async def api_background(req: BackgroundReq):
+    """Live-switch async (background companions) on/off mid-session. chat() reads
+    ``agent._background_enabled`` fresh each turn, so this takes effect on the
+    NEXT turn: ON → the LLM-1 reply returns immediately and LLM-2/LLM-3 + decay
+    run in the background worker; OFF → companions run inline (the reply waits on
+    them). Either way the composer is freed at turn.completed."""
+    sess = SESSIONS.get(req.session_id)
+    if sess is None:
+        return {"error": "no such session"}
+    sess.agent._background_enabled = bool(req.on)
+    sess.settings["background"] = bool(req.on)
+    return {"ok": True, "on": bool(req.on)}
 
 
 def _md_text(text) -> str:

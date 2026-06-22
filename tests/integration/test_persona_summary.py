@@ -75,6 +75,7 @@ def test_predictions_persist_when_confidence_above_threshold(tmp_path):
         )
 
     agent = Sherlock.with_callable(
+        background=False,  # inline: this test inspects companion output synchronously
         main_chat=main,
         summary_chat=summary,
         system_prompt="x",
@@ -150,6 +151,7 @@ def test_persona_summary_not_dedup_merged_into_plain_summary(tmp_path, require_l
         )
 
     agent = Sherlock.with_callable(
+        background=False,  # inline: this test inspects companion output synchronously
         main_chat=main,
         summary_chat=summary,
         system_prompt="x",

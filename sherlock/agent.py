@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import re
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -983,18 +984,25 @@ class Sherlock:
         self._event_sink = None
         self._turn_index_for_emit = 0
 
-        # v0.5.0 Phase 3: true background execution. When on, chat() returns
-        # the LLM-1 reply immediately and runs companions (LLM-2/LLM-3) +
-        # decay in a single-worker background thread. background=False keeps
-        # everything inline (deterministic — used by tests / eval / replay).
+        # v0.5.0 Phase 3: true background execution. Default ON (v1.8): chat()
+        # returns the LLM-1 reply immediately and runs companions (LLM-2/LLM-3) +
+        # decay in a single-worker background thread, so the user-facing reply
+        # never waits on companion work. background=False keeps everything inline
+        # (deterministic — used by tests / eval / replay, or to inspect companion
+        # output synchronously right after chat()).
         import threading as _threading
 
         self._background_enabled: bool = (
             background
             if background is not None
-            else bool(getattr(config.execution, "background", False))
+            else bool(getattr(config.execution, "background", True))
         )
         self._mem_lock = _threading.RLock()
+        # Ownership tracking so the slow deep-tier companion work can RELEASE the
+        # bg lock mid-flight (see _lock_released_for_slow_work) and the next turn
+        # never blocks on it. None unless a bg worker currently holds the lock.
+        self._bg_lock_held = False
+        self._bg_lock_thread = None
         self._executor = None  # lazy ThreadPoolExecutor(max_workers=1)
         self._bg_future = None  # in-flight background task, if any
         # Turn index of the last compaction (for the real-usage fallback).
@@ -1400,15 +1408,19 @@ class Sherlock:
                 content = f"{title} — {url}\n{snippet}".strip()
                 if not content:
                     continue
-                self._memory.add(
-                    conversation_id=conv_id,
-                    content=content,
-                    type=MemoryType.SEARCH_RESULT,
-                    source=MemorySource.SEARCH,
-                    confidence=0.5,  # single-source until cross-verified
-                    last_used_turn_index=turn_index,
-                    tags=f"freshness,{topic[:40]}",
-                )
+                # This may run in the deep-tier window where the bg lock was
+                # released (see _lock_released_for_slow_work), so take it narrowly
+                # around the write to stay serialised with the next turn's reads.
+                with self._mem_lock:
+                    self._memory.add(
+                        conversation_id=conv_id,
+                        content=content,
+                        type=MemoryType.SEARCH_RESULT,
+                        source=MemorySource.SEARCH,
+                        confidence=0.5,  # single-source until cross-verified
+                        last_used_turn_index=turn_index,
+                        tags=f"freshness,{topic[:40]}",
+                    )
             except Exception:
                 pass
 
@@ -1444,6 +1456,7 @@ class Sherlock:
         max_rounds = max(1, min(max_rounds, 10))  # hard ceiling per spec
         seen: set[str] = set()
         rounds_log: list[dict] = []
+        empty_rounds = 0  # consecutive rounds that produced no usable hits
         rnd = 0
         while queries and rnd < max_rounds:
             topic = queries[0]
@@ -1456,11 +1469,17 @@ class Sherlock:
                 hits = infer_engine.search(topic, max_results=rpr)
             except Exception:
                 hits = []
+            # Drop engine error-payloads ({"error": ...}) at the source. They are
+            # NOT results, so they must not count as "hits" for the keep/continue
+            # logic — previously only _persist_freshness_results filtered them,
+            # which left this loop blind to a dead/failing engine and let a weak
+            # LLM-3 spin all the way to the round ceiling on nothing.
+            hits = [h for h in (hits or []) if isinstance(h, dict) and not h.get("error")]
             try:
                 review = self._inferer.review_search(
                     topic=topic,
                     hypotheses=hypotheses,
-                    results=hits or [],
+                    results=hits,
                     round_index=rnd,
                     max_rounds=max_rounds,
                 )
@@ -1474,13 +1493,20 @@ class Sherlock:
             entry = {
                 "round": rnd,
                 "topic": topic,
-                "hits": len(hits or []),
+                "hits": len(hits),
                 "kept": kept,
                 "need_more": bool(review.get("need_more")),
                 "note": str(review.get("note", ""))[:160],
             }
             rounds_log.append(entry)
             self._emit("infer.search.round", "llm3", dict(entry))
+            # Waste guard: a dead/empty/erroring engine returns nothing round after
+            # round. Stop after two consecutive barren rounds even if a weak LLM-3
+            # keeps asking for "more". This is pure waste-elimination, NOT a result
+            # cap — one productive round resets the counter and the loop continues.
+            empty_rounds = 0 if hits else empty_rounds + 1
+            if empty_rounds >= 2:
+                break
             next_qs = [q for q in (review.get("next_queries") or []) if q and q not in seen]
             if review.get("need_more") and next_qs and rnd < max_rounds:
                 queries = next_qs
@@ -1677,7 +1703,7 @@ class Sherlock:
             if _is_affirmative(user_input):
                 topic = pending.get("topic", "")
                 self._emit("deep_research.approved", "user", {"topic": topic})
-                background = bool(self._event_sink) or self._background_enabled
+                background = bool(self._event_sink)
                 user_text = pending.get("user_text", "")
                 # An approval that carries more than the bare "yes" usually
                 # answers a clarifying question — fold it into the run context.
@@ -1747,7 +1773,11 @@ class Sherlock:
         if strategy.get("objective"):
             plan = f"{plan} — objective: {strategy['objective']}"
         require = bool(getattr(self.config.search, "deep_research_require_approval", True))
-        background = bool(self._event_sink) or self._background_enabled
+        # Deep research goes async ONLY when a sink can stream/deliver it; without
+        # a sink it runs inline so the synthesis IS the reply (the synchronous
+        # approver API). The companion-async default (_background_enabled) governs
+        # LLM-2/LLM-3/decay, NOT the explicitly-approved research answer.
+        background = bool(self._event_sink)
 
         approver = self._deep_research_approver
         if approver is not None:
@@ -3400,12 +3430,23 @@ class Sherlock:
         self._bg_future = ex.submit(self._bg_wrapper, fn, *args)
 
     def _bg_wrapper(self, fn, *args) -> None:
-        # Serialise all background memory mutation under the lock so it
-        # can't race the next turn's main-thread reads/writes.
+        # Serialise background memory mutation under the lock so it can't race the
+        # next turn's main-thread reads/writes. The SLOW companion LLM work
+        # (deep-tier freshness search + notebook) releases the lock mid-flight via
+        # _lock_released_for_slow_work, so the next turn never waits ~minutes on a
+        # tiny/slow model's background curation — only on the brief write windows.
+        import threading as _t
+
         ok = True
         try:
             with self._mem_lock:
-                fn(*args)
+                self._bg_lock_held = True
+                self._bg_lock_thread = _t.get_ident()
+                try:
+                    fn(*args)
+                finally:
+                    self._bg_lock_held = False
+                    self._bg_lock_thread = None
         except Exception as exc:  # pragma: no cover - defensive
             import sys
 
@@ -3413,6 +3454,31 @@ class Sherlock:
             print(f"[sherlock bg error] {type(exc).__name__}: {exc}", file=sys.stderr)
         finally:
             self._emit("background.end", "system", {"ok": ok})
+
+    @contextmanager
+    def _lock_released_for_slow_work(self):
+        """Release the bg ``_mem_lock`` for the duration of slow, lock-free
+        companion LLM work (deep-tier freshness search + notebook) so a waiting
+        next turn can proceed, then re-acquire it. No-op when this thread is NOT
+        the bg lock holder (inline mode, or already released) — so it is always
+        safe to wrap deep-tier work in it. Memory WRITES inside the released
+        window (e.g. _persist_freshness_results) self-acquire the lock narrowly.
+        """
+        import threading as _t
+
+        held = self._bg_lock_held and self._bg_lock_thread == _t.get_ident()
+        if not held:
+            yield
+            return
+        self._bg_lock_held = False
+        self._bg_lock_thread = None
+        self._mem_lock.release()
+        try:
+            yield
+        finally:
+            self._mem_lock.acquire()
+            self._bg_lock_held = True
+            self._bg_lock_thread = _t.get_ident()
 
     def wait_for_background(self, timeout: float | None = None) -> bool:
         """Block until the in-flight background task finishes (or timeout).
@@ -3843,19 +3909,26 @@ class Sherlock:
                 # Quiescence Gate armed `deep` (off/turbo → always armed). A cheap
                 # intent read still runs above; this skips the expensive bits.
                 if deep:
-                    self._run_inference_search_loop(
-                        conv_id=conv_id,
-                        turn_index=turn_index,
-                        hypotheses=hypotheses,
-                        initial_queries=infer_result.get("freshness_required", []) or [],
-                        search_results=search_results,
-                    )
-                    if getattr(self.config.inference, "inference_notebook", False):
-                        nb = self._run_inference_notebook(
-                            conv_id, turn_index, infer_result, search_results
+                    # The deep tier is the slow, multi-LLM-call part (freshness
+                    # search rounds + the recursive notebook). Release the bg lock
+                    # for it so the NEXT turn's reply isn't held up minutes behind
+                    # a tiny model's background curation. Memory writes inside
+                    # (_persist_freshness_results) re-take the lock narrowly; the
+                    # notebook is pure compute (no memory write).
+                    with self._lock_released_for_slow_work():
+                        self._run_inference_search_loop(
+                            conv_id=conv_id,
+                            turn_index=turn_index,
+                            hypotheses=hypotheses,
+                            initial_queries=infer_result.get("freshness_required", []) or [],
+                            search_results=search_results,
                         )
-                        if nb:
-                            self._pending_notebook = nb
+                        if getattr(self.config.inference, "inference_notebook", False):
+                            nb = self._run_inference_notebook(
+                                conv_id, turn_index, infer_result, search_results
+                            )
+                            if nb:
+                                self._pending_notebook = nb
             except Exception as exc:
                 import sys
 
@@ -5794,7 +5867,11 @@ class Sherlock:
         embedding: str = "auto",
         embedding_model: str | None = None,
         redact_secrets: bool = False,
-        background: bool = False,
+        # Default True (v1.8): chat() returns the LLM-1 reply immediately and runs
+        # companions (LLM-2/LLM-3) + decay in a background worker. Pass False for
+        # inline/deterministic execution (e.g. to inspect companion output right
+        # after chat(), as tests/eval do).
+        background: bool = True,
         # --- v0.7: deep_research approval gate ---
         deep_research_approver=None,
         # --- v1.0: honest small-window budgeting ---

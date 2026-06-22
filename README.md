@@ -22,6 +22,17 @@ money. **You own the model choice; Sherlock owns the context.** Token
 savings come exclusively from eliminating *waste* (re-sent material,
 duplicated context, lost calls) — never from capping what you get back.
 
+> **Recommended setup.** Sherlock runs with *any* model, but its agentic
+> features — tool-driven web search, multi-step reasoning, and deep research —
+> need a capable enough model to land well. For those, use a model of
+> **≈20B parameters or more with a context window of 64k+ tokens**. Smaller
+> models still benefit from the memory and implied-intent layers, but tend to
+> flail on live-data / reasoning-heavy questions (they search, then can't turn
+> the results into a real answer). For search, the bundled **DuckDuckGo is
+> zero-config but genuinely weak for news and real-time data** — prefer
+> **Brave, Tavily, or Valyu** (each needs only an API key) whenever the answer
+> depends on fresh facts. DuckDuckGo is best treated as a no-key demo default.
+
 ## When Sherlock shines (and when it doesn't)
 
 Sherlock isn't magic and isn't free — it adds background LLM work. In our
@@ -249,6 +260,16 @@ agent.chat("hi")          # sync entry point runs the async fn under the hood
 
 LLM-1 is awaited synchronously (it gates the reply); LLM-2/LLM-3 + decay
 run after the reply in the background.
+
+**Background companions are on by default (since v1.8).** `chat()` returns the
+LLM-1 reply immediately and runs the companions (LLM-2/LLM-3 + decay) in a
+background worker, so the user-facing reply never waits on curation work. The
+worker uses non-daemon threads, so pending work is drained on normal process
+exit (no memory loss for a script that exits right after `chat()`); call
+`agent.drain()` to wait for it explicitly. Pass `background=False` for inline,
+deterministic execution — e.g. to inspect companion output synchronously right
+after `chat()`, as the tests and eval harness do. In the playground you can
+flip this live mid-session with the ⚡ async/inline control in the top bar.
 
 ## 🔍 The playground — Sherlock Live Inspector
 

@@ -107,6 +107,7 @@ def test_infer_tag_bypasses_cold_start(tmp_path):
         )
 
     agent = Sherlock.with_callable(
+        background=False,  # inline: this test inspects companion output synchronously
         main_chat=main,
         inference_chat=inference,
         system_prompt="x",
@@ -192,6 +193,7 @@ def test_persona_summary_does_not_accumulate(tmp_path):
         )
 
     agent = Sherlock.with_callable(
+        background=False,  # inline: this test inspects companion output synchronously
         main_chat=main,
         summary_chat=summary,
         system_prompt="x",

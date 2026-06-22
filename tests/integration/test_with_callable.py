@@ -75,6 +75,7 @@ def test_with_callable_separate_companions(tmp_path):
         )
 
     agent = Sherlock.with_callable(
+        background=False,  # inline: this test inspects companion output synchronously
         main_chat=main,
         summary_chat=summary,
         inference_chat=inference,

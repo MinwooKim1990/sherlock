@@ -54,8 +54,11 @@ const LANG = {
     need_provider: "✗ connect a provider and pick models first",
     dr_running: "🔬 deep research running…", dr_synth: "🔬 synthesising the final answer…",
     dr_starting: "🔬 deep research starting…",
+    bg_running: "🧩 updating memory in the background…",
+    bg_on: "async", bg_off: "inline",
+    async_title: "async — LLM-2/LLM-3 run in the background so the reply never waits (change live)",
   },
-  ko: {"subtitle":"아무 LLM이나 연결하세요 — Gemini, OpenAI, Anthropic, 오픈소스 모델 호스트(DeepInfra · Together · OpenRouter), 또는 로컬 OpenAI 호환 서버까지 — 그리고 Sherlock이 그 컨텍스트를 실시간으로 정리하는 모습을 지켜보세요.","providers":"제공자","providers_hint":"— 최소 하나는 연결하세요. 역할별로 자유롭게 조합 가능","role_main":"메인","role_summary":"요약기","role_infer":"추론기","sysprompt_label":"시스템 프롬프트 (LLM-1 페르소나)","companions":"컴패니언","companions_turbo":"turbo — 매 턴마다 LLM-2 + LLM-3","companions_cold":"cold_start — 신호가 필요할 때만","companions_off":"off — 단일 모델 (레거시)","companions_help":"💡 <b>turbo</b>는 매 턴마다 LLM-3 추론 + LLM-2 압축을 실행합니다(🧠 추론 / 🗜 압축 패널이 항상 채워짐). <b>cold_start</b>는 실제 신호로 컴패니언이 필요해질 때까지 단일 모델을 유지하고, <b>off</b>는 레거시 게이트입니다.","background":"백그라운드","redact":"비밀정보 가리기","websearch":"🌐 웹 검색","engine_ddg":"DuckDuckGo (무료, 키 불필요)","engine_brave":"Brave (키 필요)","engine_tavily":"Tavily (키 필요)","engine_valyu":"Valyu (키 필요)","engine_off":"끔","searchkey_ph":"검색 API 키","websearch_help":"LLM-1(검색 + 가져오기)과 LLM-3(최신성)이 모두 이 엔진을 사용합니다. DuckDuckGo는 무료지만 뉴스에는 약하고, Brave/Tavily/Valyu는 키만 있으면 훨씬 나은 결과를 줍니다.","start_session":"세션 시작","export":"⬇ 내보내기","new_session":"새 세션","thinking":"Sherlock이 생각 중…","stop":"중지","try":"예시:","ex1":"우리 딸 유진이가 땅콩 알레르기가 있어요","ex2":"회사를 그만둘지 말지 고민이에요","ex3":"다음 주에 부산 가는데 호텔 추천해줘","ex4":"오늘 서울 날씨 검색해줘","ex5":"내가 아까 한 말 기억해?","dr_proposed":"🔬 심층 리서치 제안됨","approve":"승인","skip":"건너뛰기","dr_or_yes":"…또는 그냥 “네”라고 답하세요.","chatmode_title":"누가 답하는지: Sherlock, 순수 모델, 또는 둘을 나란히","mode_single":"단일 LLM","mode_both":"비교 (A/B)","baseline_search_title":"공정한 비교: 단일 LLM도 동일한 엔진으로 한 번 검색을 수행합니다","single_search":"🔎단일","msg_ph":"메시지를 입력하세요…","send":"전송","single_baseline":"⚖ 단일 LLM (기준)","tab_flow":"⚡ 흐름","tab_slot":"🧱 슬롯","tab_llmio":"💬 LLM 입출력","tab_infer":"🧠 추론","tab_compact":"🗜 압축","tab_memory":"🗃 메모리","tab_carry":"↪ 이월","tab_research":"🔬 리서치","thinking_single":"단일 LLM이 생각 중…","stopping":"중지하는 중…","building_agent":"에이전트 구성 중 (첫 실행 시 임베더를 다운로드합니다)…","need_provider":"✗ 먼저 제공자를 연결하고 모델을 선택하세요","dr_running":"🔬 심층 리서치 실행 중…","dr_synth":"🔬 최종 답변 종합 중…","dr_starting":"🔬 심층 리서치 시작 중…"},
+  ko: {"subtitle":"아무 LLM이나 연결하세요 — Gemini, OpenAI, Anthropic, 오픈소스 모델 호스트(DeepInfra · Together · OpenRouter), 또는 로컬 OpenAI 호환 서버까지 — 그리고 Sherlock이 그 컨텍스트를 실시간으로 정리하는 모습을 지켜보세요.","providers":"제공자","providers_hint":"— 최소 하나는 연결하세요. 역할별로 자유롭게 조합 가능","role_main":"메인","role_summary":"요약기","role_infer":"추론기","sysprompt_label":"시스템 프롬프트 (LLM-1 페르소나)","companions":"컴패니언","companions_turbo":"turbo — 매 턴마다 LLM-2 + LLM-3","companions_cold":"cold_start — 신호가 필요할 때만","companions_off":"off — 단일 모델 (레거시)","companions_help":"💡 <b>turbo</b>는 매 턴마다 LLM-3 추론 + LLM-2 압축을 실행합니다(🧠 추론 / 🗜 압축 패널이 항상 채워짐). <b>cold_start</b>는 실제 신호로 컴패니언이 필요해질 때까지 단일 모델을 유지하고, <b>off</b>는 레거시 게이트입니다.","background":"백그라운드","redact":"비밀정보 가리기","websearch":"🌐 웹 검색","engine_ddg":"DuckDuckGo (무료, 키 불필요)","engine_brave":"Brave (키 필요)","engine_tavily":"Tavily (키 필요)","engine_valyu":"Valyu (키 필요)","engine_off":"끔","searchkey_ph":"검색 API 키","websearch_help":"LLM-1(검색 + 가져오기)과 LLM-3(최신성)이 모두 이 엔진을 사용합니다. DuckDuckGo는 무료지만 뉴스에는 약하고, Brave/Tavily/Valyu는 키만 있으면 훨씬 나은 결과를 줍니다.","start_session":"세션 시작","export":"⬇ 내보내기","new_session":"새 세션","thinking":"Sherlock이 생각 중…","stop":"중지","try":"예시:","ex1":"우리 딸 유진이가 땅콩 알레르기가 있어요","ex2":"회사를 그만둘지 말지 고민이에요","ex3":"다음 주에 부산 가는데 호텔 추천해줘","ex4":"오늘 서울 날씨 검색해줘","ex5":"내가 아까 한 말 기억해?","dr_proposed":"🔬 심층 리서치 제안됨","approve":"승인","skip":"건너뛰기","dr_or_yes":"…또는 그냥 “네”라고 답하세요.","chatmode_title":"누가 답하는지: Sherlock, 순수 모델, 또는 둘을 나란히","mode_single":"단일 LLM","mode_both":"비교 (A/B)","baseline_search_title":"공정한 비교: 단일 LLM도 동일한 엔진으로 한 번 검색을 수행합니다","single_search":"🔎단일","msg_ph":"메시지를 입력하세요…","send":"전송","single_baseline":"⚖ 단일 LLM (기준)","tab_flow":"⚡ 흐름","tab_slot":"🧱 슬롯","tab_llmio":"💬 LLM 입출력","tab_infer":"🧠 추론","tab_compact":"🗜 압축","tab_memory":"🗃 메모리","tab_carry":"↪ 이월","tab_research":"🔬 리서치","thinking_single":"단일 LLM이 생각 중…","stopping":"중지하는 중…","building_agent":"에이전트 구성 중 (첫 실행 시 임베더를 다운로드합니다)…","need_provider":"✗ 먼저 제공자를 연결하고 모델을 선택하세요","dr_running":"🔬 심층 리서치 실행 중…","dr_synth":"🔬 최종 답변 종합 중…","dr_starting":"🔬 심층 리서치 시작 중…","bg_running":"🧩 백그라운드에서 메모리 갱신 중…","bg_on":"비동기","bg_off":"동기","async_title":"비동기 — LLM-2/LLM-3가 백그라운드에서 돌아 답변이 기다리지 않습니다 (실시간 변경 가능)"},
   zh: {"subtitle":"接入任意 LLM —— Gemini、OpenAI、Anthropic、开源模型托管服务（DeepInfra · Together · OpenRouter），或本地的 OpenAI 兼容服务器 —— 实时观看 Sherlock 整理它的上下文。","providers":"提供方","providers_hint":"—— 至少连接一个；每个角色可自由搭配","role_main":"主模型","role_summary":"摘要器","role_infer":"推断器","sysprompt_label":"系统提示词（LLM-1 人设）","companions":"协同模型","companions_turbo":"turbo —— 每轮都运行 LLM-2 + LLM-3","companions_cold":"cold_start —— 仅在出现信号时才启用","companions_off":"off —— 单模型（旧版）","companions_help":"💡 <b>turbo</b> 每轮都运行 LLM-3 推断 + LLM-2 压缩（🧠 推断 / 🗜 压缩 面板始终有内容）。<b>cold_start</b> 在出现真实信号需要协同模型之前一直保持单模型；<b>off</b> 是旧版门控。","background":"后台运行","redact":"隐去敏感信息","websearch":"🌐 联网搜索","engine_ddg":"DuckDuckGo（免费，无需密钥）","engine_brave":"Brave（需密钥）","engine_tavily":"Tavily（需密钥）","engine_valyu":"Valyu（需密钥）","engine_off":"关闭","searchkey_ph":"搜索 API 密钥","websearch_help":"LLM-1（搜索 + 抓取）和 LLM-3（时效性）都使用此引擎。DuckDuckGo 免费但新闻检索能力较弱；配上密钥后，Brave/Tavily/Valyu 的结果要好得多。","start_session":"开始会话","export":"⬇ 导出","new_session":"新建会话","thinking":"Sherlock 正在思考…","stop":"停止","try":"试试：","ex1":"我女儿雨欣对花生过敏","ex2":"我在纠结要不要辞职","ex3":"我下周要去东京——推荐一家酒店吧","ex4":"查一下今天上海的天气","ex5":"你还记得我之前说过什么吗？","dr_proposed":"🔬 已建议深度研究","approve":"同意","skip":"跳过","dr_or_yes":"…或者直接回复\"好\"。","chatmode_title":"谁来回答：Sherlock、原始模型，还是两者并排对比","mode_single":"单个 LLM","mode_both":"对比（A/B）","baseline_search_title":"公平对比：单个 LLM 也会用同一引擎执行一次搜索","single_search":"🔎单次","msg_ph":"说点什么…","send":"发送","single_baseline":"⚖ 单个 LLM（基准）","tab_flow":"⚡ 流程","tab_slot":"🧱 槽位","tab_llmio":"💬 LLM 输入/输出","tab_infer":"🧠 推断","tab_compact":"🗜 压缩","tab_memory":"🗃 记忆","tab_carry":"↪ 携带","tab_research":"🔬 研究","thinking_single":"单个 LLM 正在思考…","stopping":"正在停止…","building_agent":"正在构建智能体（首次运行会下载嵌入模型）…","need_provider":"✗ 请先连接提供方并选择模型","dr_running":"🔬 深度研究进行中…","dr_synth":"🔬 正在综合最终答案…","dr_starting":"🔬 深度研究启动中…"},
   ja: {"subtitle":"お好きなLLM — Gemini、OpenAI、Anthropic、オープンソースモデルのホスト（DeepInfra · Together · OpenRouter）、またはローカルのOpenAI互換サーバー — を接続すれば、Sherlockがそのコンテキストをリアルタイムで整える様子を見られます。","providers":"プロバイダー","providers_hint":"— 最低1つ接続してください。役割ごとに自由に組み合わせOK","role_main":"メイン","role_summary":"要約担当","role_infer":"推論担当","sysprompt_label":"システムプロンプト（LLM-1のペルソナ）","companions":"コンパニオン","companions_turbo":"turbo — 毎ターン LLM-2 + LLM-3 を実行","companions_cold":"cold_start — 必要な兆候があるときだけ起動","companions_off":"off — 単一モデル（レガシー）","companions_help":"💡 <b>turbo</b> は毎ターン LLM-3 の推論と LLM-2 の圧縮を実行します（🧠 推論 / 🗜 圧縮 パネルが常に埋まります）。<b>cold_start</b> は本物の兆候がコンパニオンを必要とするまで単一モデルのまま動作します。<b>off</b> はレガシーのゲートです。","background":"バックグラウンド","redact":"秘密情報を伏せる","websearch":"🌐 ウェブ検索","engine_ddg":"DuckDuckGo（無料・キー不要）","engine_brave":"Brave（キー要）","engine_tavily":"Tavily（キー要）","engine_valyu":"Valyu（キー要）","engine_off":"オフ","searchkey_ph":"検索APIキー","websearch_help":"LLM-1（検索＋取得）と LLM-3（鮮度チェック）はどちらもこのエンジンを使います。DuckDuckGo は無料ですがニュースには弱く、Brave / Tavily / Valyu はキーを使えばはるかに良い結果が得られます。","start_session":"セッション開始","export":"⬇ エクスポート","new_session":"新しいセッション","thinking":"Sherlock が考えています…","stop":"停止","try":"試してみる:","ex1":"娘の結衣がピーナッツアレルギーなんです","ex2":"仕事を辞めるべきか迷っています","ex3":"来週、京都に行くんだけどおすすめのホテルを教えて","ex4":"今日の東京の天気を調べて","ex5":"さっき私が言ったこと、覚えてる？","dr_proposed":"🔬 ディープリサーチを提案","approve":"承認","skip":"スキップ","dr_or_yes":"…または「はい」と返すだけでもOK。","chatmode_title":"誰が答えるか：Sherlock、素のモデル、または両方を並べて比較","mode_single":"単一LLM","mode_both":"比較（A/B）","baseline_search_title":"公平な比較：単一LLMも同じエンジンで1回検索を行います","single_search":"🔎単独","msg_ph":"メッセージを入力…","send":"送信","single_baseline":"⚖ 単一LLM（ベースライン）","tab_flow":"⚡ フロー","tab_slot":"🧱 スロット","tab_llmio":"💬 LLM入出力","tab_infer":"🧠 推論","tab_compact":"🗜 圧縮","tab_memory":"🗃 メモリ","tab_carry":"↪ 引き継ぎ","tab_research":"🔬 リサーチ","thinking_single":"単一LLM が考えています…","stopping":"停止中…","building_agent":"エージェントを構築中（初回はエンベッダーをダウンロードします）…","need_provider":"✗ まずプロバイダーを接続してモデルを選んでください","dr_running":"🔬 ディープリサーチを実行中…","dr_synth":"🔬 最終的な回答をまとめています…","dr_starting":"🔬 ディープリサーチを開始中…"},
   fr: {"subtitle":"Connectez n'importe quel LLM — Gemini, OpenAI, Anthropic, un hébergeur de modèles open source (DeepInfra · Together · OpenRouter) ou un serveur local compatible OpenAI — et regardez Sherlock organiser son contexte en temps réel.","providers":"Fournisseurs","providers_hint":"— connectez-en au moins un ; combinez-les librement selon le rôle","role_main":"Principal","role_summary":"Synthétiseur","role_infer":"Inférenceur","sysprompt_label":"Prompt système (persona LLM-1)","companions":"Compagnons","companions_turbo":"turbo — LLM-2 + LLM-3 à chaque tour","companions_cold":"cold_start — uniquement quand un signal les requiert","companions_off":"off — modèle unique (hérité)","companions_help":"💡 <b>turbo</b> exécute l'inférence LLM-3 + la compaction LLM-2 à chaque tour (les panneaux 🧠 Inférence / 🗜 Compaction se remplissent toujours). <b>cold_start</b> reste en modèle unique jusqu'à ce qu'un véritable signal requière les compagnons ; <b>off</b> est le mécanisme hérité.","background":"Arrière-plan","redact":"Masquer les secrets","websearch":"🌐 Recherche web","engine_ddg":"DuckDuckGo (gratuit, sans clé)","engine_brave":"Brave (clé)","engine_tavily":"Tavily (clé)","engine_valyu":"Valyu (clé)","engine_off":"Désactivé","searchkey_ph":"clé API de recherche","websearch_help":"LLM-1 (recherche + récupération) et LLM-3 (fraîcheur) utilisent tous deux ce moteur. DuckDuckGo est gratuit mais faible pour l'actualité ; Brave/Tavily/Valyu donnent de bien meilleurs résultats avec une clé.","start_session":"Démarrer la session","export":"⬇ exporter","new_session":"nouvelle session","thinking":"Sherlock réfléchit…","stop":"Arrêter","try":"essayez :","ex1":"Ma fille Camille est allergique aux arachides","ex2":"J'hésite à démissionner de mon poste","ex3":"Je pars à Lyon la semaine prochaine — conseille-moi un hôtel","ex4":"Cherche la météo d'aujourd'hui à Paris","ex5":"Tu te souviens de ce que je t'ai dit tout à l'heure ?","dr_proposed":"🔬 Recherche approfondie proposée","approve":"Approuver","skip":"Ignorer","dr_or_yes":"…ou répondez simplement « oui ».","chatmode_title":"qui répond : Sherlock, le modèle brut, ou les deux côte à côte","mode_single":"LLM unique","mode_both":"Comparer (A/B)","baseline_search_title":"Comparaison équitable : le LLM unique bénéficie aussi d'une passe de recherche avec le même moteur","single_search":"🔎unique","msg_ph":"Écrivez quelque chose…","send":"Envoyer","single_baseline":"⚖ LLM unique (référence)","tab_flow":"⚡ Flux","tab_slot":"🧱 Emplacement","tab_llmio":"💬 E/S LLM","tab_infer":"🧠 Inférence","tab_compact":"🗜 Compaction","tab_memory":"🗃 Mémoire","tab_carry":"↪ Report","tab_research":"🔬 Recherche","thinking_single":"Le LLM unique réfléchit…","stopping":"arrêt en cours…","building_agent":"construction de l'agent (le premier lancement télécharge l'encodeur)…","need_provider":"✗ connectez un fournisseur et choisissez d'abord les modèles","dr_running":"🔬 recherche approfondie en cours…","dr_synth":"🔬 synthèse de la réponse finale…","dr_starting":"🔬 démarrage de la recherche approfondie…"},
@@ -200,6 +203,14 @@ function mirrorLive() {
       await fetch("/api/companions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: S.sid, mode: lc.value }) });
     };
   }
+  // live async (background) switch — mirrors the setup checkbox, changeable anytime
+  const lb = $("liveBackground");
+  if (lb) {
+    lb.value = $("optBackground") && !$("optBackground").checked ? "off" : "on";
+    lb.onchange = async () => {
+      await fetch("/api/background", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: S.sid, on: lb.value === "on" }) });
+    };
+  }
 }
 
 // Build the session config from the CURRENT controls — live top-bar selects (if a
@@ -316,12 +327,12 @@ async function sendMsg() {
   // "both": mirror the user message at the top of the MIDDLE column too, so
   // the sherlock + baseline replies align per turn.
   if (mode === "both") addBubble("user", text, $("chatB"));
-  setThinking(true, mode === "single" ? t("thinking_single") : undefined);
+  setComposerBusy(true); setThinking(true, mode === "single" ? t("thinking_single") : undefined);
   S.llmio = {};
   try {
     const r = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: S.sid, message: text, mode, baseline_search: $("baselineSearch") ? $("baselineSearch").checked : true }) });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok || j.error) { addBubble("system", "✗ " + (j.error || r.status)); setThinking(false); return; }
+    if (!r.ok || j.error) { addBubble("system", "✗ " + (j.error || r.status)); setThinking(false); setComposerBusy(false); return; }
     if (j.latency_ms != null) {
       // The sherlock bubble itself arrives via the turn.completed WS event
       // (which also stashes its token counts) — here we add the meta line.
@@ -330,9 +341,9 @@ async function sendMsg() {
       addMetaLine(`⏱ ${j.latency_ms}ms · ${t.i || 0}/${t.o || 0} tok`);
     }
     if (j.baseline) renderBaseline(j.baseline, mode);
-    if (mode === "single") setThinking(false); // no agent turn → no turn.done event
+    if (mode === "single") { setThinking(false); setComposerBusy(false); } // no agent turn → no turn.completed
   }
-  catch (e) { addBubble("system", "✗ " + e); setThinking(false); }
+  catch (e) { addBubble("system", "✗ " + e); setThinking(false); setComposerBusy(false); }
 }
 // Hover-to-copy on assistant messages (copies the markdown source).
 function attachCopy(bubble, text) {
@@ -440,10 +451,12 @@ function renderBaseline(b, mode) {
   renderTokBar();
 }
 function setThinking(on, text) {
+  // Visual activity bar ONLY. The composer (Send↔Stop) is NOT tied to this —
+  // it's freed when LLM-1's reply lands (turn.completed), so background
+  // companions (LLM-2/LLM-3) never lock the input.
   $("thinking").classList.toggle("hidden", !on);
   $("thinking").classList.toggle("flex", on);
   $("thinkingLabel").textContent = text || t("thinking");
-  setComposerBusy(on); // Send↔Stop tracks the turn lifecycle
 }
 
 /* ---------------- dark mode ---------------- */
@@ -520,6 +533,10 @@ function handleEvent(ev) {
   switch (ev.type) {
     case "turn.completed": {
       S.lastTurnTokens = { i: d.prompt_tokens || 0, o: d.completion_tokens || 0 };
+      // LLM-1's user-facing reply is done → free the composer NOW. Companions
+      // (LLM-2/LLM-3) keep running in the background and update the panels via
+      // their own events; they must not block the next message.
+      setComposerBusy(false);
       // NEVER remove the message. A truthy `error` alongside real response_text
       // just means the backend's _looks_like_error_response heuristic misfired on
       // a valid reply — show it. Only fall back to a notice if there's nothing.
@@ -542,7 +559,7 @@ function handleEvent(ev) {
     case "carry.stored": renderCarry(d); break;
     case "tool.start": setThinking(true, `🔧 ${d.kind}: ${trim(d.payload, 40)}…`); break;
     case "tool.done": setThinking(true, d.ok ? `🔧 ${d.kind} done${d.result_count != null ? " · " + d.result_count + " results" : ""}` : `🔧 ${d.kind} failed: ${trim(d.error, 50)}`); break;
-    case "background.start": setThinking(true); break;
+    case "background.start": setThinking(true, t("bg_running")); break;
     case "background.end": case "turn.done": setThinking(false); break;
     case "deep_research.approval_needed": onDRApprovalNeeded(d); break;
     case "deep_research.approved": case "deep_research.start": onDRStart(d); break;
