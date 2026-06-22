@@ -1,11 +1,18 @@
 # Sherlock
 
+*Read this in: **English** · [한국어](README.ko.md)*
+
 **Sherlock is a context layer for any LLM.** Wrap one chat function —
 keep your model, keep your stack — and get persistent memory, compacted
 context, implied-intent inference, multilingual deep research, and a
 live inspector that shows **exactly what your model saw and why**.
 
+```bash
+pip install sherlock-context
+```
+
 ```python
+from sherlock import Sherlock
 agent = Sherlock.with_callable(main_chat=my_llm, system_prompt="...")
 agent.chat("hi")   # that's the whole integration
 ```
@@ -14,6 +21,35 @@ Sherlock never picks models for you and never trims results to save
 money. **You own the model choice; Sherlock owns the context.** Token
 savings come exclusively from eliminating *waste* (re-sent material,
 duplicated context, lost calls) — never from capping what you get back.
+
+## When Sherlock shines (and when it doesn't)
+
+Sherlock isn't magic and isn't free — it adds background LLM work. In our
+own A/B tests (same model, same prompt, *with* vs *without* Sherlock, scored
+by an independent LLM judge) it earns its keep in four situations:
+
+- **Terse input where the real ask is between the lines.** On elliptical,
+  loaded, or under-specified messages, LLM-3 reads the *implied* intent and
+  feeds it forward — the judge scored Sherlock markedly higher on "did it
+  grasp what the user actually meant" (≈8.7 vs ≈7.3 / 10 across our rounds),
+  winning rounds outright while the bare model answered only the surface.
+- **Conversations that outgrow the context window.** Once old turns are
+  compacted out of the prompt, a bare model simply forgets; Sherlock still
+  recalls the pinned facts + summary and answers correctly where the
+  baseline can't.
+- **Small / local models.** The whole bet is feeding the model something
+  *true and complementary it didn't already have*, so a 7–8B local model
+  punches above its weight instead of guessing.
+- **Real research questions.** Approval-gated, multi-round, multilingual
+  search with source triangulation + citations goes deeper than one naive
+  search pass.
+
+**Where it ties — and we say so:** a short, single-shot factual question to a
+strong model that already fits the whole conversation in its context. Nothing
+to remember, no hidden intent, no research → Sherlock adds latency and a few
+background tokens for ~no quality gain. Use `companions_mode="off"` there (or
+just don't reach for Sherlock). The playground's **A/B mode** exists precisely
+so you can measure this on *your* workload before committing.
 
 ## When to use Sherlock
 
