@@ -1,8 +1,8 @@
 """Provider abstraction.
 
 - CallableProvider: bring-your-own-LLM (wraps any callable).
-- LiteLLM-backed (DEVIATION-003) for the spec'd path.
-- WrapperProvider (DEVIATION-004) for subscription-auth paths.
+- LiteLLM-backed for the spec'd path.
+- WrapperProvider for subscription-auth paths.
 - FakeProvider for hermetic tests.
 """
 

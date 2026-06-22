@@ -2,8 +2,7 @@
 
 > Used by the orchestrator to dispatch a Claude-class subagent for
 > qualitative dimension-by-dimension evaluation of a Sherlock loop's
-> output against the gold standard. Replaces the small-model evaluator
-> per DEVIATION-005.
+> output against the gold standard. Replaces the small-model evaluator.
 
 You are evaluating an attempt by the **Sherlock** memory-curation system
 to reproduce a gold-standard memory + inference output for a synthetic
@@ -127,6 +126,5 @@ revealed about the architecture, and what the most important next change
 should be.
 ```
 
-Be honest. The orchestrator uses your diagnosis to steer the next Ralph
-loop. Don't pad scores; don't be cruel either. Match what the gold
-actually demands.
+Be honest. Your diagnosis steers the next iteration. Don't pad scores;
+don't be cruel either. Match what the gold actually demands.

@@ -242,6 +242,14 @@ session and are never echoed back to the browser.
 > or the YAML `models:` block. Any *other* OpenAI-compatible host works via
 > the **Local** tile (just give its base URL).
 
+**Chat experience.** Replies stream token-by-token; reasoning models surface
+their thinking in a collapsible 💭 panel; the Send button becomes a **Stop**
+mid-generation. The companion mode (`off` / `cold_start` / `turbo`) is
+switchable live from the top bar, there's a dark-mode toggle, and the UI is
+available in 7 languages (English · 한국어 · 中文 · 日本語 · Français · Deutsch ·
+Español) — the language setting only affects the chrome, never the model's
+replies.
+
 What the inspector shows (one tab per concern):
 
 - **⚡ Flow** — every event in order: turn start, retrieval, slot
@@ -572,16 +580,15 @@ sherlock evaluate --config sherlock.yaml --conversation evaluation/dummy_convers
 
 - End-to-end against an 80-turn synthetic benchmark
   (`evaluation/dummy_conversation.md` + gold standard): **82/100** with
-  Claude Opus workers, passing the spec's 80% gate (`logs/REPORT.html`).
-- **Ralph v2 behavior probes** — 31 single-capability probes
-  (`evaluation/probes/`):
+  Claude Opus workers, passing the 80% gate.
+- **Behavior probes** — 31 single-capability probes (`evaluation/probes/`):
 
   ```bash
-  python -m evaluation.ralph_v2 --probes evaluation/probes/ \
-      --config sherlock.live.yaml --report logs/probe.json
+  python -m evaluation.probe_eval --probes evaluation/probes/ \
+      --config sherlock.live.yaml --report probe.json
   ```
 
-- The full pytest suite (450+ tests) runs hermetically — scripted
+- The full pytest suite (500+ tests) runs hermetically — scripted
   callables + fake engines, no network or keys needed: `pytest -q`.
 - **Measure it yourself**: the playground's A/B mode runs every prompt
   against the same model with and without Sherlock (the baseline gets the
@@ -743,7 +750,7 @@ caching, deep-research trust, memory reconciliation — lives in
   hinted; BYO callables can opt in via a `cache_hints` kwarg — a plain
   `f(messages)` payload stays byte-identical. The playground token bar shows
   `⚡cached`.
-- **Waste removal (RTK-style)**: dead LLM-3 output fields removed; provenance
+- **Waste removal**: dead LLM-3 output fields removed; provenance
   ledger / message wrappers / tool-result banner compressed (109→52 tokens,
   guardrails intact); protocol docs are now conditional (no search engine →
   1,308→745 tokens/turn); a failed JSON parse retries ONCE with the error fed
@@ -784,4 +791,4 @@ caching, deep-research trust, memory reconciliation — lives in
 
 ### v0.5 — core loop
 - True background companions, local embeddings by default, redaction,
-  session management, slot budgets, Ralph v2 probes.
+  session management, slot budgets, behavior probes.

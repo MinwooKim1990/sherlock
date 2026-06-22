@@ -1,22 +1,22 @@
-"""Ralph v2 — probe-based evaluation driver for Sherlock v0.4.0.
+"""Probe-based evaluation driver for Sherlock.
 
-The v1 Ralph compared a 80-turn agent trajectory to a fixed gold standard.
-That broke when LLM-1 became autonomous (companion calls + memory tool +
-non-deterministic trajectory). v2 replaces it with **behavior probes**:
-small, self-contained scenarios (1–8 turns) that each test one capability
-and emit a pass/fail signal. The aggregate pass rate is the Ralph score.
+An earlier approach compared an 80-turn agent trajectory to a fixed gold
+standard. That broke when LLM-1 became autonomous (companion calls + memory
+tool + non-deterministic trajectory). This replaces it with **behavior
+probes**: small, self-contained scenarios (1–8 turns) that each test one
+capability and emit a pass/fail signal. The aggregate pass rate is the score.
 
 Usage::
 
-    python -m evaluation.ralph_v2 \\
+    python -m evaluation.probe_eval \\
         --probes evaluation/probes/ \\
         --config sherlock.live.yaml \\
-        --report logs/probe_v040.json
+        --report probe.json
 
 Or with the bundled callable LLM (for fast smoke tests without a real
 provider)::
 
-    python -m evaluation.ralph_v2 --probes evaluation/probes/ --fake-llm
+    python -m evaluation.probe_eval --probes evaluation/probes/ --fake-llm
 
 Exit code 0 when pass-rate ≥ ``--threshold`` (default 0.80), 1 otherwise.
 """
@@ -537,7 +537,7 @@ def run_probe(probe: Probe, llm_factory, tmp_path: Path, judge=None) -> ProbeRes
 
 
 def main(argv: Optional[Iterable[str]] = None) -> int:
-    p = argparse.ArgumentParser(prog="ralph_v2", description=__doc__)
+    p = argparse.ArgumentParser(prog="probe_eval", description=__doc__)
     p.add_argument("--probes", type=Path, required=True, help="Probe YAML directory")
     p.add_argument("--config", type=Path, help="Sherlock YAML for the real LLM (optional)")
     p.add_argument(
@@ -549,7 +549,10 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     p.add_argument("--report", type=Path, help="Path to write a JSON report")
     p.add_argument("--threshold", type=float, default=0.80, help="Pass-rate gate (default 0.80)")
     p.add_argument(
-        "--tmp", type=Path, default=Path("/tmp/ralph_v2"), help="Scratch dir for per-probe storage"
+        "--tmp",
+        type=Path,
+        default=Path("/tmp/probe_eval"),
+        help="Scratch dir for per-probe storage",
     )
     p.add_argument(
         "--judge-model",

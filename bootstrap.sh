@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Sherlock build sandbox bootstrap.
-# Per OPERATIONS.md § 1.3, with one amendment:
+# Sherlock environment bootstrap.
 # python3.12 is preferred (3.13/3.11/3 fall back) — chromadb and
 # sentence-transformers wheels are not yet guaranteed on 3.14.
 

@@ -2,7 +2,7 @@
 
 Small, fast, single-capability YAML probes that replace the v0.2.x deterministic-output comparison (which broke when LLM-1 became autonomous and trajectories went non-deterministic).
 
-Each probe = one capability under test. The runner (`evaluation/ralph_v2.py`, separate work) replays `setup`, fires `trigger`, then evaluates `assertions` against the response + memory state.
+Each probe = one capability under test. The runner (`evaluation/probe_eval.py`, separate work) replays `setup`, fires `trigger`, then evaluates `assertions` against the response + memory state.
 
 ## Probe schema
 
@@ -101,13 +101,13 @@ Semantic judgement for qualities regex can't capture (e.g. "genuinely acknowledg
 ```
 Run with a judge:
 ```
-python -m evaluation.ralph_v2 --probes evaluation/probes/ \
+python -m evaluation.probe_eval --probes evaluation/probes/ \
   --config sherlock.live.yaml --judge-model anthropic:claude-haiku-4-5
 ```
 
 ## Canonical score (v0.5.0)
 
-The **canonical gate** is the `ralph_v2` pass-rate over this probe set
+The **canonical gate** is the `probe_eval` pass-rate over this probe set
 **with `--judge-model` enabled** (rule assertions + semantic judge
 together). That single number — printed as `Pass rate: N/M` and written
 to the `--report` JSON — is the score of record. The older
@@ -124,17 +124,17 @@ loops are historical and are not the canonical gate.
 
 ## Running
 
-The v0.4.0 driver lives at `evaluation/ralph_v2.py` (separate change). Typical invocation:
+The v0.4.0 driver lives at `evaluation/probe_eval.py` (separate change). Typical invocation:
 
 ```bash
 # all probes
-python evaluation/ralph_v2.py --probes evaluation/probes/
+python evaluation/probe_eval.py --probes evaluation/probes/
 
 # one category
-python evaluation/ralph_v2.py --probes evaluation/probes/ --category provenance
+python evaluation/probe_eval.py --probes evaluation/probes/ --category provenance
 
 # one probe by name
-python evaluation/ralph_v2.py --probe provenance_t76_name_probe
+python evaluation/probe_eval.py --probe provenance_t76_name_probe
 ```
 
 The driver instantiates Sherlock fresh per probe (clean DB, fresh vector store), replays `setup` turns with internal tools/memory enabled, then asks the model the `trigger` turn and grades each assertion against the response and the post-turn memory state. Per-probe pass/fail and an aggregate score are written to `evaluation/runs/<timestamp>/`.

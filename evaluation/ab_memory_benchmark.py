@@ -1,4 +1,4 @@
-"""Build-once / query-many memory benchmark (Minwoo's design).
+"""Build-once / query-many memory benchmark.
 
 For each domain story:
   1. Author a multi-turn conversation (>5 turns → LLM-2 auto-compacts at turn 5).

@@ -24,4 +24,4 @@ jobs:
       - name: Tests
         run: pytest tests/ -q
       - name: Probe mechanics (fake LLM, no network/tokens)
-        run: python -m evaluation.ralph_v2 --probes evaluation/probes/ --fake-llm --threshold 0.0
+        run: python -m evaluation.probe_eval --probes evaluation/probes/ --fake-llm --threshold 0.0

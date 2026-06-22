@@ -118,9 +118,9 @@ Persona summary discipline (v0.4.0):
   location, recurring people, hard preferences). Tail with current
   active threads. Replaces the previous persona summary entirely —
   carry forward what's still true, drop what's stale.
-- Tone: third-person, factual, no opinion. "Minwoo is a designer in
-  Seoul who manages two dashboards and has a daughter Yujin (5y, peanut
-  allergy)." — NOT "Minwoo seems stressed today."
+- Tone: third-person, factual, no opinion. "Alex is a designer in
+  Berlin who manages two dashboards and has a daughter (5y, peanut
+  allergy)." — NOT "Alex seems stressed today."
 - This summary is shown to LLM-1 every turn in the system prompt, so
   every word must earn its slot. Cut filler.
 

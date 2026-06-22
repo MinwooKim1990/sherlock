@@ -8,9 +8,7 @@
 
 ## 0. Purpose of this document
 
-This is the system specification. The coding agent reads this to understand *what to build*. It does **not** describe how to organize itself as an agent — that is in `AGENTS_AND_LOOP.md`. It does **not** describe how success is measured — that is in `EVALUATION_PROTOCOL.md`.
-
-The agent is allowed creative latitude in implementation choices not explicitly specified here. When in doubt, prefer the option that better serves the one-line definition below.
+This is the system specification — what the system does and how it is structured. Implementation choices not explicitly specified here are left to judgement; when in doubt, prefer the option that better serves the one-line definition below.
 
 ---
 
@@ -455,7 +453,7 @@ sherlock ui                            # launch Streamlit UI
 
 ## 9. Milestones
 
-Each milestone has explicit Exit criteria. The agent runs them and only proceeds when criteria pass. Failures trigger the Ralph loop (`AGENTS_AND_LOOP.md`).
+Each milestone has explicit Exit criteria; a milestone is only considered done when its criteria pass.
 
 ### M1 — Core skeleton (v0.1)
 - Provider abstraction (`providers/base.py` ABC)
@@ -605,7 +603,7 @@ kill-switch and adversarially audited per stage.
 
 ## 11. Open questions (TBD)
 
-These are explicitly left for the agent or for later user input. Document each decision in `INTENT_DEVIATIONS.md` if the agent picks an option without the user.
+These are explicitly left open for later decision.
 
 - Exact wording of the Sherlock meta-context document used in Bootstrap (build it during M3; revise as the agent learns what LLM 1 needs to see).
 - Concrete clustering algorithm for semantic-cluster decay (HDBSCAN vs adaptive thresholds).

@@ -9,7 +9,7 @@ Transitions:
   warm → cold   : after warm_after_days OR warm_after_turns
   cold → forgotten: after cold_after_days AND semantically isolated
                    (or cold_after_turns; the AND is relaxed to OR for the
-                   replay case, see DEVIATION-005)
+                   replay case)
   forgotten → hard delete: after forgotten_after_days
   pinned items skip all transitions.
 """

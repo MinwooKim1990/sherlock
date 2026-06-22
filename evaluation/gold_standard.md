@@ -1,8 +1,6 @@
 # Gold Standard for Dummy Conversation
 
 > Reference output Sherlock should reproduce when given `evaluation/dummy_conversation.md` as input.
-> Structure follows `EVALUATION_PROTOCOL.md` § 2.2.
-> Self-judged top-tier per § 2.3 — see `logs/curated.md` for the judgment trail.
 
 ---
 

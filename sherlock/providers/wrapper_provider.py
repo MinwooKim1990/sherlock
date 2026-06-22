@@ -1,7 +1,7 @@
 """WrapperProvider — runtime provider backed by `cli-wrapper-unified`.
 
 Subscription-auth path. Used when API keys are not reachable from this
-Python process (see DEVIATION-004 in INTENT_DEVIATIONS.md).
+Python process.
 
 The wrapper supports `provider/model` strings via `create("claude" | "codex" | "gemini")`
 with subscription auth + automatic API-key fallback.

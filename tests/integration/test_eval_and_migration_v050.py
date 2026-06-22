@@ -9,7 +9,7 @@ from sqlalchemy import create_engine, text
 
 
 def test_llm_judge_assertion_consults_judge():
-    from evaluation.ralph_v2 import AssertionContext, _assert_llm_judge
+    from evaluation.probe_eval import AssertionContext, _assert_llm_judge
 
     seen = {"prompt": None}
 
@@ -31,7 +31,7 @@ def test_llm_judge_assertion_consults_judge():
 
 
 def test_llm_judge_fail_verdict():
-    from evaluation.ralph_v2 import AssertionContext, _assert_llm_judge
+    from evaluation.probe_eval import AssertionContext, _assert_llm_judge
 
     ctx = AssertionContext(
         response="yes.",
@@ -46,7 +46,7 @@ def test_llm_judge_fail_verdict():
 
 
 def test_llm_judge_skips_without_judge():
-    from evaluation.ralph_v2 import AssertionContext, _assert_llm_judge
+    from evaluation.probe_eval import AssertionContext, _assert_llm_judge
 
     ctx = AssertionContext(response="anything", captured={}, agent=None, probe=None, judge=None)
     ok, msg = _assert_llm_judge(ctx, {"criterion": "x"})
@@ -55,7 +55,7 @@ def test_llm_judge_skips_without_judge():
 
 
 def test_make_judge_with_fake_provider():
-    from evaluation.ralph_v2 import make_judge
+    from evaluation.probe_eval import make_judge
 
     judge = make_judge("fake:echo")
     assert callable(judge)
@@ -64,7 +64,7 @@ def test_make_judge_with_fake_provider():
 
 
 def test_make_judge_none_for_empty_spec():
-    from evaluation.ralph_v2 import make_judge
+    from evaluation.probe_eval import make_judge
 
     assert make_judge(None) is None
     assert make_judge("") is None

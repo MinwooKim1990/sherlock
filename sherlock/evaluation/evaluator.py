@@ -1,6 +1,6 @@
 """Evaluator with a fallback chain across models.
 
-Primary: gemini-3.1-flash-lite-preview (per EVALUATION_PROTOCOL.md §3.3).
+Primary: gemini-3.1-flash-lite-preview.
 If that quota is exhausted, falls through:
     gemini-3.0-flash → gpt-5.4-mini → claude-haiku-4-5
 
@@ -93,7 +93,7 @@ class GeminiEvaluator:
         except ImportError as exc:
             raise RuntimeError(
                 "GeminiEvaluator needs the optional 'unified_cli' package, which "
-                "is not installed. Use the ralph_v2 --judge-model path instead, "
+                "is not installed. Use the probe_eval --judge-model path instead, "
                 "or install unified_cli."
             ) from exc
 

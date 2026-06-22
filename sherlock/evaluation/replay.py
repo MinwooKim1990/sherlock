@@ -1,6 +1,6 @@
 """Replay a dummy_conversation.md file through a Sherlock instance, turn by turn.
 
-The dummy file format is fixed by EVALUATION_PROTOCOL.md §1.3:
+The dummy file format:
   ### Turn N
   **User:** ...
   **Assistant:** ...
