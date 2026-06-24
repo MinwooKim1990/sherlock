@@ -109,7 +109,7 @@ const STATE_CHIP = {
   cold: "bg-blue-100 text-blue-700", forgotten: "bg-slate-200 text-slate-500 line-through",
 };
 
-const S = { prov: {}, sid: null, ws: null, llmio: {}, research: {} };
+const S = { prov: {}, sid: null, ws: null, llmio: {}, research: {}, streamOpen: false };
 
 /* ---------------- setup: multi-provider connect ---------------- */
 // S.prov = { gemini: {creds:{api_key}, models:[...]}, openai: {...}, anthropic: {...}, local: {creds:{base_url,api_key}, models:[...]} }
@@ -257,7 +257,7 @@ function resetChatUI() {
   initPanels();
   for (const k of ["main", "summary", "inference"]) TOK[k] = { i: 0, o: 0, n: 0, c: 0 };
   BASE.i = 0; BASE.o = 0; renderTokBar();
-  S.stream = null; S.llmio = {}; S.research = {}; S.busy = false; lastTurn = null;
+  S.stream = null; S.streamOpen = false; S.llmio = {}; S.research = {}; S.busy = false; lastTurn = null;
   setThinking(false); hideDRBanner();
 }
 
@@ -322,6 +322,7 @@ $("msg").addEventListener("input", () => { const m = $("msg"); m.style.height = 
 async function sendMsg() {
   const text = $("msg").value.trim(); if (!text || !S.sid || S.busy) return;
   const mode = $("chatMode") ? $("chatMode").value : "sherlock";
+  S.streamOpen = true; // a new user turn → streaming allowed until its turn.completed
   $("msg").value = ""; $("msg").style.height = "auto";
   addBubble("user", text);
   // "both": mirror the user message at the top of the MIDDLE column too, so
@@ -383,7 +384,10 @@ function addMetaLine(text, target) {
 // markdown so the final text is always clean even though the stream showed raw.
 function liveBubble(turn) {
   if (S.stream && S.stream.turn === turn) return S.stream;
-  S.stream = null; // a new turn supersedes any stale handle
+  // A new turn supersedes any stale handle — but never leave the old bubble
+  // blinking: strip its caret so a superseded partial can't linger as a zombie.
+  if (S.stream) { try { S.stream.answerEl.classList.remove("stream-caret"); } catch (e) {} }
+  S.stream = null;
   const box = $("chat");
   const wrap = h("div", "flex justify-start");
   const bubble = h("div", "max-w-[85%] px-3 py-2 rounded-2xl text-sm bg-white border");
@@ -400,13 +404,13 @@ function liveBubble(turn) {
   return S.stream;
 }
 function streamAnswer(turn, chunk) {
-  if (!chunk) return;
+  if (!chunk || !S.streamOpen) return; // drop late deltas after turn.completed (no zombie bubble)
   const s = liveBubble(turn);
   s.answer += chunk; s.answerEl.textContent = s.answer;
   autoScroll();
 }
 function streamReasoning(turn, chunk) {
-  if (!chunk) return;
+  if (!chunk || !S.streamOpen) return; // drop late deltas after turn.completed
   const s = liveBubble(turn);
   s.reasoning += chunk; s.thinkEl.textContent = s.reasoning;
   s.thinkWrap.classList.remove("hidden"); s.thinkWrap.open = true;
@@ -545,6 +549,7 @@ function handleEvent(ev) {
         if (txt) addBubble("assistant", txt);
         else if (d.error) addBubble("system", "⚠ provider error — check the LLM I/O panel");
       }
+      S.streamOpen = false; // reply done → any further deltas for this turn are stale, ignore them
       break;
     }
     case "llm.delta": streamAnswer(ev.turn, d.chunk || ""); break;
@@ -612,6 +617,7 @@ function onDRApprovalNeeded(d) {
   renderResearch(); flashTab("research");
 }
 function onDRStart(d) {
+  S.streamOpen = true; // deep-research synthesis streams its own reply
   hideDRBanner();
   if (!S.research.topic) S.research = { topic: d.topic || "", rounds: [], docs: [], folded: [], answer: "" };
   S.research.status = "researching"; S.research.topic = d.topic || S.research.topic;
