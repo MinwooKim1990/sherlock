@@ -230,6 +230,14 @@ class SearchConfig(BaseModel):
     # v1.4: let the strategy expand each sub-topic into a "what we need to know"
     # checklist that sharpens the round questions. Off → exact v1.3 strategy.
     deep_research_knowledge_checklist: bool = True
+    # v1.9 upgrade (opt-in, default OFF = byte-identical legacy behaviour):
+    # (A) facet_steer — when a round adds few NEW facts, stop re-searching the same
+    #     thread; pivot the next round's queries to UNCOVERED strategy sub-topics
+    #     (squad, training, interviews, history…) so depth fills every facet.
+    # (B) verify — a final adversarial pass re-reads the synthesized report against
+    #     the gathered facts and fixes internal contradictions + unsupported claims.
+    deep_research_facet_steer: bool = False
+    deep_research_verify: bool = False
 
 
 class InferenceConfig(BaseModel):

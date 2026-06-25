@@ -2223,6 +2223,7 @@ class Sherlock:
         engine_error_streak = 0
         stop_reason = "max_rounds"
         rnd = 0
+        run_queries: list[str] = []  # v1.9 (A): every query searched — for repeat-detection
         while rnd < max_rounds:
             rnd += 1
             # 1. search (snippets). Round 1 = wide multilingual sweep; later = narrow.
@@ -2246,6 +2247,7 @@ class Sherlock:
                     r.setdefault("_q", qi)
                     r.setdefault("_rank", rank)
                 hits.extend(good)
+            run_queries.extend(q for q in queries[:per_round] if q)  # v1.9 (A)
             if attempted:
                 engine_error_streak = engine_error_streak + 1 if failed == attempted else 0
             # else: a backlog-flush round (no searches) — keep the streak as-is
@@ -2526,6 +2528,42 @@ class Sherlock:
                     continue
                 stop_reason = "search_engine_error"
                 break
+            # v1.9 (A) facet steer — runs BEFORE the convergence stops: when this
+            # round found NO new facts, the model returned no queries, or it's about
+            # to re-run only already-searched queries, pivot to UNCOVERED strategy
+            # sub-topics so depth fills every facet instead of tunnel-visioning one
+            # thread. Resets the stall counters to give the new facet a fair round.
+            if (
+                getattr(self.config.search, "deep_research_facet_steer", False)
+                and sub_topics
+                and rnd < max_rounds
+            ):
+                run_norm = {clean_query(q).lower() for q in run_queries if q}
+                fresh = [q for q in nxt if clean_query(q).lower() not in run_norm]
+                if new_facts_this_round == 0 or not nxt or (nxt and not fresh):
+                    uncovered = [
+                        sub_topics[i] for i in range(len(sub_topics)) if i not in covered_subtopics
+                    ]
+                    steer = [
+                        q
+                        for q in (clean_query(u) for u in uncovered)
+                        if q and q.lower() not in run_norm
+                    ][:3]
+                    if steer:
+                        nxt = list(dict.fromkeys(steer + fresh))[:5]
+                        stall = 0
+                        fact_stall = 0
+                        self._emit(
+                            "deep_research.facet_steer",
+                            "system",
+                            {
+                                "research_id": research_id,
+                                "round": rnd,
+                                "to": uncovered[:5],
+                                "covered": len(covered_subtopics),
+                                "total": len(sub_topics),
+                            },
+                        )
             if qa.get("sufficient") and not drained:
                 uncovered = [
                     sub_topics[i] for i in range(len(sub_topics)) if i not in covered_subtopics
@@ -2595,6 +2633,9 @@ class Sherlock:
         answer = self._synthesize_research(
             conv_id, research_id, topic, extra_context, lang_hint=lang_hint, state=state
         )
+        # v1.9 (B): final consistency + grounding verification pass (opt-in).
+        if getattr(self.config.search, "deep_research_verify", False):
+            answer = self._verify_research_report(answer, state, topic, research_id)
         if stop_reason == "search_engine_error":
             if not state["confirmed_facts"]:
                 answer = (
@@ -2984,7 +3025,11 @@ class Sherlock:
                     ok[key] = True
         for u in seen:
             if not ok.get(_norm(u)) and "(unverified)" not in u:
-                text = text.replace(u, u + " (pairing unverified)")
+                # Boundary-aware (see _flag_unverified_citations): never splice the
+                # flag into a longer URL this one is a prefix of.
+                text = re.sub(
+                    re.escape(u) + r"(?![^\s)\]>'\"»])", u + " (pairing unverified)", text
+                )
         return text
 
     def _synthesize_with_raw_fragments(
@@ -3241,8 +3286,64 @@ class Sherlock:
         cited = set(re.findall(r"https?://[^\s)\]>'\"»]+", text or ""))
         bad = sorted(u for u in cited if _norm(u) not in known)
         for u in bad:
-            text = text.replace(u, u + " (unverified)")
+            # Boundary-aware: a URL that is a PREFIX of a longer cited URL
+            # (…/2026_FIFA_World_Cup vs …_Group_A) must not get its flag spliced
+            # INTO the longer one. Only tag the URL at its true end.
+            text = re.sub(re.escape(u) + r"(?![^\s)\]>'\"»])", u + " (unverified)", text)
         return text, bad
+
+    def _verify_research_report(
+        self, report: str, state: dict | None, topic: str, research_id: str = ""
+    ) -> str:
+        """v1.9 (B): final adversarial pass. Re-read the synthesized report against
+        the gathered facts and FIX (a) internal contradictions — the same fact
+        stated two different ways, numbers that don't add up — and (b) claims with
+        no support in the facts. Reconcile from the facts or mark [disputed];
+        invent nothing. Best-effort: the original report is returned unchanged on
+        any failure or a suspiciously short result."""
+        if not (report or "").strip():
+            return report
+        facts = (state or {}).get("confirmed_facts") or []
+        try:
+            lines = []
+            for f in facts[:60]:
+                if not isinstance(f, dict):
+                    continue
+                c = str(f.get("content") or f.get("fact") or "").strip()
+                if not c:
+                    continue
+                srcs = [s for s in (f.get("sources") or []) if s][:2]
+                lines.append(f"- {c}" + (f"  [src: {', '.join(srcs)}]" if srcs else ""))
+            facts_txt = "\n".join(lines) or "(no structured facts captured)"
+            prompt = (
+                f"You are fact-checking a research report on: {topic}\n\n"
+                "VERIFIED source-grounded facts gathered during the research:\n"
+                f"{facts_txt}\n\n"
+                "REPORT TO VERIFY:\n"
+                f"{report}\n\n"
+                "Produce a corrected version of the report. Fix ONLY:\n"
+                "1. INTERNAL CONTRADICTIONS — the same fact stated two different ways "
+                "(a score/points/date given as X in one place and Y in another), or "
+                "numbers that don't add up (e.g. 'one win, one loss' but '4 points'). "
+                "Reconcile to what the facts support; if truly unresolved, state it once "
+                "and mark it [disputed — sources conflict].\n"
+                "2. UNSUPPORTED CLAIMS — statements with no backing above: soften or drop; "
+                "never invent new facts.\n"
+                "Keep the structure, headings, citations, and language unchanged; do not "
+                "remove sourced content. Return ONLY the corrected report text."
+            )
+            resp = self._provider.chat([ChatMessage(role="user", content=prompt)])
+            out = (getattr(resp, "text", "") or "").strip()
+            changed = bool(out and out != report.strip())
+            self._emit(
+                "deep_research.verified",
+                "llm1",
+                {"research_id": research_id, "changed": changed, "chars": len(out)},
+            )
+            # Guard against a refusal / truncation nuking the report.
+            return out if len(out) >= 0.6 * len(report) else report
+        except Exception:
+            return report
 
     def _synthesize_research(
         self,
