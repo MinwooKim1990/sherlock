@@ -35,3 +35,12 @@ evaluation/*.json
 evaluation/*.log
 # one-off reference data handed in for a comparison
 deep.md
+
+# Internal / dev-only — kept on disk locally, NOT published to the public repo
+SPEC.md
+docs/
+Makefile
+bootstrap.sh
+sherlock.live.yaml
+sherlock.opus.yaml
+sherlock.fake.yaml
