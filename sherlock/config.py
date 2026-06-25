@@ -230,14 +230,16 @@ class SearchConfig(BaseModel):
     # v1.4: let the strategy expand each sub-topic into a "what we need to know"
     # checklist that sharpens the round questions. Off → exact v1.3 strategy.
     deep_research_knowledge_checklist: bool = True
-    # v1.9 upgrade (opt-in, default OFF = byte-identical legacy behaviour):
-    # (A) facet_steer — when a round adds few NEW facts, stop re-searching the same
-    #     thread; pivot the next round's queries to UNCOVERED strategy sub-topics
-    #     (squad, training, interviews, history…) so depth fills every facet.
-    # (B) verify — a final adversarial pass re-reads the synthesized report against
-    #     the gathered facts and fixes internal contradictions + unsupported claims.
-    deep_research_facet_steer: bool = False
-    deep_research_verify: bool = False
+    # Deep-research final EDITOR pass (default ON; set False for the plain baseline
+    # synthesis). After the round loop writes the report, one LLM-1 pass (a) grounds
+    # every number/name to a gathered fact ([reconstructed] otherwise), (b) enforces
+    # cross-section AND temporal consistency (no event both 'played' and 'upcoming';
+    # no 'eliminated' vs 'can still advance'; re-derives computed figures like goal
+    # difference), (c) DELETES hollow punt sections ("no data — consult the official
+    # site"), and (d) leads with a direct verdict. Chosen over earlier facet-steer /
+    # grounded-verify / reflexion experiments in a blind A/B eval. Editor-only: the
+    # synthesis paths are untouched, so OFF is byte-identical to the baseline.
+    deep_research_v3: bool = True
 
 
 class InferenceConfig(BaseModel):

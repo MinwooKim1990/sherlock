@@ -32,6 +32,12 @@ duplicated context, lost calls) — never from capping what you get back.
 > zero-config but genuinely weak for news and real-time data** — prefer
 > **Brave, Tavily, or Valyu** (each needs only an API key) whenever the answer
 > depends on fresh facts. DuckDuckGo is best treated as a no-key demo default.
+>
+> Deep research runs a final **grounded editor pass (v3, on by default)**: it
+> re-grounds every number to a gathered source, fixes cross-section and temporal
+> contradictions, deletes hollow "consult the official site" sections, and leads
+> with a direct verdict. It uses your main model, so a capable one (per above)
+> matters most here; set `deep_research_v3=False` to restore the prior synthesis.
 
 ## When Sherlock shines (and when it doesn't)
 

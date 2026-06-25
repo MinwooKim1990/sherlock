@@ -2528,42 +2528,6 @@ class Sherlock:
                     continue
                 stop_reason = "search_engine_error"
                 break
-            # v1.9 (A) facet steer — runs BEFORE the convergence stops: when this
-            # round found NO new facts, the model returned no queries, or it's about
-            # to re-run only already-searched queries, pivot to UNCOVERED strategy
-            # sub-topics so depth fills every facet instead of tunnel-visioning one
-            # thread. Resets the stall counters to give the new facet a fair round.
-            if (
-                getattr(self.config.search, "deep_research_facet_steer", False)
-                and sub_topics
-                and rnd < max_rounds
-            ):
-                run_norm = {clean_query(q).lower() for q in run_queries if q}
-                fresh = [q for q in nxt if clean_query(q).lower() not in run_norm]
-                if new_facts_this_round == 0 or not nxt or (nxt and not fresh):
-                    uncovered = [
-                        sub_topics[i] for i in range(len(sub_topics)) if i not in covered_subtopics
-                    ]
-                    steer = [
-                        q
-                        for q in (clean_query(u) for u in uncovered)
-                        if q and q.lower() not in run_norm
-                    ][:3]
-                    if steer:
-                        nxt = list(dict.fromkeys(steer + fresh))[:5]
-                        stall = 0
-                        fact_stall = 0
-                        self._emit(
-                            "deep_research.facet_steer",
-                            "system",
-                            {
-                                "research_id": research_id,
-                                "round": rnd,
-                                "to": uncovered[:5],
-                                "covered": len(covered_subtopics),
-                                "total": len(sub_topics),
-                            },
-                        )
             if qa.get("sufficient") and not drained:
                 uncovered = [
                     sub_topics[i] for i in range(len(sub_topics)) if i not in covered_subtopics
@@ -2633,8 +2597,10 @@ class Sherlock:
         answer = self._synthesize_research(
             conv_id, research_id, topic, extra_context, lang_hint=lang_hint, state=state
         )
-        # v1.9 (B): final consistency + grounding verification pass (opt-in).
-        if getattr(self.config.search, "deep_research_verify", False):
+        # Final EDITOR pass (deep_research_v3, default ON): re-ground numbers,
+        # enforce cross-section + temporal consistency, drop hollow sections, and
+        # lead with a direct verdict. Set deep_research_v3=False for plain synthesis.
+        if getattr(self.config.search, "deep_research_v3", True):
             answer = self._verify_research_report(answer, state, topic, research_id)
         if stop_reason == "search_engine_error":
             if not state["confirmed_facts"]:
@@ -3295,12 +3261,12 @@ class Sherlock:
     def _verify_research_report(
         self, report: str, state: dict | None, topic: str, research_id: str = ""
     ) -> str:
-        """v1.9 (B): final adversarial pass. Re-read the synthesized report against
-        the gathered facts and FIX (a) internal contradictions — the same fact
-        stated two different ways, numbers that don't add up — and (b) claims with
-        no support in the facts. Reconcile from the facts or mark [disputed];
-        invent nothing. Best-effort: the original report is returned unchanged on
-        any failure or a suspiciously short result."""
+        """The deep-research EDITOR pass (deep_research_v3). Re-read the synthesized
+        report against the gathered facts and: fix internal contradictions + numbers
+        that don't add up, ground every value to a fact ([reconstructed] otherwise),
+        enforce cross-section + temporal consistency, delete hollow filler sections,
+        and lead with a direct verdict. Invent nothing. Best-effort: the original
+        report is returned unchanged on any failure or a suspiciously short result."""
         if not (report or "").strip():
             return report
         facts = (state or {}).get("confirmed_facts") or []
@@ -3315,6 +3281,43 @@ class Sherlock:
                 srcs = [s for s in (f.get("sources") or []) if s][:2]
                 lines.append(f"- {c}" + (f"  [src: {', '.join(srcs)}]" if srcs else ""))
             facts_txt = "\n".join(lines) or "(no structured facts captured)"
+            extra = (
+                "3. GROUND EVERY NUMBER & NAME — any score, points total, date, venue, or "
+                "person named in the report that is NOT supported by a fact above must be "
+                "either removed or tagged inline as [reconstructed]. An internally consistent "
+                "table is NOT enough — every value must trace to a gathered fact, else it is "
+                "[reconstructed]. Do not let a plausible-but-unsourced reconstruction read as "
+                "confirmed.\n"
+                "4. CROSS-SECTION CONSISTENCY — a claim in one section must not contradict "
+                "another (e.g. 'eliminated' vs 'can still advance' for the same team); reconcile "
+                "to what the facts support and state it the same way throughout.\n"
+                "5. TEMPORAL CONSISTENCY — the gathered facts reflect the LATEST known "
+                "state. Anything the facts show as already happened (a match played, a "
+                "result decided) must NEVER also be written as upcoming, 'remaining', or "
+                "'still to play'. Resolve every tense to the latest state so the whole "
+                "document agrees on what has and hasn't happened. Also RE-DERIVE every "
+                "computed figure from its own components and fix any mismatch: a difference "
+                "= the parts (e.g. goals-for 2, goals-against 3 → goal difference −1, never "
+                "0); a total = its summands. A figure that disagrees with its own parts is "
+                "wrong — correct it.\n"
+                "6. REMOVE ONLY FILLER — DELETE a section ONLY when its ENTIRE body is a "
+                "non-answer (e.g. 'no specific data was confirmed', 'consult the official "
+                "site', 'check closer to the date'). Any section containing even ONE "
+                "concrete sourced fact MUST be kept IN FULL, word for word — do NOT "
+                "summarize, condense, shorten, or reword substantive content. Removing the "
+                "few pure-filler sections is the only deletion allowed.\n"
+                "7. PREPEND A VERDICT — ADD (replacing nothing) a 2-4 sentence direct answer "
+                "to the user's actual question as a short lead paragraph at the very top, "
+                "then keep ALL the detailed sections below it.\n"
+            )
+            tail = (
+                "Output the COMPLETE report with every substantive sentence and every citation "
+                "preserved VERBATIM — your only changes: prepend the verdict lead, delete the "
+                "pure-filler sections, and fix contradictions/ungrounded values inline. The "
+                "result MUST stay about as long as the input (only deleted filler is gone). Do "
+                "NOT rewrite, summarize, or shorten. Invent no facts and no URLs. Return ONLY "
+                "the report text."
+            )
             prompt = (
                 f"You are fact-checking a research report on: {topic}\n\n"
                 "VERIFIED source-grounded facts gathered during the research:\n"
@@ -3329,8 +3332,8 @@ class Sherlock:
                 "and mark it [disputed — sources conflict].\n"
                 "2. UNSUPPORTED CLAIMS — statements with no backing above: soften or drop; "
                 "never invent new facts.\n"
-                "Keep the structure, headings, citations, and language unchanged; do not "
-                "remove sourced content. Return ONLY the corrected report text."
+                f"{extra}"
+                f"{tail}"
             )
             resp = self._provider.chat([ChatMessage(role="user", content=prompt)])
             out = (getattr(resp, "text", "") or "").strip()
@@ -3340,8 +3343,9 @@ class Sherlock:
                 "llm1",
                 {"research_id": research_id, "changed": changed, "chars": len(out)},
             )
-            # Guard against a refusal / truncation nuking the report.
-            return out if len(out) >= 0.6 * len(report) else report
+            # Guard against a refusal / truncation nuking the report. The editor
+            # intentionally prunes hollow filler, so it tolerates a larger shrink.
+            return out if len(out) >= 0.45 * len(report) else report
         except Exception:
             return report
 
