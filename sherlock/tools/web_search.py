@@ -252,7 +252,36 @@ def _default_fetch(
         "url": url,
         "status": r.status_code,
         "text": _extract_text(r.text)[:_TEXT_EXTRACT_CAP],
+        "image": _extract_og_image(r.text),
     }
+
+
+def _extract_og_image(html: str) -> str:
+    """Best-effort lead image (og:image / twitter:image) for a report to embed.
+    Returns an absolute http(s) URL or '' — never raises, skips relative URLs."""
+    try:
+        import re as _re
+
+        for prop in ("og:image:secure_url", "og:image", "twitter:image", "og:image:url"):
+            p = _re.escape(prop)
+            m = _re.search(
+                r'<meta[^>]+(?:property|name)=["\']' + p + r'["\'][^>]+content=["\']([^"\']+)',
+                html,
+                _re.I,
+            ) or _re.search(
+                r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\']' + p,
+                html,
+                _re.I,
+            )
+            if m:
+                u = (m.group(1) or "").strip()
+                if u.startswith("//"):
+                    u = "https:" + u
+                if u.startswith("http"):
+                    return u
+        return ""
+    except Exception:
+        return ""
 
 
 def _extract_text(html: str) -> str:

@@ -350,6 +350,29 @@ def _is_affirmative(text: str) -> bool:
     return any(kw in t for kw in _AFFIRMATIVE_CONTAINS)
 
 
+# Shared "enlighten, don't fence in" guidance for every deep-research synthesis /
+# editor prompt. It hands the model a PALETTE + PRINCIPLES (format, source
+# weighting, density, images) and leaves the choice to its judgment. The ONLY hard
+# rules are anti-hallucination + factual consistency — everything else is free.
+_PRESENTATION_GUIDE = (
+    "PRESENTATION — your call; optimize for the reader's clarity AND for token economy:\n"
+    "• Choose whatever format fits THIS content best. Palette (examples, not rules): prose, "
+    "markdown tables, a calendar/timeline, a comparison matrix, a tournament bracket, grouped "
+    "sub-sections, checklists, blockquote callouts. A dated schedule usually reads best as a "
+    "table or calendar; a tournament as a bracket; specs/options as a matrix — but you decide.\n"
+    "• A good table or image can replace a paragraph: clearer AND fewer tokens. Embed an image "
+    "with ![alt](url) ONLY when a real image URL for it appears in the material provided.\n"
+    "• Weigh each source by fit to the claim, not a fixed ranking: fast-changing facts "
+    "(schedules, prices, live standings) are most reliable from primary/official/dated pages; "
+    "background or history can lean on references/wikis. Judge per claim.\n"
+    "• Be as long as the substance needs and no longer: keep the granular detail the question "
+    "turns on (each date, score, item) — but never pad.\n"
+    "GUARDRAILS (the only hard limits): invent nothing — no made-up facts, numbers, names, or "
+    "URLs; and keep every fact consistent with the sources and with itself (no contradictions, "
+    "no figure that disagrees with its own parts). Everything else is your judgment."
+)
+
+
 # v0.8 A4: lightweight source-type classification for fragment triangulation —
 # a fact corroborated across distinct domains / source-types / languages is more
 # trustworthy than one from a single source.
@@ -1700,7 +1723,13 @@ class Sherlock:
             if pending:
                 self._pending_deep_research = None
         if pending:
-            if _is_affirmative(user_input):
+            approved = _is_affirmative(user_input)
+            if not approved and not _is_refusal(user_input):
+                # Semantic fallback: the fixed keyword list misses natural approvals
+                # ('시작해', 'ㄱㄱ해', 'yeah run the deep dive'). Let LLM-1 judge intent
+                # — biased to False so the gate never auto-runs on a bare clarification.
+                approved = self._approval_intent(user_input, pending)
+            if approved:
                 topic = pending.get("topic", "")
                 self._emit("deep_research.approved", "user", {"topic": topic})
                 background = bool(self._event_sink)
@@ -1750,6 +1779,32 @@ class Sherlock:
             # as a normal turn (the user changed their mind / asked something else).
             self._emit("deep_research.cancelled", "user", {"reason": "not_affirmative"})
         return None
+
+    def _approval_intent(self, user_input: str, pending: dict) -> bool:
+        """Semantic go-ahead check for a pending deep-research proposal. The fixed
+        keyword list (``_is_affirmative``) handles obvious cases; this catches the
+        natural approvals it misses, in any language. Biased to False so the
+        approval gate never auto-runs on ambiguity."""
+        try:
+            from sherlock.jsonish import chat_json_with_retry
+
+            topic = pending.get("topic", "")
+            prompt = (
+                "A deep web-research task is waiting for the user's go-ahead.\n"
+                f"Pending research: {topic}\n"
+                f'The user just replied: "{(user_input or "").strip()[:300]}"\n\n'
+                "Does this reply tell us to PROCEED / START the research now? A clear "
+                "go-ahead in ANY language counts (e.g. 'start', '시작해', 'go', 'ㄱㄱ', "
+                "'do it', 'run it'). Merely answering a clarifying question without telling "
+                "us to start, asking something else, or hesitation does NOT count.\n"
+                'Return STRICT JSON only: {"approve": true|false}. When unsure, false.'
+            )
+            parsed, _ = chat_json_with_retry(
+                self._provider, [ChatMessage(role="user", content=prompt)], want=dict
+            )
+            return bool(isinstance(parsed, dict) and parsed.get("approve") is True)
+        except Exception:
+            return False
 
     def _handle_deep_research_proposal(
         self, topic: str, conv_id: str, turn_index: int, user_text: str = ""
@@ -2314,7 +2369,9 @@ class Sherlock:
                             else:
                                 body = _select_relevant_excerpt(raw_text, excerpt_terms, 2500)
                             if body:
-                                fetched.append({"url": u, "text": body})
+                                fetched.append(
+                                    {"url": u, "text": body, "image": page.get("image") or ""}
+                                )
                     except Exception:
                         pass
 
@@ -2372,6 +2429,7 @@ class Sherlock:
                         "url": str(f.get("url") or ""),
                         "title": "",
                         "text": txt,
+                        "image": str(f.get("image") or ""),
                     }
                     state["raw_fragments_global"].append(frag)
                     bucket = _route_fragment(txt)
@@ -3086,7 +3144,8 @@ class Sherlock:
                     used += len(t)
                     if u:
                         known_urls.add(u)
-                    raw_lines.append(f"• ({u}) {t}")
+                    img = str(r.get("image") or "")
+                    raw_lines.append(f"• ({u}) {t}" + (f"  [image: {img}]" if img else ""))
                 raw_block = ""
                 if raw_lines:
                     raw_block = (
@@ -3111,15 +3170,13 @@ class Sherlock:
                     + "\n\n"
                     + lang_line
                     + "The FINDINGS are the verified spine. The RAW FRAGMENTS are the "
-                    "original sources — read them to recover any concrete detail (an event "
-                    "name, date, venue, number) the findings missed, including it only when "
-                    "a raw fragment plainly supports it. If there are no findings or "
-                    "fragments here, briefly say no specific events were confirmed for this "
-                    "part and suggest checking official sources closer to the date — do NOT "
-                    "invent anything. Write the section body now, starting with a '## ' "
-                    "header line. Cite source URLs inline where they back a claim (never "
-                    "invent one); disputed facts get BOTH sides. Concise but complete — no "
-                    "preamble."
+                    "original sources — mine them for every concrete detail (event, date, "
+                    "venue, number, image URL) the findings missed, including it only when a "
+                    "fragment plainly supports it. Open with a '## ' header and present this "
+                    "section in whatever form reads best for its content (see PRESENTATION). "
+                    "Cite source URLs inline where they back a claim; disputed facts get BOTH "
+                    "sides. If this section genuinely has nothing, OMIT it — never pad with a "
+                    "'consult official sources' placeholder.\n\n" + _PRESENTATION_GUIDE
                 )
                 resp = self._provider.chat([ChatMessage(role="user", content=prompt)])
                 self._dr_account(
@@ -3213,10 +3270,11 @@ class Sherlock:
                     + extra
                     + "\n\n"
                     + lang_line
-                    + "Write the section body now, starting with a '## ' header line for "
-                    "the section. Cite source URLs inline where they back a claim (never "
-                    "invent one); facts marked disputed get BOTH sides. Concise but "
-                    "complete — no preamble."
+                    + "Open with a '## ' header and present this section in whatever form "
+                    "reads best for its content (see PRESENTATION). Cite source URLs inline "
+                    "where they back a claim; facts marked disputed get BOTH sides. If this "
+                    "section genuinely has nothing, OMIT it — never pad with a placeholder."
+                    "\n\n" + _PRESENTATION_GUIDE
                 )
                 resp = self._provider.chat([ChatMessage(role="user", content=prompt)])
                 self._dr_account(
@@ -3262,11 +3320,12 @@ class Sherlock:
         self, report: str, state: dict | None, topic: str, research_id: str = ""
     ) -> str:
         """The deep-research EDITOR pass (deep_research_v3). Re-read the synthesized
-        report against the gathered facts and: fix internal contradictions + numbers
-        that don't add up, ground every value to a fact ([reconstructed] otherwise),
-        enforce cross-section + temporal consistency, delete hollow filler sections,
-        and lead with a direct verdict. Invent nothing. Best-effort: the original
-        report is returned unchanged on any failure or a suspiciously short result."""
+        report against the gathered facts. MANDATORY (the only guardrails): fix
+        contradictions + numbers that don't add up, ground every value to a fact
+        ([reconstructed] otherwise), enforce cross-section + temporal consistency,
+        drop pure-filler sections, invent nothing. OPTIONAL (the model's judgment):
+        recast into the clearest format, embed sourced images, lead with the bottom
+        line. Best-effort: the original is returned unchanged on failure / a short result."""
         if not (report or "").strip():
             return report
         facts = (state or {}).get("confirmed_facts") or []
@@ -3300,23 +3359,22 @@ class Sherlock:
                 "= the parts (e.g. goals-for 2, goals-against 3 → goal difference −1, never "
                 "0); a total = its summands. A figure that disagrees with its own parts is "
                 "wrong — correct it.\n"
-                "6. REMOVE ONLY FILLER — DELETE a section ONLY when its ENTIRE body is a "
-                "non-answer (e.g. 'no specific data was confirmed', 'consult the official "
-                "site', 'check closer to the date'). Any section containing even ONE "
-                "concrete sourced fact MUST be kept IN FULL, word for word — do NOT "
-                "summarize, condense, shorten, or reword substantive content. Removing the "
-                "few pure-filler sections is the only deletion allowed.\n"
-                "7. PREPEND A VERDICT — ADD (replacing nothing) a 2-4 sentence direct answer "
-                "to the user's actual question as a short lead paragraph at the very top, "
-                "then keep ALL the detailed sections below it.\n"
+                "6. DROP PURE FILLER — delete any section whose ENTIRE body is a non-answer "
+                "('no specific data was confirmed', 'consult the official site', 'check "
+                "closer to the date'). Keep every substantive, sourced fact — you MAY "
+                "reorganize or tighten wording, but lose no fact and invent none.\n"
+                "7. PRESENTATION (optional — your judgment, never forced) — you MAY recast "
+                "the report into whatever form reads best (table, calendar, timeline, "
+                "bracket, matrix), embed an image with ![alt](url) when a real image URL is "
+                "in the facts above, and open with a short bottom-line answer. Do it only "
+                "where it genuinely helps the reader; keep every fact.\n"
             )
             tail = (
-                "Output the COMPLETE report with every substantive sentence and every citation "
-                "preserved VERBATIM — your only changes: prepend the verdict lead, delete the "
-                "pure-filler sections, and fix contradictions/ungrounded values inline. The "
-                "result MUST stay about as long as the input (only deleted filler is gone). Do "
-                "NOT rewrite, summarize, or shorten. Invent no facts and no URLs. Return ONLY "
-                "the report text."
+                "Hard rules: keep every sourced fact and citation; invent no facts, numbers, "
+                "or URLs; the only mandatory edits are the consistency/grounding fixes (1-6). "
+                "Formatting, images, a verdict lead, and length are YOUR call (item 7, "
+                "optional) — improve them where it helps, leave them where it doesn't. Return "
+                "ONLY the report text.\n\n" + _PRESENTATION_GUIDE
             )
             prompt = (
                 f"You are fact-checking a research report on: {topic}\n\n"
@@ -3343,9 +3401,9 @@ class Sherlock:
                 "llm1",
                 {"research_id": research_id, "changed": changed, "chars": len(out)},
             )
-            # Guard against a refusal / truncation nuking the report. The editor
-            # intentionally prunes hollow filler, so it tolerates a larger shrink.
-            return out if len(out) >= 0.45 * len(report) else report
+            # Guard only against a refusal / truncation nuking the report. The editor
+            # may legitimately compress prose into tables, so allow a generous shrink.
+            return out if len(out) >= 0.3 * len(report) else report
         except Exception:
             return report
 
@@ -3454,7 +3512,8 @@ class Sherlock:
         # supports them — guideline, not a cage).
         subs = ((state or {}).get("strategy") or {}).get("sub_topics") or []
         structure_line = (
-            "• Where the evidence supports them, structure the report around: "
+            "• Sub-topics explored (a loose checklist, NOT a required section layout — "
+            "merge, reorder, or drop them if another structure reads better): "
             + "; ".join(subs[:6])
             + ".\n"
             if subs
@@ -3481,24 +3540,21 @@ class Sherlock:
             + _research_date_line()
             + "\n\n"
             f"RESEARCH DOCUMENTS:\n{docs_txt}{extra}\n\n"
-            "Write the FINAL answer now. Requirements:\n"
+            "Write the FINAL answer now.\n"
             + fallback_line
             + structure_line
             + "• "
             + (lang_line.strip() or "Match the user's language.")
             + "\n"
-            "• Be COMPREHENSIVE and well-structured — short sections/headers + bullets where "
-            "useful; this is a deep-research report, not a one-liner. Cover the main findings "
-            "AND the peripheral angles.\n"
-            "• Cite source URLs inline where they back a claim (e.g. “… (per <url>)”). Do NOT "
-            "invent URLs — and attach each URL ONLY to the claim it was listed with in the "
-            "findings above (no borrowing a URL for a different claim). Facts marked "
-            "[corroborated ×N] are "
-            "confirmed by multiple independent sources — state those with higher confidence.\n"
-            "• Note uncertainty, gaps, and any contradictions. For facts marked "
-            "[disputed — sources conflict], present BOTH sides with their sources — "
-            "do not silently pick one.\n"
-            "• End with a short “Sources” list of the URLs you actually used."
+            "• Cover the substance the question needs — the main findings AND the peripheral "
+            "angles that matter — and keep the granular detail (each date, number, item), not "
+            "just a summary.\n"
+            "• Cite source URLs inline where they back a claim (e.g. “… (per <url>)”); attach "
+            "each URL ONLY to the claim it was listed with. Facts marked [corroborated ×N] are "
+            "confirmed by multiple sources — state those with higher confidence. For facts "
+            "marked [disputed — sources conflict], present BOTH sides.\n"
+            "• End with a short “Sources” list of the URLs you actually used.\n\n"
+            + _PRESENTATION_GUIDE
         )
         try:
             resp = self._provider.chat([ChatMessage(role="user", content=prompt)])
