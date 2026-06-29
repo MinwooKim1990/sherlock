@@ -2698,6 +2698,12 @@ class Sherlock:
         # lead with a direct verdict. Set deep_research_v3=False for plain synthesis.
         if getattr(self.config.search, "deep_research_v3", True):
             answer = self._verify_research_report(answer, state, topic, research_id)
+        # v1.10 LLM-2 FAITHFULNESS pass (default "faithfulness"; "off" = skip): a
+        # SEPARATE cross-model check of the report against the gathered RAW (not the
+        # facts) — catches mis-extractions + contradictions the same-model editor
+        # misses. Best-effort; no-ops without raw or an LLM-2/LLM-1 provider.
+        if getattr(self.config.search, "deep_research_verify", "faithfulness") != "off":
+            answer, _ = self._verify_report_faithfulness(answer, state, topic, research_id)
         if stop_reason == "search_engine_error":
             if not state["confirmed_facts"]:
                 answer = (
@@ -3391,6 +3397,110 @@ class Sherlock:
             # INTO the longer one. Only tag the URL at its true end.
             text = re.sub(re.escape(u) + r"(?![^\s)\]>'\"»])", u + " (unverified)", text)
         return text, bad
+
+    def _verify_report_faithfulness(
+        self, report: str, state: dict | None, topic: str, research_id: str = ""
+    ) -> tuple[str, list[dict]]:
+        """v1.10 LLM-2 FAITHFULNESS pass — a SEPARATE cross-model check (vs the
+        same-model v3 editor): re-read the report against the RAW fragments we
+        actually gathered (NOT the facts — checking LLM-1's extraction against itself
+        is circular) and, per sub-topic, flag where the report states X but the raw
+        says Y (mis-extraction), contradictions, or unsupported claims. Apply only
+        fixes whose `claim` appears VERBATIM in the report (reject phantom spans);
+        cap applied fixes; collect `needs_web` items for an optional LLM-3 re-check.
+        Returns (report, flagged). Best-effort: returns the report unchanged on any
+        failure, missing raw, or no LLM-2/LLM-1 provider."""
+        if not (report or "").strip():
+            return report, []
+        raw_by_sub = (state or {}).get("raw_fragments_by_subtopic") or {}
+        if not raw_by_sub:
+            return report, []  # no raw to check against → no-op (facts would be circular)
+        provider = self._summary_provider or self._provider
+        if provider is None:
+            return report, []
+        from sherlock.jsonish import chat_json_with_retry
+
+        budget = int(getattr(self.config.search, "deep_research_raw_char_budget", 8000))
+        max_apply = 8
+        applied = 0
+        flagged: list[dict] = []
+        out = report
+        for sub, frags in list(raw_by_sub.items())[:8]:  # per group — MODERATE (~5 calls)
+            if applied >= max_apply:
+                break
+            lines: list[str] = []
+            used = 0
+            for fr in frags:
+                t = (fr.get("text") or "")[:1200]
+                if not t:
+                    continue
+                if used + len(t) > budget:
+                    break
+                used += len(t)
+                u = str(fr.get("url") or "")
+                d = str(fr.get("date") or "")
+                lines.append(f"- ({u}{(' · ' + d) if d else ''}) {t}")
+            if not lines:
+                continue
+            raw_txt = "\n".join(lines)
+            prompt = (
+                f"You are FAITHFULNESS-checking a research report on: {topic}\n\n"
+                f"REPORT:\n{out}\n\n"
+                f"RAW SOURCE MATERIAL gathered for the sub-topic «{sub}»:\n{raw_txt}\n\n"
+                "Does the report match this RAW material for that sub-topic? Flag ONLY:\n"
+                "- misextraction: the report states X but the raw says Y (e.g. a date "
+                "bound to the wrong city/entity)\n"
+                "- contradiction: the report contradicts itself or the raw\n"
+                "- unsupported: a claim with NO support in the raw\n"
+                "Judge FAITHFULNESS-TO-SOURCES only — NOT world-truth, NOT format, NOT "
+                "which sources were used. Each `claim` MUST be copied verbatim from the "
+                "report. `fix` = corrected text grounded in the raw, or 'remove'. "
+                "`needs_web`=true ONLY when the raw cannot settle it and a fresh web "
+                "lookup would.\n"
+                'Return STRICT JSON: {"fixes": [{"claim": "<verbatim report span>", '
+                '"issue": "misextraction|contradiction|unsupported", "raw_says": "...", '
+                '"fix": "<corrected text or remove>", "needs_web": true|false}]}. '
+                'If faithful, return {"fixes": []}. JSON only.'
+            )
+            try:
+                parsed, _ = chat_json_with_retry(
+                    provider, [ChatMessage(role="user", content=prompt)], want=dict
+                )
+            except Exception:
+                continue
+            if not isinstance(parsed, dict):
+                continue
+            for fx in (parsed.get("fixes") or [])[:max_apply]:
+                if not isinstance(fx, dict):
+                    continue
+                claim = str(fx.get("claim") or "").strip()
+                if not claim or claim not in out:  # verbatim-span match only
+                    continue
+                if fx.get("needs_web"):
+                    flagged.append(
+                        {"claim": claim, "raw_says": str(fx.get("raw_says") or ""), "sub": sub}
+                    )
+                fix = str(fx.get("fix") or "").strip()
+                if not fix:
+                    continue
+                out = out.replace(claim, "" if fix.lower() == "remove" else fix)
+                applied += 1
+                if applied >= max_apply:
+                    break
+        out = out.strip() or report
+        self._emit(
+            "deep_research.faithfulness",
+            "llm2",
+            {
+                "research_id": research_id,
+                "groups_checked": len(raw_by_sub),
+                "fixes_applied": applied,
+                "flagged_for_web": len(flagged),
+            },
+        )
+        if len(out) < 0.3 * len(report):  # shrink guard — a runaway must not gut it
+            return report, flagged
+        return out, flagged
 
     def _verify_research_report(
         self, report: str, state: dict | None, topic: str, research_id: str = ""

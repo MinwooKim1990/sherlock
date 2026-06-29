@@ -259,6 +259,13 @@ class SearchConfig(BaseModel):
     # This fetches the top hit ONCE per round (only if nothing else was fetched) to
     # grab its og:image (+date); failures are swallowed.
     deep_research_fetch_image: bool = True
+    # v1.10 — LLM-2 faithfulness verify (the accuracy core). After the v3 editor, a
+    # SEPARATE cross-model pass re-reads the report against the gathered RAW (per
+    # sub-topic) and fixes mis-extractions (report says X, raw says Y) + contradictions
+    # the same-model editor misses — verbatim-span fixes only, capped, 0.3 shrink guard.
+    # "off" = skip (byte-identical). "faithfulness" = the no-web check (default).
+    # "faithfulness+web" = ALSO re-verify the FEW flagged claims via LLM-3 web search.
+    deep_research_verify: Literal["off", "faithfulness", "faithfulness+web"] = "faithfulness"
 
 
 class InferenceConfig(BaseModel):
