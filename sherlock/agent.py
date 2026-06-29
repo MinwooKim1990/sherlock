@@ -2370,7 +2370,39 @@ class Sherlock:
                                 body = _select_relevant_excerpt(raw_text, excerpt_terms, 2500)
                             if body:
                                 fetched.append(
-                                    {"url": u, "text": body, "image": page.get("image") or ""}
+                                    {
+                                        "url": u,
+                                        "text": body,
+                                        "image": page.get("image") or "",
+                                        "date": page.get("date") or "",
+                                    }
+                                )
+                    except Exception:
+                        pass
+
+            # v1.10: even on a RICH round (the thin-fetch above didn't run), grab the
+            # top hit ONCE to harvest its og:image (+date) — image acquisition was
+            # otherwise coupled to thin-round fetches, so rich queries got no image.
+            if (
+                getattr(self.config.search, "deep_research_fetch_image", True)
+                and not fetched
+                and shown
+            ):
+                u0 = str(shown[0].get("url") or "")
+                if u0 and u0 not in fetched_urls:
+                    fetched_urls.add(u0)
+                    try:
+                        page = self._bounded(engine.fetch, timeout_s, u0)
+                        if isinstance(page, dict) and not page.get("error"):
+                            body = (page.get("text") or page.get("html") or "")[:1200]
+                            if body or page.get("image"):
+                                fetched.append(
+                                    {
+                                        "url": u0,
+                                        "text": body,
+                                        "image": page.get("image") or "",
+                                        "date": page.get("date") or "",
+                                    }
                                 )
                     except Exception:
                         pass

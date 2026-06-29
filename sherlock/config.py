@@ -253,6 +253,12 @@ class SearchConfig(BaseModel):
     # upcoming). Dates are OPAQUE strings (never parsed/compared in code); nothing is
     # filtered or dropped on date — only annotated/weighted by the model.
     deep_research_freshness: bool = True
+    # v1.10 — harvest a lead image even on RICH rounds (default ON; OFF =
+    # byte-identical). og:image is only captured when a page is fetched, and fetches
+    # otherwise fire only on thin rounds — so info-rich queries never got an image.
+    # This fetches the top hit ONCE per round (only if nothing else was fetched) to
+    # grab its og:image (+date); failures are swallowed.
+    deep_research_fetch_image: bool = True
 
 
 class InferenceConfig(BaseModel):
