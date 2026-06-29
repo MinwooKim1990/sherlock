@@ -246,6 +246,13 @@ class SearchConfig(BaseModel):
     # stays welded to ITS entity, stopping small-model entity-binding swaps. Additive
     # metadata: advisory only, never gates whether a fact is kept.
     deep_research_structured_extraction: bool = True
+    # v1.10 — freshness (default ON; OFF = dates captured but never surfaced →
+    # prompts byte-identical). Surfaces each source's reported date in round snippets
+    # + the synthesis raw block so the model can prefer the freshest source for
+    # time-sensitive claims and flag stale-as-current (e.g. a past event written as
+    # upcoming). Dates are OPAQUE strings (never parsed/compared in code); nothing is
+    # filtered or dropped on date — only annotated/weighted by the model.
+    deep_research_freshness: bool = True
 
 
 class InferenceConfig(BaseModel):

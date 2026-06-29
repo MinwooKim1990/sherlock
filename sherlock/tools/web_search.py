@@ -253,7 +253,39 @@ def _default_fetch(
         "status": r.status_code,
         "text": _extract_text(r.text)[:_TEXT_EXTRACT_CAP],
         "image": _extract_og_image(r.text),
+        "date": _extract_date(r.text),
     }
+
+
+def _extract_date(html: str) -> str:
+    """Best-effort published/updated date for freshness — an OPAQUE source-reported
+    string (never parsed numerically in code). Scans article:published_time /
+    og:updated_time / JSON-LD datePublished / <time datetime>. Returns '', never raises."""
+    try:
+        import re as _re
+
+        for prop in ("article:published_time", "article:modified_time", "og:updated_time"):
+            p = _re.escape(prop)
+            m = _re.search(
+                r'<meta[^>]+(?:property|name)=["\']' + p + r'["\'][^>]+content=["\']([^"\']+)',
+                html,
+                _re.I,
+            ) or _re.search(
+                r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\']' + p,
+                html,
+                _re.I,
+            )
+            if m and m.group(1).strip():
+                return m.group(1).strip()[:40]
+        m = _re.search(r'"datePublished"\s*:\s*"([^"]+)"', html)
+        if m:
+            return m.group(1).strip()[:40]
+        m = _re.search(r"<time[^>]+datetime=[\"']([^\"']+)", html, _re.I)
+        if m:
+            return m.group(1).strip()[:40]
+        return ""
+    except Exception:
+        return ""
 
 
 def _extract_og_image(html: str) -> str:
@@ -347,6 +379,7 @@ class DuckDuckGoSearch(SearchEngine):
                     "url": r.get("href") or r.get("url", ""),
                     "content": r.get("body") or r.get("snippet", ""),
                     "source": "duckduckgo",
+                    "date": r.get("date") or "",
                 }
             )
         return out
@@ -386,6 +419,7 @@ class TavilySearch(SearchEngine):
                     "url": r.get("url", ""),
                     "content": r.get("content", ""),
                     "source": "tavily",
+                    "date": r.get("published_date") or "",
                 }
             )
         return out
@@ -447,6 +481,7 @@ class BraveSearch(SearchEngine):
                     "url": item.get("url", ""),
                     "content": item.get("description", ""),
                     "source": "brave",
+                    "date": item.get("page_age") or item.get("age") or "",
                 }
             )
         return out
@@ -493,6 +528,7 @@ class ValyuSearch(SearchEngine):
                     or item.get("snippet")
                     or item.get("description", ""),
                     "source": "valyu",
+                    "date": item.get("date") or item.get("published_date") or "",
                 }
             )
         return out

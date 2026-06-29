@@ -2413,6 +2413,7 @@ class Sherlock:
                         "url": str(h.get("url") or ""),
                         "title": str(h.get("title") or ""),
                         "text": txt,
+                        "date": str(h.get("date") or ""),
                     }
                     state["raw_fragments_global"].append(frag)
                     bucket = _route_fragment(str(h.get("title") or "") + " " + txt)
@@ -2430,6 +2431,7 @@ class Sherlock:
                         "title": "",
                         "text": txt,
                         "image": str(f.get("image") or ""),
+                        "date": str(f.get("date") or ""),
                     }
                     state["raw_fragments_global"].append(frag)
                     bucket = _route_fragment(txt)
@@ -2833,10 +2835,12 @@ class Sherlock:
         # compact running state (cheap) — what we already know + what's missing.
         state_txt = self._state_digest(state)
         # ONLY the new fragments this round (deduped upstream) — snippets, tight.
+        _fresh = getattr(self.config.search, "deep_research_freshness", True)
         res_txt = (
             "\n".join(
-                f"- {h.get('title','')} — {h.get('url','')}: "
-                f"{_trim_at_boundary(h.get('content') or h.get('snippet') or '', 160)}"
+                f"- {h.get('title','')} — {h.get('url','')}"
+                + (f"  [date: {h.get('date')}]" if _fresh and h.get("date") else "")
+                + f": {_trim_at_boundary(h.get('content') or h.get('snippet') or '', 160)}"
                 for h in (new_hits or [])[:8]
             )
             or "(no new results)"
@@ -3176,7 +3180,16 @@ class Sherlock:
                     if u:
                         known_urls.add(u)
                     img = str(r.get("image") or "")
-                    raw_lines.append(f"• ({u}) {t}" + (f"  [image: {img}]" if img else ""))
+                    _dt = (
+                        str(r.get("date") or "")
+                        if getattr(self.config.search, "deep_research_freshness", True)
+                        else ""
+                    )
+                    raw_lines.append(
+                        f"• ({u}) {t}"
+                        + (f"  [date: {_dt}]" if _dt else "")
+                        + (f"  [image: {img}]" if img else "")
+                    )
                 raw_block = ""
                 if raw_lines:
                     raw_block = (
