@@ -266,6 +266,9 @@ class SearchConfig(BaseModel):
     # "off" = skip (byte-identical). "faithfulness" = the no-web check (default).
     # "faithfulness+web" = ALSO re-verify the FEW flagged claims via LLM-3 web search.
     deep_research_verify: Literal["off", "faithfulness", "faithfulness+web"] = "faithfulness"
+    # v1.10 — cap on how many faithfulness-flagged claims the "faithfulness+web" tier
+    # re-verifies via LLM-3 web search (the FEW, per design — bounds latency/cost).
+    deep_research_web_recheck_max: int = 3
 
 
 class InferenceConfig(BaseModel):

@@ -2703,7 +2703,15 @@ class Sherlock:
         # facts) — catches mis-extractions + contradictions the same-model editor
         # misses. Best-effort; no-ops without raw or an LLM-2/LLM-1 provider.
         if getattr(self.config.search, "deep_research_verify", "faithfulness") != "off":
-            answer, _ = self._verify_report_faithfulness(answer, state, topic, research_id)
+            answer, _flagged = self._verify_report_faithfulness(answer, state, topic, research_id)
+            # v1.10 (opt-in "faithfulness+web"): re-verify ONLY the few flagged claims
+            # via LLM-3 web search — corrected → replaced, unverifiable → tagged.
+            if (
+                getattr(self.config.search, "deep_research_verify", "faithfulness")
+                == "faithfulness+web"
+                and _flagged
+            ):
+                answer = self._web_recheck_flagged(answer, _flagged, topic, research_id)
         if stop_reason == "search_engine_error":
             if not state["confirmed_facts"]:
                 answer = (
@@ -3501,6 +3509,83 @@ class Sherlock:
         if len(out) < 0.3 * len(report):  # shrink guard — a runaway must not gut it
             return report, flagged
         return out, flagged
+
+    def _web_recheck_flagged(
+        self, report: str, flagged: list[dict], topic: str, research_id: str = ""
+    ) -> str:
+        """v1.10 (opt-in, "faithfulness+web"): re-verify ONLY the few claims the LLM-2
+        pass flagged as needing a fresh lookup. For each (capped at
+        deep_research_web_recheck_max), LLM-3 runs ONE web search then judges →
+        confirmed | corrected | unverifiable. `corrected` → verbatim-span replace;
+        `unverifiable` → tag the span [unverified] (never delete). Best-effort:
+        returns the report unchanged on any failure / no engine / no provider."""
+        engine = self._inference_search_engine or self._search
+        provider = self._inference_provider or self._provider
+        if engine is None or provider is None or not flagged:
+            return report
+        from sherlock.jsonish import chat_json_with_retry
+
+        timeout_s = float(getattr(self.config.execution, "tool_timeout_s", 20.0))
+        rpr = int(getattr(self.config.inference, "search_results_per_round", 4))
+        cap = int(getattr(self.config.search, "deep_research_web_recheck_max", 3))
+        out = report
+        checked = corrected = unverifiable = 0
+        for fl in flagged[:cap]:
+            claim = str(fl.get("claim") or "").strip()
+            if not claim or claim not in out:
+                continue
+            try:
+                hits = self._bounded(engine.search, timeout_s, claim, max_results=rpr) or []
+            except Exception:
+                continue
+            hits = [h for h in hits if isinstance(h, dict) and not h.get("error")]
+            if not hits:
+                continue
+            checked += 1
+            ev = "\n".join(
+                f"- {h.get('title','')} — {h.get('url','')}"
+                + (f" [{h.get('date')}]" if h.get("date") else "")
+                + f": {(h.get('content') or h.get('snippet') or '')[:300]}"
+                for h in hits[:rpr]
+            )
+            prompt = (
+                f"Re-verify ONE claim from a research report on: {topic}\n\n"
+                f"CLAIM: {claim}\n\n"
+                f"FRESH web results:\n{ev}\n\n"
+                "Judge the claim against these results. Return STRICT JSON: "
+                '{"verdict": "confirmed|corrected|unverifiable", "corrected_text": '
+                '"<the corrected claim if verdict=corrected, else empty>", "source": "<url>"}. '
+                "Use 'corrected' ONLY when the results clearly show a different fact; "
+                "'unverifiable' when they do not settle it. JSON only."
+            )
+            try:
+                parsed, _ = chat_json_with_retry(
+                    provider, [ChatMessage(role="user", content=prompt)], want=dict
+                )
+            except Exception:
+                continue
+            if not isinstance(parsed, dict):
+                continue
+            verdict = str(parsed.get("verdict") or "").strip().lower()
+            if verdict == "corrected":
+                fix = str(parsed.get("corrected_text") or "").strip()
+                if fix and claim in out:
+                    out = out.replace(claim, fix)
+                    corrected += 1
+            elif verdict == "unverifiable" and claim in out:
+                out = out.replace(claim, claim + " [unverified]", 1)
+                unverifiable += 1
+        self._emit(
+            "deep_research.web_recheck",
+            "llm3",
+            {
+                "research_id": research_id,
+                "checked": checked,
+                "corrected": corrected,
+                "unverifiable": unverifiable,
+            },
+        )
+        return out
 
     def _verify_research_report(
         self, report: str, state: dict | None, topic: str, research_id: str = ""
