@@ -2493,6 +2493,10 @@ class Sherlock:
                             max_cos = max(max_cos, _cos(vec, v))
                 existing.add(key)
                 entry = {"fact": ft, "sources": list(dict.fromkeys(srcs))}
+                if f.get("entity"):
+                    entry["entity"] = f["entity"]
+                if f.get("attrs"):
+                    entry["attrs"] = f["attrs"]
                 if disputed:
                     entry["disputed"] = True
                 state["confirmed_facts"].append(entry)
@@ -2858,6 +2862,21 @@ class Sherlock:
             if lang_hint
             else ""
         )
+        _structured = getattr(self.config.search, "deep_research_structured_extraction", True)
+        _facts_schema = (
+            '{"facts": [{"fact": "...", "entity": "<the ONE subject this fact is about '
+            '(a city/person/team/etc.), or empty>", "attrs": {"...": "..."}, "sources": ["url"]}], '
+            if _structured
+            else '{"facts": [{"fact": "...", "sources": ["url"]}], '
+        )
+        _structured_note = (
+            "entity/attrs: when a fact binds an attribute to a specific subject (a DATE to a "
+            "city, a SCORE to a team), put that subject in `entity` and the bound values in "
+            "`attrs` (free-form keys, fill only what applies) so the value stays welded to ITS "
+            "subject; prose-only facts leave them empty. "
+            if _structured
+            else ""
+        )
         prompt = (
             f"You are running focused background research on: {topic}\n"
             + _research_date_line()
@@ -2867,11 +2886,15 @@ class Sherlock:
             f"NEW search snippets this round:\n{res_txt}\n\n"
             f"Fetched page extracts:\n{pages_txt}{extra}\n\n"
             "Answer these meta-questions, then extract the NEW facts this round adds:\n"
-            f"{qlist}\n\n" + lang_line + "Return STRICT JSON (terse):\n"
-            '{"facts": [{"fact": "...", "sources": ["url"]}], "key_finding": "...", '
+            f"{qlist}\n\n"
+            + lang_line
+            + "Return STRICT JSON (terse):\n"
+            + _facts_schema
+            + '"key_finding": "...", '
             '"summary": "...", "gaps": ["..."], "sufficient": true|false, '
             '"next_queries": ["..."]}\n'
-            "facts: only concrete NEW ones (not in WHAT WE ALREADY KNOW), each with its "
+            + _structured_note
+            + "facts: only concrete NEW ones (not in WHAT WE ALREADY KNOW), each with its "
             "source URLs. For 'sufficient': a thorough researcher stops when the "
             "gathered facts genuinely answer the core question. For a multi-part "
             "request (each city / date / sub-topic), that usually means every part "
@@ -2907,7 +2930,15 @@ class Sherlock:
                             continue
                         srcs = f.get("sources")
                         srcs = [srcs] if isinstance(srcs, str) else (srcs or [])
-                        facts.append({"fact": ft, "sources": [str(u) for u in srcs if u]})
+                        fd = {"fact": ft, "sources": [str(u) for u in srcs if u]}
+                        if _structured:
+                            ent = f.get("entity")
+                            if isinstance(ent, str) and ent.strip():
+                                fd["entity"] = ent.strip()
+                            at = f.get("attrs")
+                            if isinstance(at, dict) and at:
+                                fd["attrs"] = {str(k): str(v) for k, v in at.items() if v}
+                        facts.append(fd)
                     elif isinstance(f, str) and f.strip():
                         facts.append({"fact": f.strip(), "sources": []})
                 parsed["facts"] = facts

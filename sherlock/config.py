@@ -240,6 +240,12 @@ class SearchConfig(BaseModel):
     # grounded-verify / reflexion experiments in a blind A/B eval. Editor-only: the
     # synthesis paths are untouched, so OFF is byte-identical to the baseline.
     deep_research_v3: bool = True
+    # v1.10 — structured per-entity extraction (default ON; OFF = byte-identical
+    # legacy {"fact","sources"} schema). Each fact MAY carry an `entity` (its single
+    # subject — a city/person/team) + `attrs` so a bound attribute (a date, a score)
+    # stays welded to ITS entity, stopping small-model entity-binding swaps. Additive
+    # metadata: advisory only, never gates whether a fact is kept.
+    deep_research_structured_extraction: bool = True
 
 
 class InferenceConfig(BaseModel):
