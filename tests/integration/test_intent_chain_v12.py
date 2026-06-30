@@ -219,6 +219,26 @@ def test_pairing_flag_skipped_when_any_use_is_grounded():
     assert "(pairing unverified)" not in out
 
 
+def test_flag_does_not_break_markdown_links():
+    """v1.10 regression: when a flagged URL is a markdown-link TARGET [t](url),
+    the flag must land AFTER the closing ')', never spliced inside it (which used
+    to produce ](url (pairing unverified)) and break the link)."""
+    fact_map = {"https://t.com/x": ["totally unrelated grounding fact"]}
+    text = "Tickets are on sale ([Ticketmaster](https://t.com/x))."
+    out = Sherlock._flag_mispaired_citations(text, fact_map)
+    # link target stays intact; flag rides outside the markdown parens
+    assert "[Ticketmaster](https://t.com/x)" in out
+    assert "](https://t.com/x (pairing unverified))" not in out
+    assert "(pairing unverified)" in out
+    # same guarantee for the unverified (unknown-URL) flagger
+    out2, bad = Sherlock._flag_unverified_citations(
+        "See [LiveNation](https://invented.example/y).", {"https://known.com/a"}
+    )
+    assert "[LiveNation](https://invented.example/y)" in out2
+    assert "](https://invented.example/y (unverified))" not in out2
+    assert "(unverified)" in out2
+
+
 # ------------------------------------------------------------ honesty line
 
 

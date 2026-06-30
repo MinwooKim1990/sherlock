@@ -495,6 +495,24 @@ def _token_jaccard(a: frozenset, b: frozenset) -> float:
     return len(a & b) / len(a | b)
 
 
+def _append_citation_flag(text: str, url: str, flag: str) -> str:
+    """Append an inline citation flag (e.g. ' (unverified)') after every
+    occurrence of ``url`` WITHOUT breaking syntax:
+      • markdown link target ``[t](url)`` → ``[t](url){flag}`` — flag goes AFTER
+        the closing ')', never spliced inside it (which would break the link);
+      • bare / paren-wrapped URL ``… url …`` → ``… url{flag} …``.
+    Boundary-aware: a URL that is a prefix of a longer cited URL is never spliced
+    into, and a markdown target (handled first) is never double-tagged by the bare
+    pass (negative lookbehind for ``](``)."""
+    esc = re.escape(url)
+    # 1) markdown-link target — place the flag after the link's closing paren.
+    text = re.sub(r"\]\(" + esc + r"\)", "](" + url + ")" + flag, text)
+    # 2) bare URL at its true end, but NOT one that is a markdown target (already
+    #    handled) — the lookbehind stops the in-paren splice that broke links.
+    text = re.sub(r"(?<!\]\()" + esc + r"(?![^\s)\]>'\"»])", url + flag, text)
+    return text
+
+
 def _research_date_line() -> str:
     """v1.2: every deep-research prompt carries TODAY — 'this year'/'올해' must
     resolve against the real date, not the model's training-data instincts
@@ -3180,11 +3198,9 @@ class Sherlock:
                     ok[key] = True
         for u in seen:
             if not ok.get(_norm(u)) and "(unverified)" not in u:
-                # Boundary-aware (see _flag_unverified_citations): never splice the
-                # flag into a longer URL this one is a prefix of.
-                text = re.sub(
-                    re.escape(u) + r"(?![^\s)\]>'\"»])", u + " (pairing unverified)", text
-                )
+                # Boundary-aware + markdown-safe (see _append_citation_flag): never
+                # splice into a longer URL this is a prefix of, nor inside [t](url).
+                text = _append_citation_flag(text, u, " (pairing unverified)")
         return text
 
     def _synthesize_with_raw_fragments(
@@ -3450,10 +3466,11 @@ class Sherlock:
         cited = set(re.findall(r"https?://[^\s)\]>'\"»]+", text or ""))
         bad = sorted(u for u in cited if _norm(u) not in known)
         for u in bad:
-            # Boundary-aware: a URL that is a PREFIX of a longer cited URL
-            # (…/2026_FIFA_World_Cup vs …_Group_A) must not get its flag spliced
-            # INTO the longer one. Only tag the URL at its true end.
-            text = re.sub(re.escape(u) + r"(?![^\s)\]>'\"»])", u + " (unverified)", text)
+            # Boundary-aware + markdown-safe (see _append_citation_flag): a URL that
+            # is a PREFIX of a longer cited URL (…/2026_FIFA_World_Cup vs …_Group_A)
+            # must not get its flag spliced into the longer one, and a markdown link
+            # target [t](url) gets the flag AFTER the ')' so the link stays intact.
+            text = _append_citation_flag(text, u, " (unverified)")
         return text, bad
 
     def _verify_report_faithfulness(
