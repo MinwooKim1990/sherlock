@@ -97,6 +97,28 @@ def test_needs_web_collected(tmp_path):
     assert len(flag) == 1 and flag[0]["claim"] == "Sep 11-13"
 
 
+def test_needs_web_claim_kept_intact_for_web_pass(tmp_path):
+    # a needs_web claim that ALSO carries a fix must NOT be locally rewritten — the span
+    # has to survive verbatim so the LLM-3 web pass can re-match it (else web checked=0).
+    report = "IVE plays Hong Kong on Sep 11-13."
+    a = _agent(
+        _fake(
+            [
+                {
+                    "claim": "Sep 11-13",
+                    "issue": "unsupported",
+                    "fix": "Sep 4-6",  # tentative, but raw can't settle it → web is authority
+                    "needs_web": True,
+                }
+            ]
+        ),
+        tmp_path,
+    )
+    out, flag = a._verify_report_faithfulness(report, _RAW, "t", "r")
+    assert out == report, "needs_web claim must stay verbatim for the web pass"
+    assert len(flag) == 1 and flag[0]["claim"] == "Sep 11-13"
+
+
 # -------------------------------------------------------------------- e2e gate
 def _emain(prompts):
     def m(messages):

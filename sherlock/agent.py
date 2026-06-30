@@ -3559,9 +3559,14 @@ class Sherlock:
                 if not claim or claim not in out:  # verbatim-span match only
                     continue
                 if fx.get("needs_web"):
+                    # Keep this claim's span INTACT and let the optional LLM-3 web pass
+                    # settle it — the raw can't, so a local rewrite here would only move
+                    # the span out from under the web pass (it re-matches verbatim →
+                    # checked=0). The web pass is the authority for needs_web claims.
                     flagged.append(
                         {"claim": claim, "raw_says": str(fx.get("raw_says") or ""), "sub": sub}
                     )
+                    continue
                 fix = str(fx.get("fix") or "").strip()
                 # NON-DESTRUCTIVE: apply genuine CORRECTIONS only. Never delete — a weak
                 # per-group verifier false-flags "unsupported" too often (a claim may be
