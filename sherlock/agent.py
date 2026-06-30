@@ -2380,11 +2380,14 @@ class Sherlock:
                     except Exception:
                         pass
 
-            # v1.10: even on a RICH round (the thin-fetch above didn't run), grab the
-            # top hit ONCE to harvest its og:image (+date) — image acquisition was
-            # otherwise coupled to thin-round fetches, so rich queries got no image.
+            # v1.10: from round 2 on, even a RICH round (the thin-fetch above didn't
+            # fire) grabs the top hit ONCE to harvest its og:image (+date) — image
+            # acquisition was otherwise coupled to thin-round fetches, so rich queries
+            # got no image. Deferring to round 2 matches the existing fetch discipline
+            # (round 1 is the broad sweep) and keeps round-1-only runs network-free.
             if (
-                getattr(self.config.search, "deep_research_fetch_image", True)
+                rnd >= 2
+                and getattr(self.config.search, "deep_research_fetch_image", True)
                 and not fetched
                 and shown
             ):
@@ -2737,6 +2740,10 @@ class Sherlock:
             turn_index,
             final=True,
         )
+        # v1.10 (opt-in): persist this run's raw fragments to SQLite for post-hoc
+        # recall (NOT needed for verify — raw is in-memory at the verify slot above).
+        if getattr(self.config.search, "deep_research_persist_raw", False):
+            self._write_research_raw(conv_id, research_id, topic, state, turn_index)
         self._emit(
             "deep_research.documents",
             "system",
@@ -3015,6 +3022,49 @@ class Sherlock:
             "sufficient": False,
             "next_queries": [],
         }
+
+    def _write_research_raw(
+        self, conv_id: str, research_id: str, topic: str, state: dict, turn_index: int
+    ) -> None:
+        """v1.10 (opt-in deep_research_persist_raw): persist this run's raw fragments
+        to SQLite (MemoryType.DEEP_RESEARCH_RAW, pinned, tagged by research_id) for
+        post-hoc recall. NOT used by the verify pass (which reads in-memory state) —
+        this is purely so the gathered raw can be retrieved/queried later. Capped +
+        best-effort; never raises."""
+        try:
+            import json as _json
+
+            frags = (state or {}).get("raw_fragments_global") or []
+            if not frags:
+                return
+            payload = [
+                {
+                    "url": f.get("url", ""),
+                    "title": f.get("title", ""),
+                    "date": f.get("date", ""),
+                    "image": f.get("image", ""),
+                    "text": (f.get("text") or "")[:1500],
+                }
+                for f in frags[:60]
+                if isinstance(f, dict)
+            ]
+            content = f"[deep_research_raw:{research_id}] {topic}\n" + _json.dumps(
+                {"research_id": research_id, "topic": topic, "fragments": payload}, default=str
+            )
+            with self._mem_lock:
+                self._memory.add(
+                    conversation_id=conv_id,
+                    content=content,
+                    type=MemoryType.DEEP_RESEARCH_RAW,
+                    source=MemorySource.SEARCH,
+                    confidence=0.5,
+                    last_used_turn_index=turn_index,
+                    tags=f"deep_research_raw,{research_id}",
+                    dedup=False,
+                    pinned=True,
+                )
+        except Exception:
+            pass
 
     def _write_research_doc(
         self,

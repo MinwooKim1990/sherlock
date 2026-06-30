@@ -555,7 +555,10 @@ class MemoryStore:
             # they neither count against the cap nor get demoted by it.
             # v1.0: superseded rows are frozen and never count either.
             pinned = [
-                p for p in pinned if p.type != MemoryType.DEEP_RESEARCH and not p.superseded_by
+                p
+                for p in pinned
+                if p.type not in (MemoryType.DEEP_RESEARCH, MemoryType.DEEP_RESEARCH_RAW)
+                and not p.superseded_by
             ]
             if len(pinned) <= max_pinned:
                 return 0

@@ -21,6 +21,9 @@ class MemoryType(str, Enum):
     USER_UTTERANCE = "user_utterance"
     SUMMARY = "summary"  # added to capture LLM-2 summaries (SPEC implies summary persistence)
     DEEP_RESEARCH = "deep_research"  # v0.7: per-round deep-research session documents
+    DEEP_RESEARCH_RAW = (
+        "deep_research_raw"  # v1.10: opt-in retained raw fragments (post-hoc recall)
+    )
 
 
 class MemoryState(str, Enum):
