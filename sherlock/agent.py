@@ -3512,12 +3512,14 @@ class Sherlock:
                 "- unsupported: a claim with NO support in the raw\n"
                 "Judge FAITHFULNESS-TO-SOURCES only — NOT world-truth, NOT format, NOT "
                 "which sources were used. Each `claim` MUST be copied verbatim from the "
-                "report. `fix` = corrected text grounded in the raw, or 'remove'. "
+                "report. `fix` = the corrected text grounded in the raw. Do NOT delete "
+                "content — only CORRECT what is demonstrably wrong; leave anything you "
+                "cannot confidently correct (flag it with needs_web instead). "
                 "`needs_web`=true ONLY when the raw cannot settle it and a fresh web "
                 "lookup would.\n"
                 'Return STRICT JSON: {"fixes": [{"claim": "<verbatim report span>", '
                 '"issue": "misextraction|contradiction|unsupported", "raw_says": "...", '
-                '"fix": "<corrected text or remove>", "needs_web": true|false}]}. '
+                '"fix": "<corrected text grounded in the raw>", "needs_web": true|false}]}. '
                 'If faithful, return {"fixes": []}. JSON only.'
             )
             try:
@@ -3539,9 +3541,13 @@ class Sherlock:
                         {"claim": claim, "raw_says": str(fx.get("raw_says") or ""), "sub": sub}
                     )
                 fix = str(fx.get("fix") or "").strip()
-                if not fix:
+                # NON-DESTRUCTIVE: apply genuine CORRECTIONS only. Never delete — a weak
+                # per-group verifier false-flags "unsupported" too often (a claim may be
+                # backed by another group's raw or a snippet), and deleting would gut
+                # good content. Leave anything it can't correctly fix (needs_web carries it).
+                if not fix or fix.lower() == "remove" or fix == claim:
                     continue
-                out = out.replace(claim, "" if fix.lower() == "remove" else fix)
+                out = out.replace(claim, fix)
                 applied += 1
                 if applied >= max_apply:
                     break
