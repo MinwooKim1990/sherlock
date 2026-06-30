@@ -259,12 +259,15 @@ class SearchConfig(BaseModel):
     # This fetches the top hit ONCE per round (only if nothing else was fetched) to
     # grab its og:image (+date); failures are swallowed.
     deep_research_fetch_image: bool = True
-    # v1.10 — LLM-2 faithfulness verify (the accuracy core). After the v3 editor, a
-    # SEPARATE cross-model pass re-reads the report against the gathered RAW (per
-    # sub-topic) and fixes mis-extractions (report says X, raw says Y) + contradictions
-    # the same-model editor misses — verbatim-span fixes only, capped, 0.3 shrink guard.
-    # "off" = skip (byte-identical). "faithfulness" = the no-web check (default).
-    # "faithfulness+web" = ALSO re-verify the FEW flagged claims via LLM-3 web search.
+    # v1.10 — LLM-2 verify (the accuracy core). After the v3 editor, a SEPARATE
+    # cross-model pass re-reads the report against the gathered RAW (per sub-topic) and
+    # fixes mis-extractions (report says X, raw says Y) + contradictions the same-model
+    # editor misses — verbatim-span fixes only, NON-DESTRUCTIVE (corrects, never deletes),
+    # capped, 0.3 shrink guard. It then runs a FINAL whole-report consistency sweep that
+    # reconciles any fact stated two ways across SECTIONS (a date, a name, a yes/no) to
+    # one value (사실의 통일성). "off" = skip both (byte-identical). "faithfulness" = the
+    # no-web check + consistency sweep (default). "faithfulness+web" = ALSO re-verify the
+    # FEW remaining flagged claims via LLM-3 web search before the consistency sweep.
     deep_research_verify: Literal["off", "faithfulness", "faithfulness+web"] = "faithfulness"
     # v1.10 — cap on how many faithfulness-flagged claims the "faithfulness+web" tier
     # re-verifies via LLM-3 web search (the FEW, per design — bounds latency/cost).

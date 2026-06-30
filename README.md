@@ -718,6 +718,45 @@ caching, deep-research trust, memory reconciliation — lives in
 
 ## Changelog highlights
 
+### v1.10 — deep-research accuracy layer (all three LLMs, default ON)
+The whole point of deep research is to be *right*. A live eval (small model:
+gemini-3.1-flash-lite for all three roles) found the well-formatted report was only
+~45–74% accurate, so this release wires the gather → cross-verify → consistent-result
+design we always intended — giving each LLM its proper role. Guardrails are scoped to
+**anti-hallucination + factual consistency ONLY**; format / length / structure /
+source-choice stay fully the model's call.
+- **LLM-2 faithfulness verify** (`deep_research_verify="faithfulness"`, default): after
+  the v3 editor, a SEPARATE cross-model pass re-reads the report against the gathered
+  **raw** (per sub-topic, not the facts — that would be circular) and fixes
+  mis-extractions (report says X, raw says Y) + contradictions the same-model editor
+  misses. **Non-destructive** — it corrects, never deletes (a weak verifier that deletes
+  guts the report); verbatim-span match only, capped, 0.3 shrink guard.
+- **Whole-report consistency sweep** (same flag): a final LLM-2 pass reconciles any fact
+  stated two ways across **sections** (a date as Sep 4-5 here / Sep 4-6 there, a tour
+  name two ways, a yes/no answered both ways) to one best-supported value (사실의 통일성).
+- **LLM-3 web re-check** (opt-in, `deep_research_verify="faithfulness+web"`): re-verifies
+  only the FEW claims the raw couldn't settle via a fresh web search →
+  confirmed / corrected / `[unverified]` (never a silent overwrite). Capped by
+  `deep_research_web_recheck_max` (3).
+- **Structured per-entity extraction** (`deep_research_structured_extraction`, default ON):
+  each fact may carry an `entity` + `attrs` so a bound attribute (a date, a score) stays
+  welded to *its* entity — stops small-model entity-binding swaps (the IVE city↔date bug).
+- **Freshness** (`deep_research_freshness`, default ON): every source's reported date is
+  captured (DDG/Tavily/Brave/Valyu + page fetch) and surfaced to the model so it can
+  prefer the freshest source and flag stale-as-current. Dates stay opaque strings —
+  nothing is parsed or dropped in code.
+- **Images on rich rounds** (`deep_research_fetch_image`, default ON): harvest a lead
+  `og:image` once per round even when the round wasn't thin.
+- **Citation links fixed**: the `(unverified)` / `(pairing unverified)` flag is now placed
+  *after* a markdown link's `)` instead of being spliced inside the URL (which broke the
+  link). Bare/paren URLs unchanged, prefix-safe.
+- **Raw persistence** (`deep_research_persist_raw`, **default OFF**): opt-in SQLite store
+  of a run's raw fragments for post-hoc recall ("what else did you find?"). Storage
+  growth, not accuracy — off by default.
+- Every flag's `off`/`"off"` value is **byte-identical** to prior behavior. Live eval
+  result: truthfulness rose (~45% → ~74%) and the cross-section self-contradictions and
+  broken links were eliminated.
+
 ### v1.4 — cache-optimal slot, fill-based compaction, companion cascade
 - **Cache-optimal reordering**: the volatile this-turn block (inference + search)
   moved out of the system message to the *final* user message, so the system
