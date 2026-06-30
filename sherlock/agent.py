@@ -2733,6 +2733,11 @@ class Sherlock:
                 and _flagged
             ):
                 answer = self._web_recheck_flagged(answer, _flagged, topic, research_id)
+            # v1.10 FINAL consistency sweep (LLM-2): the per-group faithfulness pass
+            # sees one sub-topic's raw at a time, so a fact stated two ways in two
+            # SECTIONS (a date, a tour name, a yes/no) survives. This whole-report pass
+            # makes the report agree with ITSELF — factual consistency only, run last.
+            answer = self._reconcile_report_consistency(answer, topic, research_id)
         if stop_reason == "search_engine_error":
             if not state["confirmed_facts"]:
                 answer = (
@@ -3582,6 +3587,72 @@ class Sherlock:
         if len(out) < 0.3 * len(report):  # shrink guard — a runaway must not gut it
             return report, flagged
         return out, flagged
+
+    def _reconcile_report_consistency(self, report: str, topic: str, research_id: str = "") -> str:
+        """v1.10 FINAL consistency sweep (LLM-2 librarian). The per-group faithfulness
+        pass sees ONE sub-topic's raw at a time, so a fact stated two different ways in
+        two different SECTIONS (a date as Sep 4-5 here / Sep 4-6 there, a tour name two
+        ways, an event in the summary table but not the detail, a yes/no answered both
+        ways) slips through. This single whole-report pass makes the report agree with
+        ITSELF — reconciling each internal contradiction to the ONE best-supported value.
+        Factual consistency (사실의 통일성) ONLY: never touches formatting, length, section
+        structure, source choice, or world-truth. Non-destructive (rewrites only the
+        inconsistent span, verbatim-matched), shrink-guarded, best-effort → returns the
+        report unchanged on any failure or missing provider."""
+        if not (report or "").strip():
+            return report
+        provider = self._summary_provider or self._provider
+        if provider is None:
+            return report
+        from sherlock.jsonish import chat_json_with_retry
+
+        prompt = (
+            f"You are the CONSISTENCY checker for a research report on: {topic}\n\n"
+            f"REPORT:\n{report}\n\n"
+            "This report may state the SAME fact in DIFFERENT ways in different places — "
+            "e.g. a date given as Sep 4-5 in one section and Sep 4-6 in another, an event "
+            "listed in a summary table but described differently (or omitted) in the "
+            "detail, a name/title spelled two ways, or a yes/no answered both ways. Find "
+            "every INTERNAL CONTRADICTION (the report disagreeing with ITSELF) and "
+            "reconcile each to ONE value — keep the MOST SPECIFIC, BEST-CITED version and "
+            "rewrite the other occurrence(s) to match it.\n"
+            "Reconcile FACTUAL CONSISTENCY ONLY. Do NOT touch formatting, length, section "
+            "structure, or which sources are cited; do NOT check world-truth; do NOT "
+            "delete content — only rewrite the inconsistent span so it agrees. Each "
+            "`wrong` MUST be copied verbatim from the report.\n"
+            'Return STRICT JSON: {"fixes": [{"issue": "<what disagreed>", "wrong": '
+            '"<verbatim span to replace>", "right": "<replacement that agrees with the '
+            'rest>"}]}. If already self-consistent, return {"fixes": []}. JSON only.'
+        )
+        try:
+            parsed, _ = chat_json_with_retry(
+                provider, [ChatMessage(role="user", content=prompt)], want=dict
+            )
+        except Exception:
+            return report
+        if not isinstance(parsed, dict):
+            return report
+        out = report
+        applied = 0
+        for fx in (parsed.get("fixes") or [])[:8]:
+            if not isinstance(fx, dict):
+                continue
+            wrong = str(fx.get("wrong") or "").strip()
+            right = str(fx.get("right") or "").strip()
+            # verbatim-span match only; never a no-op or a deletion
+            if not wrong or not right or wrong == right or wrong not in out:
+                continue
+            out = out.replace(wrong, right)
+            applied += 1
+        out = out.strip() or report
+        self._emit(
+            "deep_research.consistency",
+            "llm2",
+            {"research_id": research_id, "reconciled": applied},
+        )
+        if len(out) < 0.3 * len(report):  # shrink guard — never gut the report
+            return report
+        return out
 
     def _web_recheck_flagged(
         self, report: str, flagged: list[dict], topic: str, research_id: str = ""
