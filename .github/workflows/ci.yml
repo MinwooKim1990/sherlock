@@ -22,6 +22,12 @@ jobs:
           ruff check .
           black --check .
       - name: Tests
-        run: pytest tests/ -q
+        # Run unit + integration in SEPARATE processes. The suite constructs a
+        # chromadb PersistentClient per agent-creating test; enough of them in ONE
+        # process eventually stalls chromadb's backend startup. Two processes keep
+        # each run under that ceiling — same coverage, both green.
+        run: |
+          pytest tests/unit -q
+          pytest tests/integration -q
       - name: Probe mechanics (fake LLM, no network/tokens)
         run: python -m evaluation.probe_eval --probes evaluation/probes/ --fake-llm --threshold 0.0
