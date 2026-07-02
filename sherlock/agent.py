@@ -1429,8 +1429,16 @@ class Sherlock:
             from sherlock.security.redaction import redact
 
             return redact(text)
-        except Exception:
-            return text
+        except Exception as exc:
+            # FAIL-CLOSED: a redactor crash must NOT let the raw text (which may hold
+            # exactly the secret the redactor would have masked) reach long-term
+            # memory/RAG. Withhold the content and surface the failure instead.
+            self._emit(
+                "memory.redaction_failed",
+                "system",
+                {"error": f"{type(exc).__name__}: {exc}", "chars": len(text or "")},
+            )
+            return "[redaction unavailable — content withheld]"
 
     def _persist_freshness_results(
         self, conv_id: str, topic: str, hits: list[dict], turn_index: int
@@ -1677,7 +1685,12 @@ class Sherlock:
                 },
             )
             return strategy
-        except Exception:
+        except Exception as exc:
+            self._emit(
+                "deep_research.strategy_failed",
+                "llm1",
+                {"topic": topic, "error": f"{type(exc).__name__}: {exc}"},
+            )
             return {}
 
     @staticmethod
@@ -3524,9 +3537,22 @@ class Sherlock:
             return report, []
         raw_by_sub = (state or {}).get("raw_fragments_by_subtopic") or {}
         if not raw_by_sub:
-            return report, []  # no raw to check against → no-op (facts would be circular)
+            # no raw to check against → no-op (facts would be circular). Surface WHY,
+            # since this silently disables the whole accuracy layer (e.g. when
+            # deep_research_reconstruct_from_raw is off).
+            self._emit(
+                "deep_research.verify_skipped",
+                "system",
+                {"research_id": research_id, "stage": "faithfulness", "reason": "no_raw"},
+            )
+            return report, []
         provider = self._summary_provider or self._provider
         if provider is None:
+            self._emit(
+                "deep_research.verify_skipped",
+                "system",
+                {"research_id": research_id, "stage": "faithfulness", "reason": "no_provider"},
+            )
             return report, []
         from sherlock.jsonish import chat_json_with_retry
 
@@ -3648,6 +3674,11 @@ class Sherlock:
             return report
         provider = self._summary_provider or self._provider
         if provider is None:
+            self._emit(
+                "deep_research.verify_skipped",
+                "system",
+                {"research_id": research_id, "stage": "consistency", "reason": "no_provider"},
+            )
             return report
         from sherlock.jsonish import chat_json_with_retry
 
@@ -3719,6 +3750,16 @@ class Sherlock:
         engine = self._inference_search_engine or self._search
         provider = self._inference_provider or self._provider
         if engine is None or provider is None or not flagged:
+            if flagged:  # there WAS something to re-check but we can't → say why
+                self._emit(
+                    "deep_research.verify_skipped",
+                    "system",
+                    {
+                        "research_id": research_id,
+                        "stage": "web_recheck",
+                        "reason": "no_engine" if engine is None else "no_provider",
+                    },
+                )
             return report
         from sherlock.jsonish import chat_json_with_retry
 
@@ -4469,6 +4510,11 @@ class Sherlock:
                     # v1.6: carry worth_digging/predicted_directions to next turn's gate.
                     self._prev_summary_result = summary_result
             except Exception as exc:
+                self._emit(
+                    "compact.error",
+                    "llm2",
+                    {"turn": turn_index, "error": f"{type(exc).__name__}: {exc}"},
+                )
                 import sys
 
                 print(
@@ -4568,6 +4614,11 @@ class Sherlock:
                             if nb:
                                 self._pending_notebook = nb
             except Exception as exc:
+                self._emit(
+                    "infer.error",
+                    "llm3",
+                    {"turn": turn_index, "error": f"{type(exc).__name__}: {exc}"},
+                )
                 import sys
 
                 print(
@@ -5006,7 +5057,14 @@ class Sherlock:
                 else set()
             )
             return [c for i, c in enumerate(candidates) if i in idxs]
-        except Exception:
+        except Exception as exc:
+            # Fail-OPEN by design (keep code candidates), but surface it so a
+            # persistently-failing LLM-2 confirm doesn't look like "no conflicts".
+            self._emit(
+                "memory.consistency_confirm_error",
+                "llm2",
+                {"error": f"{type(exc).__name__}: {exc}", "candidates": len(candidates)},
+            )
             return candidates
 
     @staticmethod
@@ -6331,8 +6389,12 @@ class Sherlock:
                 if isinstance(summary_result, dict):
                     self._emit("compact.done", "llm2", dict(summary_result))
                     self._prev_summary_result = summary_result  # v1.6 gate signal
-            except Exception:
-                pass
+            except Exception as exc:
+                self._emit(
+                    "compact.error",
+                    "llm2",
+                    {"turn": turn_index, "error": f"{type(exc).__name__}: {exc}"},
+                )
 
         # v1.4 LLM-2 → LLM-3 cascade (parity): if compaction surfaced forward-looking
         # threads (worth_digging / predicted_directions), force an inference even when
@@ -6423,8 +6485,12 @@ class Sherlock:
                             )
                             if nb:
                                 self._pending_notebook = nb
-            except Exception:
-                pass
+            except Exception as exc:
+                self._emit(
+                    "infer.error",
+                    "llm3",
+                    {"turn": turn_index, "error": f"{type(exc).__name__}: {exc}"},
+                )
 
         # 8. Decay (uses this turn's hypotheses). Compaction already ran above (so the
         #    cascade could fire), so decay runs after inference — matching sync order.
