@@ -76,6 +76,29 @@ search:
   # installed Sherlock falls back to plain truncation (zero behavior change).
   # deep_research_compress: true
 
+  # ── Deep research — the multi-round research pipeline. Every accuracy feature
+  # below is ON by default and byte-identical when off; uncomment to override.
+  # Event stream (deep_research.*, verify_skipped, …) is documented in docs/EVENTS.md.
+  #
+  # LLM-2 accuracy layer: after synthesis the report is re-read against the gathered
+  # RAW and mis-extractions/contradictions are CORRECTED (non-destructive), then a
+  # whole-report consistency sweep reconciles cross-section disagreements.
+  #   off               = skip the accuracy pass entirely
+  #   faithfulness      = the no-web report-vs-raw check + consistency sweep (default)
+  #   faithfulness+web  = ALSO re-verify the few flagged claims via an LLM-3 web search
+  # deep_research_verify: faithfulness
+  # deep_research_web_recheck_max: 3           # cap on claims the +web tier re-checks
+  #
+  # deep_research_parallel_search: true        # v1.11 — run a round's searches concurrently
+  #                                            #   (results collected in query order → identical)
+  # deep_research_structured_extraction: true  # per-entity {entity, attrs} extraction
+  # deep_research_freshness: true              # surface source dates so the model prefers fresh
+  # deep_research_fetch_image: true            # harvest a lead image even on info-rich rounds
+  # deep_research_reconstruct_from_raw: true   # re-read raw at synthesis — the verify layer
+  #                                            #   checks against this; OFF disables verify too
+  # deep_research_persist_raw: false           # persist raw fragments to SQLite for later recall
+  # deep_research_v3: true                     # the same-model editor pass that runs before verify
+
 # Companion gating (v1.6) — decides per turn whether the BACKGROUND brain
 # (LLM-2 compaction, LLM-3 inference) wakes up. LLM-1 always answers, so this
 # never delays the user's reply; it only spends companion tokens when a real

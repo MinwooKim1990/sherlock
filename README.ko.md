@@ -715,6 +715,27 @@ Sherlock는 공짜가 아니며, 우리는 아닌 척하지 않습니다. 자체
 
 ## 변경 이력 하이라이트
 
+### v1.11 — 감사 기반 하드닝: 정확성 수정 · 병렬 검색 · 관측성
+v1.10을 5개 에이전트로 감사한 결과를 반영한 유지보수 릴리스입니다. 정확도 기본값은 그대로이며,
+모든 플래그의 off 상태는 바이트 동일합니다.
+- **정확성 수정:** `__version__`이 `pyproject`를 추적합니다(PyPI에 1.7.0으로 3개 릴리스간 잘못
+  표기됐던 것 — 이제 테스트로 고정). coverage-steer 갭 쿼리가 다음 라운드에 실제로 검색됩니다
+  (예전엔 `queries[:3]`에 잘려 이벤트만 나가고 검색되지 않음). DR 토큰 계측이 v1.10 검증 체인
+  전체(editor / faithfulness / consistency / web-recheck)를 포함하고 최종 `deep_research.tokens`
+  합계를 냅니다. LLM-3 인퍼런스 검색에 타임아웃을 적용해 엔진이 멈춰도 백그라운드 워커가 막히지 않습니다.
+- **병렬 검색**(`deep_research_parallel_search`, 기본 ON): 한 라운드의 독립 쿼리를 전용 풀에서
+  동시 실행하고 결과를 쿼리 순서로 수집 → 리포트는 직렬과 **바이트 동일**하고 벽시계만 단축됩니다
+  (라운드1 스윕 ≈÷6). OFF는 기존 직렬 루프 그대로입니다.
+- **관측성:** 조용히 삼켜지던 실패가 이제 이벤트로 노출됩니다 — `compact.error` / `infer.error`
+  (비동기 컴패니언이 실패 시 완전 무음이었음), `deep_research.strategy_failed`,
+  `deep_research.verify_skipped {stage, reason}`로 정확도 레이어 비활성화가 보입니다.
+  **redaction은 이제 fail-closed:** 리댁터 크래시 시 원문(시크릿 포함 가능)을 메모리에 쓰지 않고
+  내용을 보류합니다(`memory.redaction_failed`).
+- **Playground + 문서:** 라이브 **Verify** 티어 토글(`off` / `faithfulness` / `faithfulness+web`,
+  `POST /api/verify`)과 faithfulness / consistency / web-recheck / verify-skipped /
+  coverage-steer 이벤트의 Flow 로그 렌더링 — 정확도 레이어가 드디어 보이고 A/B가 가능합니다. 새
+  [`docs/EVENTS.md`](docs/EVENTS.md)가 전체 이벤트 스트림과 3-LLM 역할 모델을 문서화합니다.
+
 ### v1.10 — 심층 리서치 정확도 레이어 (LLM 3개 모두, 기본 ON)
 심층 리서치의 핵심은 *맞는 정보*를 주는 것입니다. 라이브 평가(작은 모델: gemini-3.1-flash-lite를
 세 역할 모두에 사용)에서 보기 좋게 포맷된 보고서의 정확도가 ~45–74%에 그쳐, 원래 의도했던

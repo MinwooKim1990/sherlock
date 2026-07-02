@@ -718,6 +718,31 @@ caching, deep-research trust, memory reconciliation — lives in
 
 ## Changelog highlights
 
+### v1.11 — audit hardening: correctness fixes, parallel search, observability
+A five-agent audit of v1.10 drove this maintenance release. No accuracy defaults
+change; every flag's off-state stays byte-identical.
+- **Correctness fixes:** `__version__` now tracks `pyproject` (was stuck at 1.7.0 on
+  PyPI — now guarded by a test); coverage-steer gap queries actually run the next round
+  (were sliced off by `queries[:3]`, so the event fired but never searched); deep-research
+  token accounting now covers the whole v1.10 verify chain (editor / faithfulness /
+  consistency / web-recheck) with a final `deep_research.tokens` total; the LLM-3
+  inference search is timeout-bounded so a hung engine can't wedge the background worker.
+- **Parallel search** (`deep_research_parallel_search`, default ON): a research round's
+  independent queries run concurrently on a dedicated pool; results are collected in query
+  order so the report is **byte-identical** to serial — only wall-clock shrinks (round-1
+  sweep ≈÷6). OFF = the exact serial loop.
+- **Observability:** previously-silent failures now emit events — `compact.error` /
+  `infer.error` (the async companions were fully silent on failure),
+  `deep_research.strategy_failed`, and `deep_research.verify_skipped {stage, reason}` so a
+  disabled accuracy layer is visible. **Redaction is now fail-closed:** a redactor crash
+  withholds the content (`memory.redaction_failed`) instead of writing the raw,
+  possibly-secret text into memory.
+- **Playground + docs:** a live **Verify** tier toggle (`off` / `faithfulness` /
+  `faithfulness+web`, `POST /api/verify`) and Flow-log rendering for the faithfulness /
+  consistency / web-recheck / verify-skipped / coverage-steer events — the accuracy layer
+  is finally visible and A/B-able. New [`docs/EVENTS.md`](docs/EVENTS.md) documents the
+  full event stream + the three-LLM role model.
+
 ### v1.10 — deep-research accuracy layer (all three LLMs, default ON)
 The whole point of deep research is to be *right*. A live eval (small model:
 gemini-3.1-flash-lite for all three roles) found the well-formatted report was only
