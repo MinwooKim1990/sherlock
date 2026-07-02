@@ -225,6 +225,9 @@ class SearchConfig(BaseModel):
     # small model under-extracted into "facts" that round. Off → exact v1.3
     # facts-only synthesis. The raw bucket per section is capped (below), so this
     # adds recovery without unbounded prompts.
+    # NOTE: the v1.10 verify layer (deep_research_verify) checks the report against
+    # this RAW; turning reconstruct_from_raw OFF therefore ALSO disables faithfulness
+    # verification (no raw to check against → the pass no-ops), even with verify set.
     deep_research_reconstruct_from_raw: bool = True
     deep_research_raw_char_budget: int = 8000  # per-section deduped raw cap
     # v1.4: let the strategy expand each sub-topic into a "what we need to know"

@@ -55,6 +55,9 @@ def test_provider_init_mirrors_key_to_litellm_env(monkeypatch: pytest.MonkeyPatc
     import os
 
     assert os.environ["DEEPINFRA_API_KEY"] == "sk-di-xyz"
+    # The provider mirrors the key via a DIRECT os.environ write (not monkeypatch),
+    # so clean it up explicitly to not leak "sk-di-xyz" into later tests.
+    monkeypatch.delenv("DEEPINFRA_API_KEY", raising=False)
 
 
 # ---------- playground path --------------------------------------------------

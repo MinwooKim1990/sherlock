@@ -74,7 +74,7 @@ search:
   # tokens inside each page, never restricts which results/pages are used.
   # Requires `pip install "sherlock-context[compress]"`; without the extra
   # installed Sherlock falls back to plain truncation (zero behavior change).
-  # compress_fetched: true
+  # deep_research_compress: true
 
 # Companion gating (v1.6) — decides per turn whether the BACKGROUND brain
 # (LLM-2 compaction, LLM-3 inference) wakes up. LLM-1 always answers, so this

@@ -1495,6 +1495,7 @@ class Sherlock:
         rpr = int(getattr(self.config.inference, "search_results_per_round", 4))
         max_rounds = int(getattr(self.config.inference, "max_search_rounds", 10))
         max_rounds = max(1, min(max_rounds, 10))  # hard ceiling per spec
+        timeout_s = float(getattr(self.config.execution, "tool_timeout_s", 20.0))
         seen: set[str] = set()
         rounds_log: list[dict] = []
         empty_rounds = 0  # consecutive rounds that produced no usable hits
@@ -1507,7 +1508,9 @@ class Sherlock:
             seen.add(topic)
             rnd += 1
             try:
-                hits = infer_engine.search(topic, max_results=rpr)
+                # _bounded so a hung engine can't wedge the single-worker bg
+                # executor across turns (the DR loop already guards its searches).
+                hits = self._bounded(infer_engine.search, timeout_s, topic, max_results=rpr)
             except Exception:
                 hits = []
             # Drop engine error-payloads ({"error": ...}) at the source. They are
@@ -2296,7 +2299,6 @@ class Sherlock:
         engine_error_streak = 0
         stop_reason = "max_rounds"
         rnd = 0
-        run_queries: list[str] = []  # v1.9 (A): every query searched — for repeat-detection
         while rnd < max_rounds:
             rnd += 1
             # 1. search (snippets). Round 1 = wide multilingual sweep; later = narrow.
@@ -2320,7 +2322,6 @@ class Sherlock:
                     r.setdefault("_q", qi)
                     r.setdefault("_rank", rank)
                 hits.extend(good)
-            run_queries.extend(q for q in queries[:per_round] if q)  # v1.9 (A)
             if attempted:
                 engine_error_streak = engine_error_streak + 1 if failed == attempted else 0
             # else: a backlog-flush round (no searches) — keep the streak as-is
@@ -2656,7 +2657,10 @@ class Sherlock:
                     # The stall / fact-stall stops below stay the honest escape
                     # hatch when the missing pieces simply aren't out there.
                     steer = [q for q in (clean_query(u) for u in uncovered[:3]) if q]
-                    nxt = list(dict.fromkeys((nxt or []) + steer))[:6]
+                    # Steer FIRST: the next round searches only queries[:3] (per_round),
+                    # so gap-coverage queries must lead or they're sliced off and the
+                    # coverage_steer event fires with no actual search effect.
+                    nxt = list(dict.fromkeys(steer + (nxt or [])))[:6]
                     state["open_gaps"] = list(
                         dict.fromkeys((state.get("open_gaps") or []) + uncovered)
                     )
@@ -2738,6 +2742,15 @@ class Sherlock:
             # SECTIONS (a date, a tour name, a yes/no) survives. This whole-report pass
             # makes the report agree with ITSELF — factual consistency only, run last.
             answer = self._reconcile_report_consistency(answer, topic, research_id)
+        # The per-round deep_research.tokens events (inside the loop) fire BEFORE
+        # synthesis, so they never see the editor + v1.10 verify chain. Emit a FINAL
+        # total now that editor/faithfulness/consistency/web_recheck are accounted —
+        # otherwise token telemetry is blind to ~half of the run's cost.
+        self._emit(
+            "deep_research.tokens",
+            "system",
+            {"research_id": research_id, "round": rnd, "final": True, **self._dr_tok},
+        )
         if stop_reason == "search_engine_error":
             if not state["confirmed_facts"]:
                 answer = (
@@ -3503,6 +3516,7 @@ class Sherlock:
         budget = int(getattr(self.config.search, "deep_research_raw_char_budget", 8000))
         max_apply = 8
         applied = 0
+        groups = 0  # groups we actually ran an LLM check on (not just len(raw_by_sub))
         flagged: list[dict] = []
         out = report
         for sub, frags in list(raw_by_sub.items())[:8]:  # per group — MODERATE (~5 calls)
@@ -3544,9 +3558,18 @@ class Sherlock:
                 '"fix": "<corrected text grounded in the raw>", "needs_web": true|false}]}. '
                 'If faithful, return {"fixes": []}. JSON only.'
             )
+            groups += 1
             try:
                 parsed, _ = chat_json_with_retry(
-                    provider, [ChatMessage(role="user", content=prompt)], want=dict
+                    provider,
+                    [ChatMessage(role="user", content=prompt)],
+                    want=dict,
+                    on_usage=lambda r, _p=prompt: self._dr_account(
+                        getattr(r, "usage", None),
+                        "faithfulness",
+                        prompt=_p,
+                        text=getattr(r, "text", "") or "",
+                    ),
                 )
             except Exception:
                 continue
@@ -3584,7 +3607,7 @@ class Sherlock:
             "llm2",
             {
                 "research_id": research_id,
-                "groups_checked": len(raw_by_sub),
+                "groups_checked": groups,
                 "fixes_applied": applied,
                 "flagged_for_web": len(flagged),
             },
@@ -3631,7 +3654,15 @@ class Sherlock:
         )
         try:
             parsed, _ = chat_json_with_retry(
-                provider, [ChatMessage(role="user", content=prompt)], want=dict
+                provider,
+                [ChatMessage(role="user", content=prompt)],
+                want=dict,
+                on_usage=lambda r: self._dr_account(
+                    getattr(r, "usage", None),
+                    "consistency",
+                    prompt=prompt,
+                    text=getattr(r, "text", "") or "",
+                ),
             )
         except Exception:
             return report
@@ -3709,7 +3740,15 @@ class Sherlock:
             )
             try:
                 parsed, _ = chat_json_with_retry(
-                    provider, [ChatMessage(role="user", content=prompt)], want=dict
+                    provider,
+                    [ChatMessage(role="user", content=prompt)],
+                    want=dict,
+                    on_usage=lambda r, _p=prompt: self._dr_account(
+                        getattr(r, "usage", None),
+                        "web_recheck",
+                        prompt=_p,
+                        text=getattr(r, "text", "") or "",
+                    ),
                 )
             except Exception:
                 continue
@@ -3815,6 +3854,7 @@ class Sherlock:
             )
             resp = self._provider.chat([ChatMessage(role="user", content=prompt)])
             out = (getattr(resp, "text", "") or "").strip()
+            self._dr_account(getattr(resp, "usage", None), "editor", prompt=prompt, text=out)
             changed = bool(out and out != report.strip())
             self._emit(
                 "deep_research.verified",
