@@ -173,6 +173,14 @@
       </label>
       <label class="flex items-center gap-2"><input id="optBackground" type="checkbox" checked /> <span data-i18n="background">Background</span></label>
       <label class="flex items-center gap-2"><input id="optRedact" type="checkbox" checked /> <span data-i18n="redact">Redact secrets</span></label>
+      <label class="flex items-center gap-2" title="deep-research accuracy layer (LLM-2/LLM-3) — change live">
+        <b>🔎 <span data-i18n="verify">Verify</span></b>
+        <select id="verifyTier" class="border rounded-lg px-2 py-1 text-xs">
+          <option value="faithfulness" selected>faithfulness — report vs sources + consistency</option>
+          <option value="faithfulness+web">faithfulness+web — also re-check flagged via web</option>
+          <option value="off">off — no accuracy pass</option>
+        </select>
+      </label>
     </div>
 
     <div class="flex items-center gap-2 text-sm">

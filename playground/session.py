@@ -102,6 +102,13 @@ def build_agent(session: Session, system_prompt: str, settings: dict):
         # on signal pressure; "turbo" = the prior all-on; "off" = legacy.
         companions_mode=settings.get("companions_mode", "cold_start"),
     )
+    # v1.11: expose the deep-research VERIFY tier (off | faithfulness |
+    # faithfulness+web) so the accuracy layer can be A/B'd live in the playground.
+    # config.search.deep_research_verify is read fresh per research run; invalid
+    # values fall through to the library default ("faithfulness").
+    _vt = settings.get("deep_research_verify", "faithfulness")
+    if _vt in ("off", "faithfulness", "faithfulness+web"):
+        agent.config.search.deep_research_verify = _vt
     agent.set_event_sink(session.emit)
     session.agent = agent
     return agent

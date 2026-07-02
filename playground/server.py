@@ -319,6 +319,28 @@ async def api_background(req: BackgroundReq):
     return {"ok": True, "on": bool(req.on)}
 
 
+class VerifyReq(BaseModel):
+    session_id: str
+    tier: str  # off | faithfulness | faithfulness+web
+
+
+@app.post("/api/verify")
+async def api_verify(req: VerifyReq):
+    """Live-switch the deep-research VERIFY tier mid-session (takes effect on the
+    NEXT research run). config.search.deep_research_verify is read fresh per run:
+    off = skip the LLM-2 accuracy pass; faithfulness = the no-web report-vs-raw
+    check + whole-report consistency sweep (default); faithfulness+web = ALSO
+    re-verify the flagged claims via an LLM-3 web search."""
+    sess = SESSIONS.get(req.session_id)
+    if sess is None:
+        return {"error": "no such session"}
+    if req.tier not in ("off", "faithfulness", "faithfulness+web"):
+        return {"error": f"invalid tier: {req.tier}"}
+    sess.agent.config.search.deep_research_verify = req.tier
+    sess.settings["deep_research_verify"] = req.tier
+    return {"ok": True, "tier": req.tier}
+
+
 def _md_text(text) -> str:
     """Inline short text as-is; fence multiline LLM text as a blockquote."""
     text = str(text or "").strip()
