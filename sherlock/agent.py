@@ -2303,14 +2303,31 @@ class Sherlock:
             rnd += 1
             # 1. search (snippets). Round 1 = wide multilingual sweep; later = narrow.
             per_round = round1_cap if rnd == 1 else 3
+            round_queries = list(queries[:per_round])
             hits: list[dict] = []
             attempted = 0
             failed = 0
-            for qi, q in enumerate(queries[:per_round]):
+            # v1.11: the queries in a round are independent → run them concurrently
+            # (results collected in QUERY ORDER so everything downstream is identical
+            # to serial). OFF or a single query → the exact serial _bounded loop.
+            parallel = getattr(self.config.search, "deep_research_parallel_search", True)
+            if parallel and len(round_queries) > 1:
+                results = self._search_batch(engine.search, timeout_s, round_queries, rpr)
+            else:
+                results = []
+                for q in round_queries:
+                    try:
+                        results.append(
+                            (
+                                True,
+                                self._bounded(engine.search, timeout_s, q, max_results=rpr) or [],
+                            )
+                        )
+                    except Exception:
+                        results.append((False, []))
+            for qi, (ok, res) in enumerate(results):
                 attempted += 1
-                try:
-                    res = self._bounded(engine.search, timeout_s, q, max_results=rpr) or []
-                except Exception:
+                if not ok:
                     failed += 1
                     continue
                 good = [r for r in res if isinstance(r, dict) and not r.get("error")]
@@ -5601,6 +5618,36 @@ class Sherlock:
             )
         fut = self._tool_executor.submit(fn, *args, **kwargs)
         return fut.result(timeout=timeout_s)
+
+    # v1.11: a DEDICATED pool for deep-research per-round searches, so a hung
+    # search can't starve the shared 3-worker _tool_executor (which also serves
+    # inline tool calls). Bounded burst — a round rarely issues > this many.
+    _SEARCH_POOL_WORKERS = 6
+
+    def _search_batch(
+        self, fn, timeout_s: float, queries: list, rpr: int
+    ) -> list[tuple[bool, list]]:
+        """Run each query's ``fn(q, max_results=rpr)`` CONCURRENTLY and return
+        ``(ok, results)`` aligned to the INPUT order (never completion order), so
+        the caller's hit list / RRF tagging / dedup stay deterministic. ``ok`` is
+        False iff that query raised or timed out (mirrors the serial except-path).
+        Each call still gets the full ``timeout_s`` wall-clock budget."""
+        import concurrent.futures
+
+        pool = getattr(self, "_search_executor", None)
+        if pool is None:
+            pool = concurrent.futures.ThreadPoolExecutor(
+                max_workers=self._SEARCH_POOL_WORKERS, thread_name_prefix="sherlock-dr-search"
+            )
+            self._search_executor = pool
+        futs = [pool.submit(fn, q, max_results=rpr) for q in queries]
+        out: list[tuple[bool, list]] = []
+        for fut in futs:
+            try:
+                out.append((True, fut.result(timeout=timeout_s) or []))
+            except Exception:
+                out.append((False, []))
+        return out
 
     def _format_tool_results_block(self, executed: list[dict]) -> str:
         """Render executed tool calls as a transcript-ready user message.

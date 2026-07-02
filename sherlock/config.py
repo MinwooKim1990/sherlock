@@ -279,6 +279,16 @@ class SearchConfig(BaseModel):
     # agent later "what else did you find?"). NOT needed for the verify pass (raw is
     # in-memory then). Default OFF — it's storage growth, not an accuracy feature.
     deep_research_persist_raw: bool = False
+    # v1.11 — run a round's searches CONCURRENTLY instead of one-at-a-time (default ON).
+    # A round issues up to `deep_research_fetch_top_m`/round-1-cap independent queries;
+    # they have no ordering dependency, so a bounded thread pool runs them in parallel
+    # and results are collected in QUERY ORDER — the hit list, RRF (_q/_rank) tagging,
+    # and cross-round URL dedup are byte-identical to the serial path. Only wall-clock
+    # changes — a round's searches run up to 6-wide (a fixed internal cap that also
+    # bounds the burst for rate-limited engines), so a 12-query round-1 sweep is ≈÷6,
+    # not ÷12. A dedicated pool is used so a hung search can't starve the shared tool
+    # pool. OFF = the exact serial loop (byte-identical).
+    deep_research_parallel_search: bool = True
 
 
 class InferenceConfig(BaseModel):
