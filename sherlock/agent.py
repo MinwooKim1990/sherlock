@@ -367,6 +367,10 @@ _PRESENTATION_GUIDE = (
     "background or history can lean on references/wikis. Judge per claim.\n"
     "• Be as long as the substance needs and no longer: keep the granular detail the question "
     "turns on (each date, score, item) — but never pad.\n"
+    "• LANGUAGE — write the report in the SAME language as the user's request / the source "
+    "material you were given; NEVER translate it into another language (a Korean request stays "
+    "Korean, an English one stays English). Proper nouns, product names, and cited titles keep "
+    "their original spelling.\n"
     "GUARDRAILS (the only hard limits): invent nothing — no made-up facts, numbers, names, or "
     "URLs; and keep every fact consistent with the sources and with itself (no contradictions, "
     "no figure that disagrees with its own parts). Everything else is your judgment."
@@ -3591,7 +3595,8 @@ class Sherlock:
                 "- unsupported: a claim with NO support in the raw\n"
                 "Judge FAITHFULNESS-TO-SOURCES only — NOT world-truth, NOT format, NOT "
                 "which sources were used. Each `claim` MUST be copied verbatim from the "
-                "report. `fix` = the corrected text grounded in the raw. Do NOT delete "
+                "report. `fix` = the corrected text grounded in the raw, written IN THE SAME "
+                "LANGUAGE as the report (never translate it). Do NOT delete "
                 "content — only CORRECT what is demonstrably wrong; leave anything you "
                 "cannot confidently correct (flag it with needs_web instead). "
                 "`needs_web`=true ONLY when the raw cannot settle it and a fresh web "
@@ -3698,7 +3703,8 @@ class Sherlock:
             "`wrong` MUST be copied verbatim from the report.\n"
             'Return STRICT JSON: {"fixes": [{"issue": "<what disagreed>", "wrong": '
             '"<verbatim span to replace>", "right": "<replacement that agrees with the '
-            'rest>"}]}. If already self-consistent, return {"fixes": []}. JSON only.'
+            'rest, written IN THE SAME LANGUAGE as the report — never translate>"}]}. '
+            'If already self-consistent, return {"fixes": []}. JSON only.'
         )
         try:
             parsed, _ = chat_json_with_retry(
@@ -3792,7 +3798,8 @@ class Sherlock:
                 f"FRESH web results:\n{ev}\n\n"
                 "Judge the claim against these results. Return STRICT JSON: "
                 '{"verdict": "confirmed|corrected|unverifiable", "corrected_text": '
-                '"<the corrected claim if verdict=corrected, else empty>", "source": "<url>"}. '
+                '"<the corrected claim if verdict=corrected, else empty — in the SAME language '
+                'as the CLAIM above, never translated>", "source": "<url>"}. '
                 "Use 'corrected' ONLY when the results clearly show a different fact; "
                 "'unverifiable' when they do not settle it. JSON only."
             )
@@ -3899,7 +3906,9 @@ class Sherlock:
                 f"{facts_txt}\n\n"
                 "REPORT TO VERIFY:\n"
                 f"{report}\n\n"
-                "Produce a corrected version of the report. Fix ONLY:\n"
+                "Produce a corrected version of the report IN ITS ORIGINAL LANGUAGE — write it "
+                "in the SAME language as the REPORT TO VERIFY above and NEVER translate it (a "
+                "Korean report stays Korean). Fix ONLY:\n"
                 "1. INTERNAL CONTRADICTIONS — the same fact stated two different ways "
                 "(a score/points/date given as X in one place and Y in another), or "
                 "numbers that don't add up (e.g. 'one win, one loss' but '4 points'). "
