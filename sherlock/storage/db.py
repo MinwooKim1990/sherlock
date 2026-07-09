@@ -99,7 +99,10 @@ class Storage:
         self.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
         self.engine = create_engine(
             f"sqlite:///{self.sqlite_path}",
-            connect_args={"check_same_thread": False},
+            # v1.12 F3: a 30s busy timeout so a concurrent writer (e.g. a second
+            # session reopening the same profile) waits for the lock instead of
+            # failing immediately with "database is locked".
+            connect_args={"check_same_thread": False, "timeout": 30},
         )
         SQLModel.metadata.create_all(self.engine)
         run_migrations(self.engine)  # v0.5.0: add any newly-introduced columns

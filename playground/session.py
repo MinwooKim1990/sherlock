@@ -4,9 +4,38 @@ event bus that forwards core/companion events to the browser over a WebSocket.
 
 from __future__ import annotations
 
+import re
 import tempfile
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
+
+# v1.12 Stage A5: persistent per-profile storage root for the playground's
+# long-term memory. Sessions that opt into long-term memory share a stable
+# directory under here (keyed by profile) so promoted facts survive a session
+# restart; sessions that DON'T use a throwaway tempdir (byte-identical to the
+# pre-A5 behaviour). The eviction guard in server.py refuses to rmtree anything
+# under this root, so closing/evicting a session never destroys a profile.
+PLAYGROUND_LTM_ROOT = ".sherlock_playground"
+_PROFILE_RE = re.compile(r"[a-z0-9_-]{1,32}")
+
+
+def _ltm_profile_dir(profile: str | None) -> str:
+    """Resolve a sanitized, persistent storage dir for a long-term profile.
+
+    ``profile`` is accepted only if it matches ``[a-z0-9_-]{1,32}`` EXACTLY
+    (a full match — so ``"../x"``, empty, or an over-long name all fall back to
+    ``"default"``). This is the sole path-traversal guard: the name becomes a
+    single directory component under ``~/<PLAYGROUND_LTM_ROOT>/``.
+    """
+    name = (profile or "").strip()
+    if not _PROFILE_RE.fullmatch(name):
+        name = "default"
+    d = Path.home() / PLAYGROUND_LTM_ROOT / name
+    # v1.12 F3: two live sessions on the SAME profile share this one SQLite file;
+    # concurrent writes lean on the 30s busy timeout and stay a known limitation.
+    d.mkdir(parents=True, exist_ok=True)
+    return str(d)
 
 
 @dataclass
@@ -61,7 +90,14 @@ def build_agent(session: Session, system_prompt: str, settings: dict):
 
     session.settings = settings or {}
     session.system_prompt = system_prompt or "You are a helpful assistant."
-    storage = tempfile.mkdtemp(prefix="sherlock_pg_")
+    # v1.12 Stage A5: opt-in long-term memory persists across sessions/restarts,
+    # so it needs a STABLE storage dir keyed by profile. Off (the default) keeps
+    # the throwaway tempdir behaviour byte-identical.
+    long_term_on = bool(settings.get("long_term"))
+    if long_term_on:
+        storage = _ltm_profile_dir(settings.get("ltm_profile"))
+    else:
+        storage = tempfile.mkdtemp(prefix="sherlock_pg_")
     session.storage_dir = storage
 
     main_cb = make_role_callable("main", session, session.emit)
@@ -101,6 +137,15 @@ def build_agent(session: Session, system_prompt: str, settings: dict):
         # v1.6: dynamic companion gating. "cold_start" (default) = cheap, escalate
         # on signal pressure; "turbo" = the prior all-on; "off" = legacy.
         companions_mode=settings.get("companions_mode", "cold_start"),
+        # v1.12 Stage A5: cross-conversation long-term memory (off by default in
+        # the playground — the user opts in per session). When on, incognito
+        # (read existing but pause new writes) is carried through too. Off →
+        # long_term=None → byte-identical construction to the pre-A5 agent.
+        long_term=(
+            {"enabled": True, "incognito": bool(settings.get("ltm_incognito"))}
+            if long_term_on
+            else None
+        ),
     )
     # v1.11: expose the deep-research VERIFY tier (off | faithfulness |
     # faithfulness+web) so the accuracy layer can be A/B'd live in the playground.

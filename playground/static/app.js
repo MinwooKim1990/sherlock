@@ -57,8 +57,25 @@ const LANG = {
     bg_running: "🧩 updating memory in the background…",
     bg_on: "async", bg_off: "inline",
     async_title: "async — LLM-2/LLM-3 run in the background so the reply never waits (change live)",
+    // v1.12 A5: long-term memory
+    longterm: "Long-term memory", ltm_profile: "profile", ltm_profile_ph: "default",
+    ltm_incognito: "incognito — read, don't save",
+    longterm_help: "🧠 Long-term memory keeps durable facts (name, allergies, “remember this”) under the named <b>profile</b> across sessions and restarts. Off by default. <b>Incognito</b> keeps recalling what's stored but pauses new writes.",
+    tab_ltm: "🧠 Long-term", tab_ltm_full: "Long-term memory",
+    ltm_on: "LTM on", ltm_off: "LTM off", incog_off: "rec", incog_on: "incognito",
+    ltm_title: "long-term (cross-session) memory — change live",
+    incog_title: "incognito — recall but pause new writes",
+    ltm_refresh: "Refresh", ltm_export: "Export", ltm_import: "Import", ltm_wipe: "Wipe",
+    ltm_empty: "No long-term memory yet. When long-term memory is on, LLM-2 promotes durable facts (identity, allergies, explicit “remember this”, stable preferences/projects) here — shared across every session.",
+    ltm_col_cat: "category", ltm_col_content: "fact", ltm_col_conf: "conf", ltm_col_created: "since", ltm_delete: "delete",
+    ltm_delete_confirm: "Delete this long-term memory permanently?",
+    ltm_wipe_confirm1: "Wipe ALL long-term memory? A markdown backup is written first.",
+    ltm_wipe_confirm2: "Are you sure? This clears every durable fact for this profile.",
+    ltm_remembered: "remembered", ltm_forgot: "forgot", ltm_wiped: "long-term wiped",
+    ltm_imported: "imported to long-term", ltm_import_fail: "import failed",
+    ltm_temp_note: "🧠 note: this session stores to a temporary dir — start a new session to persist under a profile",
   },
-  ko: {"subtitle":"아무 LLM이나 연결하세요 — Gemini, OpenAI, Anthropic, 오픈소스 모델 호스트(DeepInfra · Together · OpenRouter), 또는 로컬 OpenAI 호환 서버까지 — 그리고 Sherlock이 그 컨텍스트를 실시간으로 정리하는 모습을 지켜보세요.","providers":"제공자","providers_hint":"— 최소 하나는 연결하세요. 역할별로 자유롭게 조합 가능","role_main":"메인","role_summary":"요약기","role_infer":"추론기","sysprompt_label":"시스템 프롬프트 (LLM-1 페르소나)","companions":"컴패니언","companions_turbo":"turbo — 매 턴마다 LLM-2 + LLM-3","companions_cold":"cold_start — 신호가 필요할 때만","companions_off":"off — 단일 모델 (레거시)","companions_help":"💡 <b>turbo</b>는 매 턴마다 LLM-3 추론 + LLM-2 압축을 실행합니다(🧠 추론 / 🗜 압축 패널이 항상 채워짐). <b>cold_start</b>는 실제 신호로 컴패니언이 필요해질 때까지 단일 모델을 유지하고, <b>off</b>는 레거시 게이트입니다.","background":"백그라운드","redact":"비밀정보 가리기","verify":"검증","websearch":"🌐 웹 검색","engine_ddg":"DuckDuckGo (무료, 키 불필요)","engine_brave":"Brave (키 필요)","engine_tavily":"Tavily (키 필요)","engine_valyu":"Valyu (키 필요)","engine_off":"끔","searchkey_ph":"검색 API 키","websearch_help":"LLM-1(검색 + 가져오기)과 LLM-3(최신성)이 모두 이 엔진을 사용합니다. DuckDuckGo는 무료지만 뉴스에는 약하고, Brave/Tavily/Valyu는 키만 있으면 훨씬 나은 결과를 줍니다.","start_session":"세션 시작","export":"⬇ 내보내기","new_session":"새 세션","thinking":"Sherlock이 생각 중…","stop":"중지","try":"예시:","ex1":"우리 딸 유진이가 땅콩 알레르기가 있어요","ex2":"회사를 그만둘지 말지 고민이에요","ex3":"다음 주에 부산 가는데 호텔 추천해줘","ex4":"오늘 서울 날씨 검색해줘","ex5":"내가 아까 한 말 기억해?","dr_proposed":"🔬 심층 리서치 제안됨","approve":"승인","skip":"건너뛰기","dr_or_yes":"…또는 그냥 “네”라고 답하세요.","chatmode_title":"누가 답하는지: Sherlock, 순수 모델, 또는 둘을 나란히","mode_single":"단일 LLM","mode_both":"비교 (A/B)","baseline_search_title":"공정한 비교: 단일 LLM도 동일한 엔진으로 한 번 검색을 수행합니다","single_search":"🔎단일","msg_ph":"메시지를 입력하세요…","send":"전송","single_baseline":"⚖ 단일 LLM (기준)","tab_flow":"⚡ 흐름","tab_slot":"🧱 슬롯","tab_llmio":"💬 LLM 입출력","tab_infer":"🧠 추론","tab_compact":"🗜 압축","tab_memory":"🗃 메모리","tab_carry":"↪ 이월","tab_research":"🔬 리서치","thinking_single":"단일 LLM이 생각 중…","stopping":"중지하는 중…","building_agent":"에이전트 구성 중 (첫 실행 시 임베더를 다운로드합니다)…","need_provider":"✗ 먼저 제공자를 연결하고 모델을 선택하세요","dr_running":"🔬 심층 리서치 실행 중…","dr_synth":"🔬 최종 답변 종합 중…","dr_starting":"🔬 심층 리서치 시작 중…","bg_running":"🧩 백그라운드에서 메모리 갱신 중…","bg_on":"비동기","bg_off":"동기","async_title":"비동기 — LLM-2/LLM-3가 백그라운드에서 돌아 답변이 기다리지 않습니다 (실시간 변경 가능)"},
+  ko: {"subtitle":"아무 LLM이나 연결하세요 — Gemini, OpenAI, Anthropic, 오픈소스 모델 호스트(DeepInfra · Together · OpenRouter), 또는 로컬 OpenAI 호환 서버까지 — 그리고 Sherlock이 그 컨텍스트를 실시간으로 정리하는 모습을 지켜보세요.","providers":"제공자","providers_hint":"— 최소 하나는 연결하세요. 역할별로 자유롭게 조합 가능","role_main":"메인","role_summary":"요약기","role_infer":"추론기","sysprompt_label":"시스템 프롬프트 (LLM-1 페르소나)","companions":"컴패니언","companions_turbo":"turbo — 매 턴마다 LLM-2 + LLM-3","companions_cold":"cold_start — 신호가 필요할 때만","companions_off":"off — 단일 모델 (레거시)","companions_help":"💡 <b>turbo</b>는 매 턴마다 LLM-3 추론 + LLM-2 압축을 실행합니다(🧠 추론 / 🗜 압축 패널이 항상 채워짐). <b>cold_start</b>는 실제 신호로 컴패니언이 필요해질 때까지 단일 모델을 유지하고, <b>off</b>는 레거시 게이트입니다.","background":"백그라운드","redact":"비밀정보 가리기","verify":"검증","websearch":"🌐 웹 검색","engine_ddg":"DuckDuckGo (무료, 키 불필요)","engine_brave":"Brave (키 필요)","engine_tavily":"Tavily (키 필요)","engine_valyu":"Valyu (키 필요)","engine_off":"끔","searchkey_ph":"검색 API 키","websearch_help":"LLM-1(검색 + 가져오기)과 LLM-3(최신성)이 모두 이 엔진을 사용합니다. DuckDuckGo는 무료지만 뉴스에는 약하고, Brave/Tavily/Valyu는 키만 있으면 훨씬 나은 결과를 줍니다.","start_session":"세션 시작","export":"⬇ 내보내기","new_session":"새 세션","thinking":"Sherlock이 생각 중…","stop":"중지","try":"예시:","ex1":"우리 딸 유진이가 땅콩 알레르기가 있어요","ex2":"회사를 그만둘지 말지 고민이에요","ex3":"다음 주에 부산 가는데 호텔 추천해줘","ex4":"오늘 서울 날씨 검색해줘","ex5":"내가 아까 한 말 기억해?","dr_proposed":"🔬 심층 리서치 제안됨","approve":"승인","skip":"건너뛰기","dr_or_yes":"…또는 그냥 “네”라고 답하세요.","chatmode_title":"누가 답하는지: Sherlock, 순수 모델, 또는 둘을 나란히","mode_single":"단일 LLM","mode_both":"비교 (A/B)","baseline_search_title":"공정한 비교: 단일 LLM도 동일한 엔진으로 한 번 검색을 수행합니다","single_search":"🔎단일","msg_ph":"메시지를 입력하세요…","send":"전송","single_baseline":"⚖ 단일 LLM (기준)","tab_flow":"⚡ 흐름","tab_slot":"🧱 슬롯","tab_llmio":"💬 LLM 입출력","tab_infer":"🧠 추론","tab_compact":"🗜 압축","tab_memory":"🗃 메모리","tab_carry":"↪ 이월","tab_research":"🔬 리서치","thinking_single":"단일 LLM이 생각 중…","stopping":"중지하는 중…","building_agent":"에이전트 구성 중 (첫 실행 시 임베더를 다운로드합니다)…","need_provider":"✗ 먼저 제공자를 연결하고 모델을 선택하세요","dr_running":"🔬 심층 리서치 실행 중…","dr_synth":"🔬 최종 답변 종합 중…","dr_starting":"🔬 심층 리서치 시작 중…","bg_running":"🧩 백그라운드에서 메모리 갱신 중…","bg_on":"비동기","bg_off":"동기","async_title":"비동기 — LLM-2/LLM-3가 백그라운드에서 돌아 답변이 기다리지 않습니다 (실시간 변경 가능)","longterm":"장기 기억","ltm_profile":"프로필","ltm_profile_ph":"default","ltm_incognito":"시크릿 — 읽되 저장 안 함","longterm_help":"🧠 장기 기억은 이름·알레르기·“기억해 둬” 같은 지속적 사실을 지정한 <b>프로필</b>에 저장해 세션과 재시작을 넘어 유지합니다. 기본값은 꺼짐. <b>시크릿</b>은 저장된 내용은 계속 불러오되 새 쓰기는 멈춥니다.","tab_ltm":"🧠 장기기억","tab_ltm_full":"장기 기억","ltm_on":"장기 켬","ltm_off":"장기 끔","incog_off":"기록","incog_on":"시크릿","ltm_title":"장기(세션 간) 기억 — 실시간 변경","incog_title":"시크릿 — 회상은 하되 새 쓰기는 멈춤","ltm_refresh":"새로고침","ltm_export":"내보내기","ltm_import":"가져오기","ltm_wipe":"전체삭제","ltm_empty":"아직 장기 기억이 없습니다. 장기 기억이 켜지면 LLM-2가 지속적 사실(정체성·알레르기·명시적 “기억해 둬”·안정적 선호/프로젝트)을 여기로 승격하며, 모든 세션에서 공유됩니다.","ltm_col_cat":"분류","ltm_col_content":"사실","ltm_col_conf":"신뢰","ltm_col_created":"기록시점","ltm_delete":"삭제","ltm_delete_confirm":"이 장기 기억을 영구 삭제할까요?","ltm_wipe_confirm1":"모든 장기 기억을 삭제할까요? 먼저 마크다운 백업이 기록됩니다.","ltm_wipe_confirm2":"정말요? 이 프로필의 모든 지속적 사실이 지워집니다.","ltm_remembered":"기억됨","ltm_forgot":"잊음","ltm_wiped":"장기 기억 삭제됨","ltm_imported":"장기 기억으로 가져옴","ltm_import_fail":"가져오기 실패","ltm_temp_note":"🧠 참고: 이 세션은 임시 디렉터리에 저장됩니다 — 프로필에 영구 저장하려면 새 세션을 시작하세요"},
   zh: {"subtitle":"接入任意 LLM —— Gemini、OpenAI、Anthropic、开源模型托管服务（DeepInfra · Together · OpenRouter），或本地的 OpenAI 兼容服务器 —— 实时观看 Sherlock 整理它的上下文。","providers":"提供方","providers_hint":"—— 至少连接一个；每个角色可自由搭配","role_main":"主模型","role_summary":"摘要器","role_infer":"推断器","sysprompt_label":"系统提示词（LLM-1 人设）","companions":"协同模型","companions_turbo":"turbo —— 每轮都运行 LLM-2 + LLM-3","companions_cold":"cold_start —— 仅在出现信号时才启用","companions_off":"off —— 单模型（旧版）","companions_help":"💡 <b>turbo</b> 每轮都运行 LLM-3 推断 + LLM-2 压缩（🧠 推断 / 🗜 压缩 面板始终有内容）。<b>cold_start</b> 在出现真实信号需要协同模型之前一直保持单模型；<b>off</b> 是旧版门控。","background":"后台运行","redact":"隐去敏感信息","websearch":"🌐 联网搜索","engine_ddg":"DuckDuckGo（免费，无需密钥）","engine_brave":"Brave（需密钥）","engine_tavily":"Tavily（需密钥）","engine_valyu":"Valyu（需密钥）","engine_off":"关闭","searchkey_ph":"搜索 API 密钥","websearch_help":"LLM-1（搜索 + 抓取）和 LLM-3（时效性）都使用此引擎。DuckDuckGo 免费但新闻检索能力较弱；配上密钥后，Brave/Tavily/Valyu 的结果要好得多。","start_session":"开始会话","export":"⬇ 导出","new_session":"新建会话","thinking":"Sherlock 正在思考…","stop":"停止","try":"试试：","ex1":"我女儿雨欣对花生过敏","ex2":"我在纠结要不要辞职","ex3":"我下周要去东京——推荐一家酒店吧","ex4":"查一下今天上海的天气","ex5":"你还记得我之前说过什么吗？","dr_proposed":"🔬 已建议深度研究","approve":"同意","skip":"跳过","dr_or_yes":"…或者直接回复\"好\"。","chatmode_title":"谁来回答：Sherlock、原始模型，还是两者并排对比","mode_single":"单个 LLM","mode_both":"对比（A/B）","baseline_search_title":"公平对比：单个 LLM 也会用同一引擎执行一次搜索","single_search":"🔎单次","msg_ph":"说点什么…","send":"发送","single_baseline":"⚖ 单个 LLM（基准）","tab_flow":"⚡ 流程","tab_slot":"🧱 槽位","tab_llmio":"💬 LLM 输入/输出","tab_infer":"🧠 推断","tab_compact":"🗜 压缩","tab_memory":"🗃 记忆","tab_carry":"↪ 携带","tab_research":"🔬 研究","thinking_single":"单个 LLM 正在思考…","stopping":"正在停止…","building_agent":"正在构建智能体（首次运行会下载嵌入模型）…","need_provider":"✗ 请先连接提供方并选择模型","dr_running":"🔬 深度研究进行中…","dr_synth":"🔬 正在综合最终答案…","dr_starting":"🔬 深度研究启动中…"},
   ja: {"subtitle":"お好きなLLM — Gemini、OpenAI、Anthropic、オープンソースモデルのホスト（DeepInfra · Together · OpenRouter）、またはローカルのOpenAI互換サーバー — を接続すれば、Sherlockがそのコンテキストをリアルタイムで整える様子を見られます。","providers":"プロバイダー","providers_hint":"— 最低1つ接続してください。役割ごとに自由に組み合わせOK","role_main":"メイン","role_summary":"要約担当","role_infer":"推論担当","sysprompt_label":"システムプロンプト（LLM-1のペルソナ）","companions":"コンパニオン","companions_turbo":"turbo — 毎ターン LLM-2 + LLM-3 を実行","companions_cold":"cold_start — 必要な兆候があるときだけ起動","companions_off":"off — 単一モデル（レガシー）","companions_help":"💡 <b>turbo</b> は毎ターン LLM-3 の推論と LLM-2 の圧縮を実行します（🧠 推論 / 🗜 圧縮 パネルが常に埋まります）。<b>cold_start</b> は本物の兆候がコンパニオンを必要とするまで単一モデルのまま動作します。<b>off</b> はレガシーのゲートです。","background":"バックグラウンド","redact":"秘密情報を伏せる","websearch":"🌐 ウェブ検索","engine_ddg":"DuckDuckGo（無料・キー不要）","engine_brave":"Brave（キー要）","engine_tavily":"Tavily（キー要）","engine_valyu":"Valyu（キー要）","engine_off":"オフ","searchkey_ph":"検索APIキー","websearch_help":"LLM-1（検索＋取得）と LLM-3（鮮度チェック）はどちらもこのエンジンを使います。DuckDuckGo は無料ですがニュースには弱く、Brave / Tavily / Valyu はキーを使えばはるかに良い結果が得られます。","start_session":"セッション開始","export":"⬇ エクスポート","new_session":"新しいセッション","thinking":"Sherlock が考えています…","stop":"停止","try":"試してみる:","ex1":"娘の結衣がピーナッツアレルギーなんです","ex2":"仕事を辞めるべきか迷っています","ex3":"来週、京都に行くんだけどおすすめのホテルを教えて","ex4":"今日の東京の天気を調べて","ex5":"さっき私が言ったこと、覚えてる？","dr_proposed":"🔬 ディープリサーチを提案","approve":"承認","skip":"スキップ","dr_or_yes":"…または「はい」と返すだけでもOK。","chatmode_title":"誰が答えるか：Sherlock、素のモデル、または両方を並べて比較","mode_single":"単一LLM","mode_both":"比較（A/B）","baseline_search_title":"公平な比較：単一LLMも同じエンジンで1回検索を行います","single_search":"🔎単独","msg_ph":"メッセージを入力…","send":"送信","single_baseline":"⚖ 単一LLM（ベースライン）","tab_flow":"⚡ フロー","tab_slot":"🧱 スロット","tab_llmio":"💬 LLM入出力","tab_infer":"🧠 推論","tab_compact":"🗜 圧縮","tab_memory":"🗃 メモリ","tab_carry":"↪ 引き継ぎ","tab_research":"🔬 リサーチ","thinking_single":"単一LLM が考えています…","stopping":"停止中…","building_agent":"エージェントを構築中（初回はエンベッダーをダウンロードします）…","need_provider":"✗ まずプロバイダーを接続してモデルを選んでください","dr_running":"🔬 ディープリサーチを実行中…","dr_synth":"🔬 最終的な回答をまとめています…","dr_starting":"🔬 ディープリサーチを開始中…"},
   fr: {"subtitle":"Connectez n'importe quel LLM — Gemini, OpenAI, Anthropic, un hébergeur de modèles open source (DeepInfra · Together · OpenRouter) ou un serveur local compatible OpenAI — et regardez Sherlock organiser son contexte en temps réel.","providers":"Fournisseurs","providers_hint":"— connectez-en au moins un ; combinez-les librement selon le rôle","role_main":"Principal","role_summary":"Synthétiseur","role_infer":"Inférenceur","sysprompt_label":"Prompt système (persona LLM-1)","companions":"Compagnons","companions_turbo":"turbo — LLM-2 + LLM-3 à chaque tour","companions_cold":"cold_start — uniquement quand un signal les requiert","companions_off":"off — modèle unique (hérité)","companions_help":"💡 <b>turbo</b> exécute l'inférence LLM-3 + la compaction LLM-2 à chaque tour (les panneaux 🧠 Inférence / 🗜 Compaction se remplissent toujours). <b>cold_start</b> reste en modèle unique jusqu'à ce qu'un véritable signal requière les compagnons ; <b>off</b> est le mécanisme hérité.","background":"Arrière-plan","redact":"Masquer les secrets","websearch":"🌐 Recherche web","engine_ddg":"DuckDuckGo (gratuit, sans clé)","engine_brave":"Brave (clé)","engine_tavily":"Tavily (clé)","engine_valyu":"Valyu (clé)","engine_off":"Désactivé","searchkey_ph":"clé API de recherche","websearch_help":"LLM-1 (recherche + récupération) et LLM-3 (fraîcheur) utilisent tous deux ce moteur. DuckDuckGo est gratuit mais faible pour l'actualité ; Brave/Tavily/Valyu donnent de bien meilleurs résultats avec une clé.","start_session":"Démarrer la session","export":"⬇ exporter","new_session":"nouvelle session","thinking":"Sherlock réfléchit…","stop":"Arrêter","try":"essayez :","ex1":"Ma fille Camille est allergique aux arachides","ex2":"J'hésite à démissionner de mon poste","ex3":"Je pars à Lyon la semaine prochaine — conseille-moi un hôtel","ex4":"Cherche la météo d'aujourd'hui à Paris","ex5":"Tu te souviens de ce que je t'ai dit tout à l'heure ?","dr_proposed":"🔬 Recherche approfondie proposée","approve":"Approuver","skip":"Ignorer","dr_or_yes":"…ou répondez simplement « oui ».","chatmode_title":"qui répond : Sherlock, le modèle brut, ou les deux côte à côte","mode_single":"LLM unique","mode_both":"Comparer (A/B)","baseline_search_title":"Comparaison équitable : le LLM unique bénéficie aussi d'une passe de recherche avec le même moteur","single_search":"🔎unique","msg_ph":"Écrivez quelque chose…","send":"Envoyer","single_baseline":"⚖ LLM unique (référence)","tab_flow":"⚡ Flux","tab_slot":"🧱 Emplacement","tab_llmio":"💬 E/S LLM","tab_infer":"🧠 Inférence","tab_compact":"🗜 Compaction","tab_memory":"🗃 Mémoire","tab_carry":"↪ Report","tab_research":"🔬 Recherche","thinking_single":"Le LLM unique réfléchit…","stopping":"arrêt en cours…","building_agent":"construction de l'agent (le premier lancement télécharge l'encodeur)…","need_provider":"✗ connectez un fournisseur et choisissez d'abord les modèles","dr_running":"🔬 recherche approfondie en cours…","dr_synth":"🔬 synthèse de la réponse finale…","dr_starting":"🔬 démarrage de la recherche approfondie…"},
@@ -219,6 +236,30 @@ function mirrorLive() {
       await fetch("/api/verify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: S.sid, tier: lv2.value }) });
     };
   }
+  // v1.12 A5: live long-term-memory on/off — mirrors the setup checkbox
+  const llt = $("liveLongTerm");
+  if (llt) {
+    llt.value = $("optLongTerm") && $("optLongTerm").checked ? "on" : "off";
+    llt.onchange = async () => {
+      await fetch("/api/long_term", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: S.sid, on: llt.value === "on" }) });
+      // keep the setup checkbox in sync (same precedent as the verify tier)
+      if ($("optLongTerm")) $("optLongTerm").checked = llt.value === "on";
+      // v1.12 F4: a live ON-flip over a session that started WITHOUT a profile
+      // dir writes durable facts to a throwaway tempdir — warn they won't persist.
+      if (llt.value === "on" && !S.ltmProfileBound) addBubble("system", t("ltm_temp_note"));
+      refreshLTM();
+    };
+  }
+  // v1.12 A5: live incognito (pause writes) — mirrors the setup checkbox
+  const linc = $("liveIncognito");
+  if (linc) {
+    linc.value = $("optIncognito") && $("optIncognito").checked ? "on" : "off";
+    linc.onchange = async () => {
+      await fetch("/api/incognito", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: S.sid, on: linc.value === "on" }) });
+      // keep the setup checkbox in sync (same precedent as the verify tier)
+      if ($("optIncognito")) $("optIncognito").checked = linc.value === "on";
+    };
+  }
 }
 
 // Build the session config from the CURRENT controls — live top-bar selects (if a
@@ -238,6 +279,10 @@ function currentSettings() {
     search_engine: $("searchEngine").value, search_api_key: $("searchKey").value.trim() || null,
     companions_mode: mode, force_companions: mode === "turbo",
     deep_research_verify: ($("liveVerify") && $("liveVerify").value) || ($("verifyTier") && $("verifyTier").value) || "faithfulness",
+    // v1.12 A5: long-term memory (off by default; opt-in per session)
+    long_term: !!($("optLongTerm") && $("optLongTerm").checked),
+    ltm_profile: ($("ltmProfile") && $("ltmProfile").value.trim()) || "default",
+    ltm_incognito: !!($("optIncognito") && $("optIncognito").checked),
   };
 }
 // POST /api/session with the current config, swap the WebSocket. Returns true on
@@ -245,6 +290,10 @@ function currentSettings() {
 async function createSession() {
   const models = currentModels();
   if (!models.main) return false;
+  // v1.12 F4: remember whether THIS session was built bound to a persistent
+  // profile dir (long-term ON at session start). A later live ON-flip over a
+  // session that started OFF only writes durable facts to a throwaway tempdir.
+  S.ltmProfileBound = !!currentSettings().long_term;
   const providers = {};
   for (const [p, info] of Object.entries(S.prov)) providers[p] = info.creds;
   let j;
@@ -568,6 +617,13 @@ function handleEvent(ev) {
     case "infer.done": renderInference(d); break;
     case "compact.done": renderCompaction(d); break;
     case "memory.snapshot": renderMemory(d.rows || []); break;
+    // v1.12 A5: long-term memory transparency — a chip in chat + refresh the tab
+    case "memory.promoted": ltmRememberChip(d); refreshLTM(); break;
+    case "memory.saved": ltmRememberChip(d); refreshLTM(); break;
+    case "memory.updated": refreshLTM(); break;
+    case "memory.deleted": addBubble("system", `🧠 ${t("ltm_forgot")}${d.count ? " (" + d.count + ")" : ""}`); refreshLTM(); break;
+    case "memory.wiped": addBubble("system", `🧠 ${t("ltm_wiped")}${d.count != null ? " (" + d.count + ")" : ""}`); refreshLTM(); break;
+    case "memory.imported": addBubble("system", `🧠 ${t("ltm_imported")}: ${d.imported || 0}${d.skipped ? " · skip " + d.skipped : ""}`); refreshLTM(); break;
     case "decay.done": S.lastDecay = d; break;
     case "carry.snapshot": renderCarry(d); break;
     case "carry.stored": renderCarry(d); break;
@@ -706,6 +762,16 @@ const SUMMARY = {
   "deep_research.coverage_steer": (d) => `🧭 coverage steer · ${d.covered}/${d.total} covered · gaps: ${trim((d.uncovered || []).join(", "), 45)}`,
   "deep_research.strategy_failed": (d) => `📋 ✗ strategy failed · ${trim(d.error, 55)}`,
   "memory.redaction_failed": (d) => `🔒 ✗ redaction failed — content withheld · ${trim(d.error, 45)}`,
+  // v1.12 A5: long-term memory lifecycle
+  "memory.promoted": (d) => `🧠 promoted ${d.count} → long-term` + ((d.items || [])[0] ? ` · ${trim(d.items[0].content, 45)}${d.items[0].category ? " (" + d.items[0].category + ")" : ""}` : ""),
+  "memory.saved": (d) => `🧠 saved → long-term` + (d.category ? ` · ${d.category}` : ""),
+  "memory.updated": (d) => `🧠 long-term updated`,
+  "memory.delete_pending": (d) => `🧠 delete pending · ${d.count} row(s) — awaiting confirm`,
+  "memory.deleted": (d) => `🧠 deleted ${d.count || 0} long-term row(s)`,
+  "memory.wiped": (d) => `🧠 wiped long-term · ${d.count || 0} row(s)` + (d.backup_path ? " · backup saved" : ""),
+  "memory.exported": (d) => `🧠 exported long-term · ${d.format} · ${d.count} rows`,
+  "memory.imported": (d) => `🧠 imported long-term · ${d.imported || 0} (skipped ${d.skipped || 0})`,
+  "memory.remember_cue": (d) => `🧠 remember-cue detected`,
   "memory.consistency_confirm_error": (d) => `LLM-2 ✗ consistency confirm error · ${trim(d.error, 45)}`,
   "compact.error": (d) => `LLM-2 ✗ compaction error · ${trim(d.error, 55)}`,
   "infer.error": (d) => `LLM-3 ✗ inference error · ${trim(d.error, 55)}`,
@@ -739,11 +805,18 @@ function appendFlow(ev) {
   box.scrollTop = box.scrollHeight;
   flashTab(tabForType(ev.type));
 }
+// v1.12 A5: long-term-memory lifecycle events flash the 🧠 Long-term tab; the
+// per-conversation store events (snapshot/retrieval/redaction) stay on 🗃 Memory.
+const LTM_FLOW_EVENTS = new Set([
+  "memory.promoted", "memory.saved", "memory.updated", "memory.delete_pending",
+  "memory.deleted", "memory.wiped", "memory.exported", "memory.imported", "memory.remember_cue",
+]);
 function tabForType(t) {
   if (t === "slot.assembled") return "slot";
   if (t === "llm.call") return "llmio";
   if (t === "infer.done") return "infer";
   if (t === "compact.done") return "compact";
+  if (LTM_FLOW_EVENTS.has(t)) return "ltm";
   if (t.startsWith("memory.")) return "memory";
   if (t.startsWith("carry.")) return "carry";
   if (t.startsWith("deep_research")) return "research";
@@ -912,6 +985,115 @@ function renderMemory(rows) {
   root.appendChild(tbl);
 }
 
+/* ---------------- LONG-TERM MEMORY (v1.12 A5) ---------------- */
+// Category → chip colour (fixed taxonomy from the library).
+const LTM_CAT_CHIP = {
+  user_directive: "bg-fuchsia-100 text-fuchsia-700",
+  identity_health: "bg-rose-100 text-rose-700",
+  stable_preference: "bg-blue-100 text-blue-700",
+  relationship: "bg-emerald-100 text-emerald-700",
+  long_term_project: "bg-amber-100 text-amber-700",
+};
+function ltmRememberChip(d) {
+  // memory.promoted carries items[].content; memory.saved carries just category.
+  const items = (d && d.items) || [];
+  if (items.length) {
+    items.slice(0, 3).forEach((it) =>
+      addBubble("system", `🧠 ${t("ltm_remembered")}: ${trim(it.content, 70)}${it.category ? " (" + it.category + ")" : ""}`));
+  } else {
+    addBubble("system", `🧠 ${t("ltm_remembered")}${d && d.category ? " (" + d.category + ")" : ""}`);
+  }
+}
+async function refreshLTM() {
+  if (!S.sid) return;
+  try {
+    const r = await fetch(`/api/memory/long_term?session_id=${encodeURIComponent(S.sid)}`);
+    const j = await r.json().catch(() => ({}));
+    if (j && !j.error) renderLTM(j.rows || []);
+  } catch (e) { /* best-effort — the tab keeps its last render */ }
+}
+async function ltmDelete(id) {
+  if (!confirm(t("ltm_delete_confirm"))) return;
+  try {
+    const r = await fetch("/api/memory/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: S.sid, id }) });
+    const j = await r.json().catch(() => ({}));
+    if (j.error) addBubble("system", "✗ " + j.error);
+  } catch (e) { addBubble("system", "✗ " + e); }
+  refreshLTM();
+}
+async function ltmWipe() {
+  if (!confirm(t("ltm_wipe_confirm1"))) return;
+  if (!confirm(t("ltm_wipe_confirm2"))) return;
+  try {
+    const r = await fetch("/api/memory/wipe", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: S.sid }) });
+    const j = await r.json().catch(() => ({}));
+    if (j.error) addBubble("system", "✗ " + j.error);
+    else addBubble("system", `🧠 ${t("ltm_wiped")} (${j.removed || 0})` + (j.backup_path ? ` · backup: ${trim(j.backup_path, 50)}` : ""));
+  } catch (e) { addBubble("system", "✗ " + e); }
+  refreshLTM();
+}
+function ltmExport(fmt) {
+  if (!S.sid) return;
+  window.open(`/api/memory/export?session_id=${encodeURIComponent(S.sid)}&fmt=${encodeURIComponent(fmt || "md")}`, "_blank");
+}
+function ltmImportFile() {
+  const inp = document.createElement("input");
+  inp.type = "file";
+  inp.accept = ".md,.markdown,.json,.txt,text/markdown,application/json,text/plain";
+  inp.onchange = () => {
+    const f = inp.files && inp.files[0];
+    if (!f) return;
+    const rd = new FileReader();
+    rd.onload = async () => {
+      const text = String(rd.result || "");
+      if (!text.trim()) return;
+      try {
+        const r = await fetch("/api/memory/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: S.sid, text }) });
+        const j = await r.json().catch(() => ({}));
+        if (j.error) addBubble("system", `🧠 ✗ ${t("ltm_import_fail")}: ${j.error}`);
+        else addBubble("system", `🧠 ${t("ltm_imported")}: ${j.imported || 0}${j.skipped ? " · skip " + j.skipped : ""}`);
+      } catch (e) { addBubble("system", "✗ " + e); }
+      refreshLTM();
+    };
+    rd.readAsText(f);
+  };
+  inp.click();
+}
+function renderLTM(rows) {
+  S.ltmRows = rows || S.ltmRows || [];
+  rows = S.ltmRows;
+  const root = $("tab-ltm"); if (!root) return;
+  root.innerHTML = "";
+  const head = h("div", "flex items-center gap-2 mb-2 flex-wrap");
+  head.appendChild(h("div", "text-sm font-bold text-fuchsia-700", `🧠 ${t("tab_ltm_full")} (${rows.length})`));
+  const btn = (label, cls) => h("button", "text-[11px] border rounded px-2 py-0.5 hover:bg-slate-100 " + (cls || ""), label);
+  const bRefresh = btn("↻ " + t("ltm_refresh")); bRefresh.onclick = refreshLTM; head.appendChild(bRefresh);
+  const fmtSel = h("select", "text-[11px] border rounded px-1 py-0.5");
+  ["md", "json", "sql"].forEach((f) => { const o = h("option", "", f); o.value = f; fmtSel.appendChild(o); });
+  head.appendChild(fmtSel);
+  const bExport = btn("⬇ " + t("ltm_export")); bExport.onclick = () => ltmExport(fmtSel.value); head.appendChild(bExport);
+  const bImport = btn("⬆ " + t("ltm_import")); bImport.onclick = ltmImportFile; head.appendChild(bImport);
+  const bWipe = btn("🗑 " + t("ltm_wipe"), "border-rose-300 text-rose-600 hover:bg-rose-50"); bWipe.onclick = ltmWipe; head.appendChild(bWipe);
+  root.appendChild(head);
+  if (!rows.length) {
+    root.appendChild(h("div", "text-xs text-slate-400 italic p-4 leading-relaxed", t("ltm_empty")));
+    return;
+  }
+  const tbl = h("div", "border rounded-lg overflow-hidden bg-white");
+  rows.forEach((r) => {
+    const row = h("div", "flex items-center gap-2 px-2 py-1.5 border-b text-[11px]");
+    row.appendChild(h("span", `px-1.5 py-0.5 rounded text-[9px] font-bold ${LTM_CAT_CHIP[r.category] || "bg-slate-100 text-slate-600"}`, esc(r.category || "—")));
+    const c = h("span", "flex-1 truncate", esc(r.content)); c.title = r.content; row.appendChild(c);
+    row.appendChild(h("span", "text-slate-400", `c${r.confidence}`));
+    row.appendChild(h("span", "text-slate-300 text-[10px] mono", esc((r.created_at || "").slice(0, 10))));
+    const del = h("button", "text-rose-500 hover:text-rose-700 text-[10px] shrink-0", t("ltm_delete"));
+    del.onclick = () => ltmDelete(r.id);
+    row.appendChild(del);
+    tbl.appendChild(row);
+  });
+  root.appendChild(tbl);
+}
+
 /* ---------------- CARRY-FORWARD ---------------- */
 function renderCarry(d) {
   const root = $("tab-carry"); root.innerHTML = "";
@@ -1033,11 +1215,12 @@ $("drSkip").onclick = async () => {
 };
 
 /* ---------------- tabs ---------------- */
-const TABS = ["flow", "slot", "llmio", "infer", "compact", "memory", "carry", "research"];
+const TABS = ["flow", "slot", "llmio", "infer", "compact", "memory", "ltm", "carry", "research"];
 document.querySelectorAll(".tabbtn").forEach((b) => b.onclick = () => showTab(b.dataset.tab));
 function showTab(t) {
   TABS.forEach((x) => $("tab-" + x).classList.toggle("hidden", x !== t));
   document.querySelectorAll(".tabbtn").forEach((b) => b.classList.toggle("active", b.dataset.tab === t));
+  if (t === "ltm") refreshLTM(); // fetch the freshest long-term snapshot on open
 }
 let flashTimers = {};
 function flashTab(tab) {
@@ -1058,6 +1241,7 @@ function initPanels() {
   hint("tab-infer", "🧠 <b>LLM-3 inference</b> appears here after you send a message.<br>Always-run reasoning is on — <i>any</i> message triggers it.");
   hint("tab-compact", "🗜 <b>LLM-2 compaction</b> (summary · facts · persona · predictions) appears here.");
   hint("tab-memory", "🗃 The <b>memory table</b> fills as facts are stored — with provenance + decay-state chips.");
+  hint("tab-ltm", "🧠 <b>Long-term memory</b> — durable facts promoted across sessions. Turn it on in the top bar; export/import/wipe here.");
   hint("tab-carry", "↪ <b>Pending hypotheses</b> that seed the next turn's slot appear here.");
   hint("tab-research", "🔬 <b>Deep research</b> — when LLM-1 proposes it and you approve, each round (search → read → meta-question Q&amp;A) streams here and is saved as a session document.");
   hint("tab-slot", "🧱 The assembled <b>LLM-1 context</b> (TIER 1–4) + token budget appears here each turn.");

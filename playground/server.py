@@ -22,7 +22,9 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import os
 import shutil
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -39,6 +41,32 @@ app = FastAPI(title="Sherlock Live Inspector")
 STATIC = Path(__file__).parent / "static"
 SESSIONS: dict[str, Session] = {}
 MAX_SESSIONS = 8  # evict the oldest session (and its tempdir) beyond this
+
+
+def _safe_to_rmtree(path: str) -> bool:
+    """v1.12 Stage A5: guard the eviction rmtree so it can ONLY delete throwaway
+    session tempdirs, never a persistent long-term-memory PROFILE dir.
+
+    A profile lives under ``~/.sherlock_playground/<profile>/`` and is SHARED by
+    every session on that profile — deleting it on eviction/close would wipe the
+    user's durable memory. So: explicitly REFUSE anything under the playground
+    long-term root, and only permit paths that are inside the OS temp dir or
+    carry the ``sherlock_pg_`` tempdir prefix (what ``build_agent`` uses when
+    long-term memory is off).
+    """
+    if not path:
+        return False
+    # v1.12 F6: resolve symlinks (realpath, not abspath) on BOTH the candidate and
+    # the roots — a symlinked temp/profile path must not slip past the refuse-first
+    # profile guard. Ordering is unchanged: REFUSE a profile before permitting.
+    p = os.path.realpath(path)
+    ltm_root = os.path.realpath(os.path.join(os.path.expanduser("~"), ".sherlock_playground"))
+    if p == ltm_root or p.startswith(ltm_root + os.sep):
+        return False  # a persistent profile — never delete on evict/close
+    tmp = os.path.realpath(tempfile.gettempdir())
+    if p.startswith(tmp + os.sep):
+        return True
+    return "sherlock_pg_" in p
 
 
 class ModelsReq(BaseModel):
@@ -88,7 +116,17 @@ async def api_session(req: SessionReq):
     SESSIONS[sid] = sess
     while len(SESSIONS) > MAX_SESSIONS:  # dicts keep insertion order → oldest first
         evicted = SESSIONS.pop(next(iter(SESSIONS)))
-        if evicted.storage_dir:
+        # v1.12 F3: release the evicted agent's SQLite engine (pooled connections
+        # otherwise linger until GC) so a NEW session reopening the SAME profile
+        # doesn't hit "database is locked". The store, storage and prompt store
+        # all share one engine, so a single dispose covers them. Best-effort.
+        try:
+            evicted.agent.memory._engine.dispose()
+        except Exception:
+            pass
+        # v1.12 Stage A5: only reclaim throwaway tempdirs — a persistent
+        # long-term-memory profile dir survives eviction (see _safe_to_rmtree).
+        if _safe_to_rmtree(evicted.storage_dir):
             shutil.rmtree(evicted.storage_dir, ignore_errors=True)
     return {
         "session_id": sid,
@@ -339,6 +377,191 @@ async def api_verify(req: VerifyReq):
     sess.agent.config.search.deep_research_verify = req.tier
     sess.settings["deep_research_verify"] = req.tier
     return {"ok": True, "tier": req.tier}
+
+
+# ==================== v1.12 Stage A5: long-term memory ====================
+# Live toggles + a small management surface over the A1–A4 library API. The
+# chat-level confirm-token flow (A3) still governs CONVERSATIONAL deletion; the
+# UI buttons below are "direct" because the browser has its own click-confirm.
+#
+# v1.12 F7 (posture): these routes (like every endpoint in this file) trust the
+# caller — the playground is a localhost-only single-user dev inspector with no
+# auth anywhere. This localhost-trust posture is playground-wide, not specific to
+# these memory routes; a Host-header allowlist middleware (reject a non-localhost
+# Host) is a possible future hardening if this is ever exposed beyond loopback.
+
+
+class LongTermReq(BaseModel):
+    session_id: str
+    on: bool
+
+
+@app.post("/api/long_term")
+async def api_long_term(req: LongTermReq):
+    """Live-flip long-term memory on/off mid-session. The summarizer's promotion
+    gate reads ``config.memory.long_term.enabled`` fresh each cycle, so this
+    takes effect on the NEXT turn's compaction."""
+    sess = SESSIONS.get(req.session_id)
+    if sess is None:
+        return {"error": "no such session"}
+    try:
+        sess.agent.config.memory.long_term.enabled = bool(req.on)
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
+    sess.settings["long_term"] = bool(req.on)
+    return {"ok": True, "on": bool(req.on)}
+
+
+@app.post("/api/incognito")
+async def api_incognito(req: LongTermReq):
+    """Live-flip incognito: suppress long-term WRITES (promotions) while leaving
+    reads/recall intact — a 'pause remembering' switch. Takes effect next turn."""
+    sess = SESSIONS.get(req.session_id)
+    if sess is None:
+        return {"error": "no such session"}
+    try:
+        sess.agent.config.memory.long_term.incognito = bool(req.on)
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
+    sess.settings["ltm_incognito"] = bool(req.on)
+    return {"ok": True, "on": bool(req.on)}
+
+
+def _ltm_iso(value) -> str:
+    return value.isoformat() if hasattr(value, "isoformat") else str(value)
+
+
+@app.get("/api/memory/long_term")
+async def api_ltm_snapshot(session_id: str):
+    """The live cross-conversation long-term memory (sentinel scope), newest
+    first — reading is harmless regardless of enabled/incognito."""
+    sess = SESSIONS.get(session_id)
+    if sess is None:
+        return {"error": "no such session"}
+    try:
+        rows = sess.agent.long_term_memory()
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
+    return {
+        "rows": [
+            {
+                "id": r.get("id"),
+                "category": r.get("category"),
+                "content": r.get("content"),
+                "confidence": round(float(r.get("confidence") or 0.0), 2),
+                "created_at": _ltm_iso(r.get("created_at")),
+                "origin": r.get("origin_conversation_id"),
+            }
+            for r in rows
+        ]
+    }
+
+
+class MemDeleteReq(BaseModel):
+    session_id: str
+    id: str
+
+
+@app.post("/api/memory/delete")
+async def api_memory_delete(req: MemDeleteReq):
+    """Hard-delete ONE long-term row by full id. The id MUST belong to the
+    sentinel scope — a session/conversation row can never be deleted through
+    this endpoint (that path stays behind the conversational confirm-token)."""
+    sess = SESSIONS.get(req.session_id)
+    if sess is None:
+        return {"error": "no such session"}
+    from sherlock.memory.entry import LTM_CONVERSATION_ID
+
+    # v1.12 F2: honour the {"error": ...} contract even when the store raises
+    # (locked/corrupt DB) instead of leaking an HTTP 500 — same shape as wipe.
+    try:
+        row = sess.agent.memory.get(req.id)
+        if row is None:
+            return {"error": "no such memory id"}
+        if row.conversation_id != LTM_CONVERSATION_ID:
+            return {"error": "not a long-term memory row (refusing to delete)"}
+        sess.agent.memory.hard_delete(req.id)
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
+    return {"ok": True, "id": req.id}
+
+
+class SessionOnlyReq(BaseModel):
+    session_id: str
+
+
+@app.post("/api/memory/wipe")
+async def api_memory_wipe(req: SessionOnlyReq):
+    """Wipe ALL long-term memory (honours the auto Markdown backup — fail-closed
+    if the backup can't be written). Returns ``{removed, backup_path}``."""
+    sess = SESSIONS.get(req.session_id)
+    if sess is None:
+        return {"error": "no such session"}
+    try:
+        return sess.agent.wipe_long_term()
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+_EXPORT_CT = {
+    "markdown": ("text/markdown", "md"),
+    "md": ("text/markdown", "md"),
+    "json": ("application/json", "json"),
+    "sql": ("application/sql", "sql"),
+}
+
+
+@app.get("/api/memory/export")
+async def api_memory_export(session_id: str, fmt: str = "markdown"):
+    """Download the long-term memory as markdown / json / sql, with the right
+    content-type + a Content-Disposition filename."""
+    sess = SESSIONS.get(session_id)
+    if sess is None:
+        return {"error": "no such session"}
+    fmt_norm = (fmt or "markdown").strip().lower()
+    if fmt_norm not in _EXPORT_CT:
+        return {"error": f"unknown format: {fmt!r} (use markdown/md, json, or sql)"}
+    try:
+        text = sess.agent.export_memory(fmt=fmt_norm)
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
+    media, ext = _EXPORT_CT[fmt_norm]
+    return Response(
+        content=text,
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="sherlock-ltm-{sess.sid}.{ext}"'},
+    )
+
+
+class MemImportReq(BaseModel):
+    session_id: str
+    text: str
+    fmt: str | None = None
+
+
+@app.post("/api/memory/import")
+async def api_memory_import(req: MemImportReq):
+    """Import long-term facts from pasted/uploaded text (json or markdown; auto
+    detected when fmt is omitted). Requires long-term memory enabled — every
+    fact is re-routed through the store so redaction + dedup re-apply."""
+    # v1.12 F5: bound the import body so a runaway paste/upload can't wedge the
+    # single-process inspector.
+    if len(req.text) > 5_000_000:
+        return {"error": "import too large (5 MB max)"}
+    sess = SESSIONS.get(req.session_id)
+    if sess is None:
+        return {"error": "no such session"}
+    # v1.12 F1 (security): agent.import_memory treats a SHORT existing string as a
+    # filesystem PATH and reads it — over HTTP that turns this endpoint into an
+    # arbitrary local-file-read primitive (e.g. slurp a backup, then view via
+    # snapshot/export). The browser only ever posts raw export TEXT, so refuse any
+    # input that resolves to an existing path before it reaches the library.
+    if len(req.text) < 4096 and os.path.exists(req.text):
+        return {"error": "raw export text required (path import is not available over HTTP)"}
+    try:
+        return sess.agent.import_memory(req.text, fmt=req.fmt)
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
 
 
 def _md_text(text) -> str:

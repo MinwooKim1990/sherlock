@@ -183,6 +183,21 @@
       </label>
     </div>
 
+    <!-- v1.12 A5: long-term (cross-session) memory -->
+    <div class="flex flex-wrap gap-4 text-sm items-center">
+      <label class="flex items-center gap-2" title="remember durable facts across sessions">
+        <input id="optLongTerm" type="checkbox" /> <b>🧠 <span data-i18n="longterm">Long-term memory</span></b>
+      </label>
+      <label class="flex items-center gap-1 text-xs text-slate-500">
+        <span data-i18n="ltm_profile">profile</span>
+        <input id="ltmProfile" type="text" placeholder="default" data-i18n-ph="ltm_profile_ph" class="border rounded-lg px-2 py-1 text-xs mono w-32" />
+      </label>
+      <label class="flex items-center gap-2 text-xs text-slate-500 pl-2">
+        <input id="optIncognito" type="checkbox" /> <span data-i18n="ltm_incognito">incognito — read, don't save</span>
+      </label>
+    </div>
+    <p class="text-xs text-slate-500 -mt-2" data-i18n="longterm_help">🧠 Long-term memory keeps durable facts (name, allergies, “remember this”) under the named <b>profile</b> across sessions and restarts. Off by default. <b>Incognito</b> keeps recalling what's stored but pauses new writes.</p>
+
     <div class="flex items-center gap-2 text-sm">
       <label class="font-semibold" data-i18n="websearch">🌐 Web search</label>
       <select id="searchEngine" class="border rounded-lg px-2 py-1.5 text-xs">
@@ -218,6 +233,13 @@
     <span class="flex items-center gap-1" data-i18n-title="async_title" title="async — companions run in the background so the reply never waits (change live)"><span>⚡</span> <select id="liveBackground" class="bg-slate-800 rounded px-1 py-0.5 mono">
       <option value="on" data-i18n="bg_on">async</option>
       <option value="off" data-i18n="bg_off">inline</option>
+    </select></span>
+    <span class="flex items-center gap-1" data-i18n-title="ltm_title" title="long-term (cross-session) memory — change live"><span>🧠</span> <select id="liveLongTerm" class="bg-slate-800 rounded px-1 py-0.5 mono">
+      <option value="off" data-i18n="ltm_off">LTM off</option>
+      <option value="on" data-i18n="ltm_on">LTM on</option>
+    </select> <select id="liveIncognito" class="bg-slate-800 rounded px-1 py-0.5 mono" data-i18n-title="incog_title" title="incognito — recall but pause new writes">
+      <option value="off" data-i18n="incog_off">rec</option>
+      <option value="on" data-i18n="incog_on">incognito</option>
     </select></span>
     <span id="tokBar" class="ml-auto mono text-slate-300" title="cumulative tokens this session (in+out per role)"></span>
     <span id="wsStatus" class="text-slate-400">ws: …</span>
@@ -284,6 +306,7 @@
         <button data-tab="infer" class="tabbtn px-3 py-1.5 rounded-t-lg font-semibold text-purple-700" data-i18n="tab_infer">🧠 Inference</button>
         <button data-tab="compact" class="tabbtn px-3 py-1.5 rounded-t-lg font-semibold text-green-700" data-i18n="tab_compact">🗜 Compaction</button>
         <button data-tab="memory" class="tabbtn px-3 py-1.5 rounded-t-lg font-semibold text-amber-700" data-i18n="tab_memory">🗃 Memory</button>
+        <button data-tab="ltm" class="tabbtn px-3 py-1.5 rounded-t-lg font-semibold text-fuchsia-700" data-i18n="tab_ltm">🧠 Long-term</button>
         <button data-tab="carry" class="tabbtn px-3 py-1.5 rounded-t-lg font-semibold text-rose-700" data-i18n="tab_carry">↪ Carry</button>
         <button data-tab="research" class="tabbtn px-3 py-1.5 rounded-t-lg font-semibold text-indigo-700" data-i18n="tab_research">🔬 Research</button>
       </div>
@@ -294,6 +317,7 @@
         <div id="tab-infer" class="hidden"></div>
         <div id="tab-compact" class="hidden"></div>
         <div id="tab-memory" class="hidden"></div>
+        <div id="tab-ltm" class="hidden"></div>
         <div id="tab-carry" class="hidden"></div>
         <div id="tab-research" class="hidden"></div>
       </div>
