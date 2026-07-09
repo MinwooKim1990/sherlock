@@ -19,7 +19,13 @@ from dataclasses import dataclass
 
 from sherlock.jsonish import chat_json_with_retry
 from sherlock.providers.base import BaseProvider, ChatMessage
-from sherlock.memory.entry import MemorySource, MemoryType
+from sherlock.memory.entry import (
+    LTM_CONVERSATION_ID,
+    MemoryEntry,
+    MemorySource,
+    MemoryType,
+    ltm_category,
+)
 from sherlock.memory.store import MemoryStore
 
 DEFAULT_LLM2_PROMPT = """\
@@ -164,6 +170,43 @@ Output JSON only — no prose around it. No markdown fences. Just the object.
 """
 
 
+# v1.12 Stage A1: ADDITIVE instruction block, concatenated onto the LLM-2
+# system prompt at run-time ONLY when long-term memory is enabled (and not
+# incognito). Off → the prompt is byte-identical to DEFAULT_LLM2_PROMPT, so we
+# never edit the string above. Teaches two extra per-fact fields; a code-level
+# gate (never the model alone) still decides what is actually promoted.
+LTM_PROMPT_SUFFIX = """\
+
+LONG-TERM MEMORY (cross-conversation) — extra per-fact fields:
+For EACH fact, ALSO decide whether it should be remembered PERMANENTLY, across
+future conversations (not just this session). Add two fields to each fact:
+  "long_term": true|false,
+  "category": "user_directive|identity_health|stable_preference|relationship|long_term_project|none"
+
+Category taxonomy (be strict — durable memory is expensive to get wrong):
+- user_directive — the user EXPLICITLY asked you to remember it ("remember
+  that…", "from now on…", "always…"). ALWAYS long_term.
+- identity_health — the user's name, pronouns, allergies, medical conditions,
+  or other stable identity/health facts. ALWAYS long_term.
+- stable_preference — a durable, repeated preference (not a one-off mood).
+- relationship — a stable relationship (family member, colleague, pet) and who
+  they are to the user.
+- long_term_project — an ongoing multi-session project, goal, or commitment.
+- none — transient tasks, in-flight decisions, one-off mentions, speculation,
+  or anything you're unsure about. Set long_term=false. This is the DEFAULT.
+
+Only set long_term=true for stable_preference / relationship / long_term_project
+when the fact is CLEARLY durable. When in doubt, category="none",
+long_term=false. Keep every "content" in the user's own language (never
+translate). These fields are ADVISORY — never restate a fact just to promote it.
+"""
+
+# Code-level promotion gate (never trust the model's booleans alone).
+_LTM_ALWAYS_CATEGORIES = frozenset({"user_directive", "identity_health"})
+_LTM_CONSERVATIVE_CATEGORIES = frozenset({"stable_preference", "relationship", "long_term_project"})
+_LTM_CONSERVATIVE_MIN_CONFIDENCE = 0.7
+
+
 # v1.1 R35: tokens too generic to count as grounding signal in the fuzzy
 # fallback. English-only on purpose — Korean particles attach to content
 # words, so Hangul tokens always carry signal and stay un-filtered.
@@ -216,10 +259,20 @@ class SummarizerEngine:
         provider: BaseProvider,
         store: MemoryStore,
         config: SummarizerConfig | None = None,
+        long_term=None,
     ) -> None:
         self._provider = provider
         self._store = store
         self._cfg = config or SummarizerConfig()
+        # v1.12 Stage A1: LongTermMemoryConfig (or None → feature off). Held by
+        # reference so the agent/playground can flip `.enabled` live. None and
+        # ``enabled=False`` both mean: prompt byte-identical, zero LTM writes.
+        self._long_term = long_term
+
+    def _ltm_active(self) -> bool:
+        """Long-term promotion writes enabled this run (enabled AND not incognito)."""
+        lt = self._long_term
+        return bool(lt and getattr(lt, "enabled", False) and not getattr(lt, "incognito", False))
 
     def should_run(
         self,
@@ -298,12 +351,18 @@ class SummarizerEngine:
             f"{transcript}\n--- END TRANSCRIPT ---"
         )
 
+        # v1.12 Stage A1: append the long-term instruction block ONLY when the
+        # feature is active (enabled AND not incognito). Off → byte-identical to
+        # the base prompt, so the whole-message cache hint is unchanged too.
+        system_prompt = self._cfg.prompt
+        if self._ltm_active():
+            system_prompt = self._cfg.prompt + LTM_PROMPT_SUFFIX
         messages = [
             ChatMessage(
                 role="system",
-                content=self._cfg.prompt,
+                content=system_prompt,
                 # byte-identical across calls → whole-message cache hint
-                cache_stable_prefix_chars=len(self._cfg.prompt),
+                cache_stable_prefix_chars=len(system_prompt),
             ),
             ChatMessage(role="user", content=user_msg),
         ]
@@ -318,7 +377,15 @@ class SummarizerEngine:
                 "topic_label": None,
                 "topic_changed_from_previous": False,
                 "retrieval_keywords": [],
+                # v1.12 Stage A1: always present so the agent can emit uniformly.
+                "long_term_promoted": [],
             }
+
+        # v1.12 Stage A1: accumulate long-term promotions for this run (facts +
+        # correction propagation). Surfaced in the result dict; empty when the
+        # feature is off. ``_ltm_active`` is read once — a stable gate per run.
+        long_term_promoted: list[dict] = []
+        ltm_active = self._ltm_active()
 
         # Persist the summary itself as a memory entry. Its frontier scope
         # (v1.0 B4) records the turns it covers so the K-turn tail can evict
@@ -378,11 +445,14 @@ class SummarizerEngine:
             # protected ground truth). No quote → legacy behavior, no
             # penalty (small models may not manage quotes).
             quote = fact.get("quote")
-            if isinstance(quote, str) and quote.strip():
-                if _quote_grounded(quote, grounding_text):
+            quote_text = quote.strip() if isinstance(quote, str) and quote.strip() else ""
+            quote_is_grounded = False
+            if quote_text:
+                if _quote_grounded(quote_text, grounding_text):
+                    quote_is_grounded = True
                     if not isinstance(evidence_list, list):
                         evidence_list = [evidence_list]
-                    evidence_list = [*evidence_list, quote.strip()]
+                    evidence_list = [*evidence_list, quote_text]
                 else:
                     confidence = min(confidence, 0.5)
                     pinned = False
@@ -400,6 +470,21 @@ class SummarizerEngine:
                 semantic_triple=triple_tuple,
                 initial_state=init_state,
             )
+            # v1.12 Stage A1: cross-conversation LONG-TERM promotion. The model
+            # tags each fact with a category; the CODE gate below decides — the
+            # model's flag alone never promotes anything.
+            if ltm_active:
+                self._maybe_promote_long_term(
+                    fact=fact,
+                    conversation_id=conversation_id,
+                    content=str(content),
+                    source=fsrc,
+                    confidence=confidence,
+                    turn_index=turn_index,
+                    quote_text=quote_text,
+                    quote_is_grounded=quote_is_grounded,
+                    promoted_out=long_term_promoted,
+                )
 
         # v1.0: corrections — the transcript explicitly contradicted an
         # already-known fact. Non-destructive supersede: the corrected text
@@ -416,6 +501,10 @@ class SummarizerEngine:
             if not old_id or not new_content:
                 continue
             try:
+                # Capture the stale text BEFORE supersede so a long-term copy
+                # can be matched by content hash (supersede leaves it intact).
+                old_row = self._store.get(old_id)
+                old_content = old_row.content if old_row is not None else None
                 new_entry = self._store.add(
                     conversation_id=conversation_id,
                     content=new_content,
@@ -428,7 +517,22 @@ class SummarizerEngine:
                     # the near-identical row it supersedes — skip it.
                     dedup=False,
                 )
-                self._store.supersede(old_id, new_entry.id)
+                # v1.1 R34 bug fix: pass the turn index so the frozen row's
+                # ``invalid_at_turn`` is populated (bi-temporal validity). run()
+                # already receives turn_index; the correction path just never
+                # forwarded it, so "what was true before turn X?" was unanswerable.
+                self._store.supersede(old_id, new_entry.id, turn_index=turn_index)
+                # v1.12 Stage A1: propagate the correction to any long-term copy
+                # of the same fact (matched by content hash) so durable memory
+                # doesn't keep asserting the stale value.
+                if ltm_active and old_content:
+                    self._supersede_long_term(
+                        old_content=old_content,
+                        new_content=new_content,
+                        conversation_id=conversation_id,
+                        turn_index=turn_index,
+                        promoted_out=long_term_promoted,
+                    )
             except Exception:
                 pass
 
@@ -543,7 +647,188 @@ class SummarizerEngine:
                 except Exception:
                     pass
 
+        # v1.12 Stage A1: bound the long-term store. Past the cap, drop the
+        # lowest-confidence / oldest promoted rows (best-effort). Only runs
+        # when something was promoted this cycle, so the off/no-op path is free.
+        if ltm_active and long_term_promoted:
+            self._enforce_ltm_cap()
+
+        # v1.12 Stage A1: surface promotions for the agent's memory.promoted
+        # event. Always present (empty when the feature is off or nothing durable).
+        parsed["long_term_promoted"] = long_term_promoted
+
         return parsed
+
+    # ---------------- v1.12 Stage A1: long-term promotion helpers -----------
+
+    def _maybe_promote_long_term(
+        self,
+        *,
+        fact: dict,
+        conversation_id: str,
+        content: str,
+        source: MemorySource,
+        confidence: float,
+        turn_index: int,
+        quote_text: str,
+        quote_is_grounded: bool,
+        promoted_out: list[dict],
+    ) -> None:
+        """Code-level promotion gate — never trusts the model's flags alone.
+
+        ALWAYS categories (user_directive / identity_health) promote. CONSERVATIVE
+        categories (stable_preference / relationship / long_term_project) require
+        confidence ≥ 0.7 AND a grounded quote. Anything else is skipped.
+        """
+        try:
+            category = str(fact.get("category") or "none").strip().lower()
+            # v1.12 F1: a quote that FAILED grounding (v1.1 R35 marked the fact
+            # suspect — confidence capped 0.5, pin refused, tag "ungrounded")
+            # must never become permanent pinned memory, even under an ALWAYS
+            # category. No quote → nothing was grounded to fail, so the ALWAYS
+            # "no quote still promotes" contract is preserved.
+            if quote_text and not quote_is_grounded:
+                return
+            if category in _LTM_ALWAYS_CATEGORIES:
+                pass  # always durable (flag-independent per contract)
+            elif category in _LTM_CONSERVATIVE_CATEGORIES:
+                # v1.12 F3: a durable category alone over-promotes — also require
+                # the model's explicit long_term=True flag for conservative rows
+                # (ALWAYS categories stay flag-independent per contract).
+                if (
+                    confidence < _LTM_CONSERVATIVE_MIN_CONFIDENCE
+                    or not quote_is_grounded
+                    or fact.get("long_term") is not True
+                ):
+                    return
+            else:
+                return  # category "none"/unknown → never promote
+            # Origin turn + source quote ride in the evidence JSON list.
+            evidence = [{"quote": quote_text, "turn": turn_index}]
+            row = self._store.add(
+                conversation_id=LTM_CONVERSATION_ID,
+                content=content,
+                type=MemoryType.FACT,
+                source=source,
+                confidence=confidence,
+                pinned=True,
+                last_used_turn_index=turn_index,
+                tags=f"ltm,{category}",
+                evidence=json.dumps(evidence),
+                origin_conversation_id=conversation_id,
+                # Sentinel-scoped dedup gives cross-conversation merge for free.
+                # v1.12 F8 (accepted limitation): store's prefix-dedup pass
+                # (store.py ~214-257) treats a 60-char shared prefix as the same
+                # fact, so two DISTINCT long-term facts that happen to share a
+                # long prefix can collapse — the survivor's content is rewritten
+                # in place but its tags/origin_conversation_id are NOT updated,
+                # and the "recent 40" ordering window is incoherent here since
+                # every sentinel row shares one conversation_id. Tolerated for
+                # Stage A1; a sentinel-aware dedup key is a later-stage fix.
+                dedup=True,
+            )
+            promoted_out.append({"content": content, "category": category, "id": row.id})
+        except Exception:
+            pass
+
+    def _supersede_long_term(
+        self,
+        *,
+        old_content: str,
+        new_content: str,
+        conversation_id: str,
+        turn_index: int,
+        promoted_out: list[dict],
+    ) -> None:
+        """Propagate a session correction to any long-term copy of the same fact.
+
+        Promote the corrected text as a fresh long-term row and non-destructively
+        supersede the stale one (carrying its category + populating
+        invalid_at_turn).
+
+        v1.12 F4 (limitation): the stale sentinel is located by EXACT content
+        hash, with a conservative 60-char-prefix fallback (mirroring store's
+        prefix-dedup) when the hash misses. The hash can legitimately miss when
+        promotion dedup-merged this fact semantically (a ≥0.92 match keeps the
+        EXISTING sentinel content, not the new text) or via a prefix correction;
+        if such a merge also diverges within the first 60 chars, the correction
+        cannot be located and durable memory keeps the stale value. This is not
+        guaranteed to share a hash — the older docstring overstated that."""
+        try:
+            old_hash = MemoryEntry.compute_hash(old_content)
+            old_norm = " ".join((old_content or "").strip().lower().split())
+            live_rows = [
+                r
+                for r in self._store.list(conversation_id=LTM_CONVERSATION_ID)
+                if r.superseded_by is None
+            ]
+            matches = [r for r in live_rows if r.content_hash == old_hash]
+            if not matches and len(old_norm) > 30:
+                # Hash missed — fall back to store's conservative prefix shape
+                # (len>30, identical 60-char prefix) so a dedup-merged sentinel
+                # still gets corrected.
+                for r in live_rows:
+                    rnorm = " ".join((r.content or "").strip().lower().split())
+                    if len(rnorm) > 30 and rnorm[:60] == old_norm[:60]:
+                        matches.append(r)
+            for ltm_row in matches:
+                category = ltm_category(ltm_row.tags)
+                new_row = self._store.add(
+                    conversation_id=LTM_CONVERSATION_ID,
+                    content=new_content,
+                    type=MemoryType.FACT,
+                    source=MemorySource.USER,
+                    confidence=0.9,
+                    pinned=True,
+                    last_used_turn_index=turn_index,
+                    tags=ltm_row.tags or f"ltm,{category}",
+                    evidence=json.dumps([{"quote": "", "turn": turn_index}]),
+                    origin_conversation_id=conversation_id,
+                    # A correction must not dedup-merge back into the row it replaces.
+                    dedup=False,
+                )
+                self._store.supersede(ltm_row.id, new_row.id, turn_index=turn_index)
+                promoted_out.append(
+                    {"content": new_content, "category": category, "id": new_row.id}
+                )
+        except Exception:
+            pass
+
+    def _enforce_ltm_cap(self) -> None:
+        """Hard-delete the lowest-confidence / oldest long-term rows past the cap.
+
+        Live rows evict by (is-ALWAYS-category, confidence, created_at) so a
+        just-promoted user_directive/identity_health outlives a higher-confidence
+        conservative row (v1.12 F2). Superseded "frozen" rows — one added per
+        correction and previously exempt from the cap forever — are also bounded
+        oldest-first so repeated corrections can't grow the store unbounded
+        (v1.12 F5)."""
+        try:
+            cap = int(getattr(self._long_term, "cap", 200) or 200)
+            all_rows = self._store.list(conversation_id=LTM_CONVERSATION_ID)
+            live = [e for e in all_rows if e.superseded_by is None]
+            if len(live) > cap:
+                # v1.12 F2: ALWAYS categories evaluate to True and sort LAST, so
+                # conservative rows are evicted before a durable directive/identity
+                # fact. Within a category: lowest confidence, then oldest, go first.
+                live.sort(
+                    key=lambda e: (
+                        ltm_category(e.tags) in _LTM_ALWAYS_CATEGORIES,
+                        e.confidence,
+                        e.created_at,
+                    )
+                )
+                for e in live[: len(live) - cap]:
+                    self._store.hard_delete(e.id)
+            # v1.12 F5: frozen (superseded) sentinel rows are otherwise immortal
+            # — bound them oldest-first so a long correction history stays capped.
+            frozen = [e for e in all_rows if e.superseded_by is not None]
+            if len(frozen) > cap:
+                frozen.sort(key=lambda e: e.created_at)
+                for e in frozen[: len(frozen) - cap]:
+                    self._store.hard_delete(e.id)
+        except Exception:
+            pass
 
 
 # v1.0: JSON recovery lives in sherlock.jsonish (shared with LLM-3).

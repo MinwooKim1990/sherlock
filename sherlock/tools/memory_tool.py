@@ -105,6 +105,14 @@ def memory_lookup(
     if not query:
         return []
     hits = hybrid.search(query, conversation_id=conversation_id, top_k=top_k)
+    # v1.12 F7: an unscoped lookup (no conversation) runs hybrid's vector tier
+    # over EVERY scope, including the long-term sentinel — but the sentinel is
+    # only meant to be read through the rag_channel. Drop those rows here so a
+    # pre-conversation lookup can't leak durable facts.
+    if conversation_id is None:
+        from sherlock.memory.entry import LTM_CONVERSATION_ID
+
+        hits = [(e, s) for e, s in hits if e.conversation_id != LTM_CONVERSATION_ID]
     return [_entry_to_dict(e) | {"score": float(score)} for e, score in hits]
 
 
@@ -135,9 +143,18 @@ def memory_entity(
         entries = finder(conversation_id, targets)
     else:
         entries = store.list(conversation_id=conversation_id)
+    # v1.12 F7: an unscoped entity scan sees the long-term sentinel scope too;
+    # keep it a rag_channel-only door by excluding sentinel rows when unscoped.
+    ltm_scope: str | None = None
+    if conversation_id is None:
+        from sherlock.memory.entry import LTM_CONVERSATION_ID
+
+        ltm_scope = LTM_CONVERSATION_ID
     hits: list["MemoryEntry"] = []
     for e in entries:
         if e.state == MemoryState.FORGOTTEN:
+            continue
+        if ltm_scope is not None and e.conversation_id == ltm_scope:
             continue
         if _entry_entity_pool(e) & targets:
             hits.append(e)
@@ -170,6 +187,12 @@ def memory_pinned(
     # v1.0: superseded rows are never "current pinned truth", even if a
     # stale pin flag survives somewhere — exclude them outright.
     entries = [e for e in entries if not getattr(e, "superseded_by", None)]
+    # v1.12 F7: an unscoped pinned dump would include the always-pinned
+    # long-term sentinel rows; the sentinel is a rag_channel-only door.
+    if conversation_id is None:
+        from sherlock.memory.entry import LTM_CONVERSATION_ID
+
+        entries = [e for e in entries if e.conversation_id != LTM_CONVERSATION_ID]
     return [_entry_to_dict(e) for e in entries]
 
 

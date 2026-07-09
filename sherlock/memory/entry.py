@@ -12,6 +12,26 @@ from typing import Optional
 
 from sqlmodel import Field, SQLModel
 
+# v1.12 Stage A1: sentinel conversation_id under which cross-conversation
+# LONG-TERM memory is stored. All ordinary memory is scoped by the real
+# conversation_id; promoted long-term facts live under this reserved scope so
+# they are (a) shared across every conversation and (b) never touched by the
+# per-turn decay/cap passes, which only ever run on the ACTIVE conversation.
+LTM_CONVERSATION_ID = "__sherlock_ltm__"
+
+
+def ltm_category(tags: str) -> str:
+    """Extract the long-term category from a promoted entry's tags.
+
+    Promoted rows are tagged ``"ltm,<category>"`` (see the summarizer). Returns
+    the category token, or ``"none"`` when the tags don't carry one.
+    """
+    parts = [t.strip() for t in (tags or "").split(",") if t.strip()]
+    for i, tok in enumerate(parts):
+        if tok == "ltm" and i + 1 < len(parts):
+            return parts[i + 1]
+    return "none"
+
 
 class MemoryType(str, Enum):
     FACT = "fact"
@@ -109,6 +129,12 @@ class MemoryEntry(SQLModel, table=True):
     # v0.5.0: sha256 of normalised content for O(1) indexed exact-dedup
     # (avoids scanning all same-type rows on every add).
     content_hash: str = Field(default="", index=True)
+
+    # v1.12 Stage A1: provenance for a long-term-promoted row — the REAL
+    # conversation the fact was first observed in (the row itself is stored
+    # under LTM_CONVERSATION_ID). Nullable; None for every ordinary write, so
+    # existing rows and the additive startup migration are unaffected.
+    origin_conversation_id: Optional[str] = Field(default=None, index=True)
 
     @staticmethod
     def compute_hash(content: str) -> str:

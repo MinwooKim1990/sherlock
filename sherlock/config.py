@@ -96,6 +96,49 @@ class TopicClusterConfig(BaseModel):
     min_cluster_size: int = 3
 
 
+class LongTermMemoryConfig(BaseModel):
+    """v1.12 Stage A1: cross-conversation LONG-TERM memory.
+
+    LLM-2 promotes a small, high-value subset of session facts (identity,
+    health, explicit "remember this" directives, durable preferences/projects)
+    into a reserved sentinel scope shared by every conversation. Off by default
+    while the feature is staged; the code-level taxonomy gate — never the model
+    alone — decides what is durable enough to keep forever.
+    """
+
+    # Dev gate for the staged rollout. WILL DEFAULT TO True at release — the
+    # whole point of long-term memory is to be on. Kept False here so each
+    # stage lands byte-identical for existing users until the release flip.
+    enabled: bool = False
+    # Suppress long-term WRITES only (promotions). Reads are unaffected, so a
+    # user can pause accumulating new durable facts without losing recall of
+    # what's already stored. Mirrors a browser "incognito" session.
+    incognito: bool = False
+    # Hard cap on stored long-term rows. Past it, the lowest-confidence/oldest
+    # promoted rows are hard-deleted (best-effort) so the store stays bounded.
+    cap: int = 200
+    # Budget for the (later-stage) injected long-term PROFILE block: at most
+    # this many facts / characters reach the LLM-1 slot so it can't crowd out
+    # the live conversation. Declared here so the schema is stable across stages.
+    profile_max_facts: int = 12
+    profile_max_chars: int = 1200
+    # Also expose long-term facts to the RAG retrieval channel (semantic recall
+    # across conversations), not just the always-on profile block.
+    rag_channel: bool = True
+    # On wipe_long_term(), export the sentinel scope to a portable file before
+    # deleting (the export hook lands in Stage A4; this flag reserves the knob).
+    # Default False until the export actually lands: today wipe_long_term()
+    # silently skips the promised export, so a True default would over-promise.
+    # Flips to True when export lands (Stage A4).
+    auto_export_on_wipe: bool = False
+    # Category taxonomy (documentation — enforced in the summarizer's code gate):
+    #   user_directive   — the user explicitly asked to remember it (ALWAYS)
+    #   identity_health  — name/pronouns/allergies/medical (ALWAYS)
+    #   stable_preference / relationship / long_term_project
+    #                    — durable only; promoted with confidence≥0.7 + a quote
+    #   none             — transient/one-off/speculation → NEVER promoted
+
+
 class MemoryConfig(BaseModel):
     # v0.3.0 fields — still honoured for backcompat, but the K-turn slot
     # is now driven by SlotBudget when slot_budget_profile is set.
@@ -164,6 +207,9 @@ class MemoryConfig(BaseModel):
             "tier4_rag_fallback": 0.5,
         }
     )
+
+    # v1.12 Stage A1: cross-conversation long-term memory (off by default).
+    long_term: LongTermMemoryConfig = Field(default_factory=LongTermMemoryConfig)
 
 
 class SearchConfig(BaseModel):

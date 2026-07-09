@@ -1117,6 +1117,42 @@ class Sherlock:
     def conversation_id(self) -> Optional[str]:
         return self._conversation.id if self._conversation else None
 
+    # ---- v1.12 Stage A1: long-term (cross-conversation) memory ----
+
+    def long_term_memory(self) -> list[dict]:
+        """Return the live cross-conversation long-term memory (the sentinel
+        scope), newest first. Superseded/frozen rows are excluded — this is the
+        currently-true durable memory. Each dict carries ``id``, ``content``,
+        ``category`` (from tags), ``confidence``, ``created_at`` and
+        ``origin_conversation_id`` (the conversation the fact was first seen in).
+        """
+        from sherlock.memory.entry import LTM_CONVERSATION_ID, ltm_category
+
+        rows = [
+            e for e in self._memory.list(conversation_id=LTM_CONVERSATION_ID) if not e.superseded_by
+        ]
+        rows.sort(key=lambda e: e.created_at, reverse=True)
+        return [
+            {
+                "id": e.id,
+                "content": e.content,
+                "category": ltm_category(e.tags),
+                "confidence": e.confidence,
+                "created_at": e.created_at,
+                "origin_conversation_id": e.origin_conversation_id,
+            }
+            for e in rows
+        ]
+
+    def wipe_long_term(self) -> int:
+        """Delete ALL long-term memory (the sentinel scope). Returns the count
+        removed. Ordinary per-conversation memory is untouched."""
+        from sherlock.memory.entry import LTM_CONVERSATION_ID
+
+        # TODO(Stage A4): when long_term.auto_export_on_wipe is set, export the
+        # sentinel-scoped memory to a portable file BEFORE deleting it here.
+        return self._memory.delete_conversation_memories(LTM_CONVERSATION_ID)
+
     # ---- bootstrap wiring (filled by sherlock.bootstrap.engine) ----
 
     def install_companion_prompts(self, llm2: str, llm3: str, version: int = 1) -> None:
@@ -1139,6 +1175,10 @@ class Sherlock:
                     topic_change_similarity_threshold=self.config.memory.topic_change_similarity_threshold,
                     prompt=llm2,
                 ),
+                # v1.12 Stage A1: pass the (shared-by-reference) long-term config
+                # so the summarizer can gate promotion + the prompt suffix. None-
+                # safe: getattr default keeps pre-v1.12 configs working.
+                long_term=getattr(self.config.memory, "long_term", None),
             )
         # Inference engine:
         from sherlock.inference.engine import (  # local import to avoid cycle
@@ -4217,6 +4257,47 @@ class Sherlock:
         except Exception:
             pass
 
+    @staticmethod
+    def _compact_done_payload(summary_result: dict) -> dict:
+        """v1.12 F9: keep the OFF-state ``compact.done`` event payload
+        byte-identical to v1.11, which had no ``long_term_promoted`` key.
+
+        run()'s return value always carries the key (possibly ``[]``) for
+        callers, but the EVENT payload strips it when empty — so an idle/off
+        cycle emits the unchanged v1.11 shape while a real promotion cycle
+        still surfaces the list."""
+        payload = dict(summary_result)
+        if not payload.get("long_term_promoted"):
+            payload.pop("long_term_promoted", None)
+        return payload
+
+    def _emit_memory_promoted(self, summary_result: dict) -> None:
+        """v1.12 Stage A1: emit ``memory.promoted`` when LLM-2 promoted any fact
+        into long-term memory this cycle. Best-effort; no-op when nothing was
+        promoted (feature off, incognito, or nothing durable). Called at BOTH the
+        sync and achat compaction sites for event parity."""
+        try:
+            promoted = summary_result.get("long_term_promoted") or []
+        except AttributeError:
+            promoted = []
+        if not promoted:
+            return
+        self._emit(
+            "memory.promoted",
+            "llm2",
+            {
+                "count": len(promoted),
+                "items": [
+                    {
+                        "category": p.get("category"),
+                        "content": (p.get("content") or "")[:120],
+                    }
+                    for p in promoted
+                    if isinstance(p, dict)
+                ],
+            },
+        )
+
     def _maybe_auto_infer(self, requested: set, turn_index: int, topic_changed: bool) -> set:
         """Selective auto-infer safety net (see MemoryConfig.auto_infer).
 
@@ -4515,7 +4596,8 @@ class Sherlock:
                 summary_run = True
                 self._last_compact_turn = turn_index
                 if isinstance(summary_result, dict):
-                    self._emit("compact.done", "llm2", dict(summary_result))
+                    self._emit("compact.done", "llm2", self._compact_done_payload(summary_result))
+                    self._emit_memory_promoted(summary_result)
                     # v1.6: carry worth_digging/predicted_directions to next turn's gate.
                     self._prev_summary_result = summary_result
             except Exception as exc:
@@ -6396,7 +6478,8 @@ class Sherlock:
                 summary_run = True
                 self._last_compact_turn = turn_index
                 if isinstance(summary_result, dict):
-                    self._emit("compact.done", "llm2", dict(summary_result))
+                    self._emit("compact.done", "llm2", self._compact_done_payload(summary_result))
+                    self._emit_memory_promoted(summary_result)
                     self._prev_summary_result = summary_result  # v1.6 gate signal
             except Exception as exc:
                 self._emit(
@@ -6638,6 +6721,10 @@ class Sherlock:
         # the SHERLOCK_COMPANIONS env (used to keep the test suite hermetic on
         # legacy) else "cold_start". ---
         companions_mode: str | None = None,
+        # --- v1.12 Stage A1: cross-conversation long-term memory (off by
+        # default; dev gate). Pass True to enable with defaults, or a dict of
+        # LongTermMemoryConfig overrides (e.g. {"enabled": True, "incognito": True}). ---
+        long_term: bool | dict | None = None,
     ) -> "Sherlock":
         """Bring-your-own-LLM constructor.
 
@@ -6895,6 +6982,16 @@ class Sherlock:
         # v1.5 Stage 4: recursive inference notebook.
         cfg.inference.inference_notebook = bool(inference_notebook)
         cfg.inference.notebook_max_rounds = int(notebook_max_rounds)
+        # v1.12 Stage A1: opt in to cross-conversation long-term memory. Must be
+        # set BEFORE the agent is constructed so install_companion_prompts hands
+        # the enabled config to the summarizer. Off (default) → byte-identical.
+        if long_term:
+            from sherlock.config import LongTermMemoryConfig
+
+            if isinstance(long_term, dict):
+                cfg.memory.long_term = LongTermMemoryConfig(**{"enabled": True, **long_term})
+            else:
+                cfg.memory.long_term = LongTermMemoryConfig(enabled=True)
 
         main_provider = CallableProvider(main_chat, model_id=model_id)
         summary_provider = (

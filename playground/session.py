@@ -121,6 +121,13 @@ def memory_snapshot(agent) -> list[dict]:
         entries = agent.memory.list(conversation_id=agent.conversation_id)
     except Exception:
         return rows
+    # v1.12 F7: pre-conversation (scope None) list() returns every scope,
+    # including the long-term sentinel; exclude it so the snapshot only shows
+    # the active conversation. The sentinel is a rag_channel-only read door.
+    if agent.conversation_id is None:
+        from sherlock.memory.entry import LTM_CONVERSATION_ID
+
+        entries = [e for e in entries if e.conversation_id != LTM_CONVERSATION_ID]
     for m in entries:
         rows.append(
             {
