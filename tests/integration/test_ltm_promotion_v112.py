@@ -17,6 +17,7 @@ companion tag; summary returns a canned LLM-2 JSON payload.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -180,8 +181,11 @@ def test_wipe_long_term_clears_sentinel(tmp_path):
     )
     agent.chat(_USER_MSG)
     assert len(agent.long_term_memory()) == 1
-    removed = agent.wipe_long_term()
-    assert removed == 1
+    # v1.12 Stage A4: wipe_long_term returns {"removed", "backup_path"} and (with
+    # auto_export_on_wipe defaulting True) writes a Markdown backup first.
+    result = agent.wipe_long_term()
+    assert result["removed"] == 1
+    assert result["backup_path"] and Path(result["backup_path"]).exists()
     assert agent.long_term_memory() == []
 
 

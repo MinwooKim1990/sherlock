@@ -252,12 +252,27 @@ class LTMToolContext:
         incognito: bool,
         turn_index: int,
         pending: dict,
+        auto_export_on_wipe: bool = False,
+        backup_dir=None,
     ) -> None:
         self.enabled = bool(enabled)
         self.incognito = bool(incognito)
         self.turn_index = int(turn_index)
         # token -> {"kind": "delete"|"wipe", "ids": list[str]|None, "minted_turn": int}
         self.pending = pending
+        # v1.12 Stage A4: wipe-confirm honours the auto-export backup. Both are
+        # threaded from the agent so the stateless tool can write a Markdown
+        # backup of the sentinel scope to ``backup_dir`` BEFORE the wipe.
+        # F6 (audit): ``backup_dir`` MAY be a zero-arg callable, resolved LAZILY
+        # only when a wipe-confirm actually needs to back up — so a read verb
+        # (lookup/profile/…) never triggers the storage-dir mkdir side effect.
+        self.auto_export_on_wipe = bool(auto_export_on_wipe)
+        self.backup_dir = backup_dir
+
+    def resolve_backup_dir(self):
+        """Resolve the (possibly-callable) backup dir; ``None`` when unset."""
+        d = self.backup_dir
+        return d() if callable(d) else d
 
     def mint(self, kind: str, ids: Optional[list[str]]) -> str:
         """Freeze a pending destructive action and return its confirm token.
@@ -606,10 +621,30 @@ def memory_wipe_confirm(
         return {"tool": "memory", "kind": "wipe-confirm", "error": cerr}
     from sherlock.memory.entry import LTM_CONVERSATION_ID
 
-    # TODO(Stage A4): when config.memory.long_term.auto_export_on_wipe is set,
-    # export the sentinel scope to a portable file BEFORE deleting it here.
+    # v1.12 Stage A4: honour auto_export_on_wipe — write a Markdown backup of the
+    # sentinel scope BEFORE deleting, so a chat-driven wipe is recoverable too.
+    backup_path = None
+    backup_dir = ltm_ctx.resolve_backup_dir() if ltm_ctx.auto_export_on_wipe else None
+    if backup_dir is not None:
+        try:
+            from sherlock.memory.portability import backup_ltm_markdown
+
+            backup_path = backup_ltm_markdown(store, backup_dir)
+        except Exception as exc:
+            # F2 (audit): fail CLOSED — a failed backup write must NOT fall
+            # through to an unrecoverable wipe. The confirm token is already
+            # consumed above, so the user must re-preview (correct for a
+            # destructive op).
+            return {
+                "tool": "memory",
+                "kind": "wipe-confirm",
+                "error": f"backup failed, wipe aborted: {exc}",
+            }
     n = store.delete_conversation_memories(LTM_CONVERSATION_ID)
-    return {"tool": "memory", "kind": "wipe-confirm", "wiped": n}
+    result = {"tool": "memory", "kind": "wipe-confirm", "wiped": n}
+    if backup_path:
+        result["backup_path"] = backup_path
+    return result
 
 
 # ---------------------------------------------------------------------------

@@ -125,12 +125,12 @@ class LongTermMemoryConfig(BaseModel):
     # Also expose long-term facts to the RAG retrieval channel (semantic recall
     # across conversations), not just the always-on profile block.
     rag_channel: bool = True
-    # On wipe_long_term(), export the sentinel scope to a portable file before
-    # deleting (the export hook lands in Stage A4; this flag reserves the knob).
-    # Default False until the export actually lands: today wipe_long_term()
-    # silently skips the promised export, so a True default would over-promise.
-    # Flips to True when export lands (Stage A4).
-    auto_export_on_wipe: bool = False
+    # On wipe_long_term() (and the memory wipe-confirm tool), export the sentinel
+    # scope to a Markdown backup file BEFORE deleting, so a wipe is recoverable.
+    # v1.12 Stage A4: the export hook has landed (sherlock.memory.portability),
+    # so this now defaults True — the whole reason it was False (the promised
+    # export didn't exist yet) is resolved. Set False to opt out of the backup.
+    auto_export_on_wipe: bool = True
     # Category taxonomy (documentation — enforced in the summarizer's code gate):
     #   user_directive   — the user explicitly asked to remember it (ALWAYS)
     #   identity_health  — name/pronouns/allergies/medical (ALWAYS)

@@ -1222,14 +1222,142 @@ class Sherlock:
             for e in rows
         ]
 
-    def wipe_long_term(self) -> int:
-        """Delete ALL long-term memory (the sentinel scope). Returns the count
-        removed. Ordinary per-conversation memory is untouched."""
+    def wipe_long_term(self, backup: bool | None = None) -> dict:
+        """Delete ALL long-term memory (the sentinel scope). Ordinary
+        per-conversation memory is untouched.
+
+        v1.12 Stage A4: when ``backup`` is requested (``backup=True``, or
+        ``None`` → resolved from ``config.memory.long_term.auto_export_on_wipe``,
+        default True), a Markdown export is written to
+        ``<storage_dir>/ltm_backup_<UTCtimestamp>.md`` BEFORE anything is
+        deleted, so a wipe is recoverable. Returns
+        ``{"removed": N, "backup_path": <str|None>}`` and emits ``memory.wiped``.
+        """
         from sherlock.memory.entry import LTM_CONVERSATION_ID
 
-        # TODO(Stage A4): when long_term.auto_export_on_wipe is set, export the
-        # sentinel-scoped memory to a portable file BEFORE deleting it here.
-        return self._memory.delete_conversation_memories(LTM_CONVERSATION_ID)
+        _lt = getattr(self.config.memory, "long_term", None)
+        if backup is None:
+            backup = bool(_lt and getattr(_lt, "auto_export_on_wipe", False))
+        backup_path: str | None = None
+        if backup:
+            try:
+                from sherlock.memory.portability import backup_ltm_markdown
+
+                backup_path = backup_ltm_markdown(self._memory, self._ltm_storage_dir())
+            except Exception as exc:
+                # F2 (audit): fail CLOSED — if the backup write fails we must NOT
+                # proceed to an unrecoverable delete. Abort, emit no memory.wiped.
+                return {
+                    "removed": 0,
+                    "backup_path": None,
+                    "error": f"backup failed, wipe aborted: {exc}",
+                }
+        removed = self._memory.delete_conversation_memories(LTM_CONVERSATION_ID)
+        self._emit("memory.wiped", "memory", {"count": removed, "backup_path": backup_path})
+        return {"removed": removed, "backup_path": backup_path}
+
+    def _ltm_storage_dir(self) -> "Path":
+        """Directory for long-term export/backup files: the folder holding
+        ``sherlock.db`` (created if missing)."""
+        from pathlib import Path as _Path
+
+        d = _Path(self.config.storage.sqlite_path).resolve().parent
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def export_memory(self, fmt: str = "markdown", path: str | None = None) -> str:
+        """Export the cross-conversation long-term memory as ``markdown``,
+        ``json`` or ``sql`` and return the string. When ``path`` is given the
+        string is also written there (UTF-8). Reading is harmless, so this works
+        regardless of ``long_term.enabled``. Emits ``memory.exported``."""
+        from sherlock.memory import portability as _port
+
+        fmt_norm = (fmt or "markdown").strip().lower()
+        if fmt_norm in ("markdown", "md"):
+            text = _port.export_ltm_markdown(self._memory)
+        elif fmt_norm == "json":
+            text = _port.export_ltm_json(self._memory)
+        elif fmt_norm == "sql":
+            text = _port.export_ltm_sql(self._memory)
+        else:
+            raise ValueError(f"unknown export format {fmt!r} (use 'markdown', 'json', or 'sql')")
+        count = len(_port.live_ltm_rows(self._memory))
+        written_path: str | None = None
+        if path is not None:
+            from pathlib import Path as _Path
+
+            # F4 (audit): honour "~" and create missing parent dirs so an export
+            # to a home-relative or nested path doesn't crash on a missing folder.
+            p = _Path(path).expanduser()
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(text, encoding="utf-8")
+            written_path = str(p)
+        self._emit(
+            "memory.exported",
+            "memory",
+            {"format": fmt_norm, "count": count, "path": written_path},
+        )
+        return text
+
+    def import_memory(self, src: str, fmt: str | None = None) -> dict:
+        """Import long-term facts from ``src`` — a filesystem PATH or raw TEXT
+        (a short existing path is read; otherwise ``src`` is treated as the
+        content). ``fmt`` is auto-detected when ``None`` (leading ``{`` → json,
+        ``# Sherlock`` → markdown). REQUIRES ``long_term.enabled`` (it writes).
+        Every fact is routed through the store so redaction + dedup re-apply.
+        Emits ``memory.imported`` on success. Returns
+        ``{imported, skipped, warnings}`` or ``{"error": ...}``."""
+        _lt = getattr(self.config.memory, "long_term", None)
+        if not (_lt and getattr(_lt, "enabled", False)):
+            return {
+                "error": "long-term memory is disabled",
+                "imported": 0,
+                "skipped": 0,
+                "warnings": [],
+            }
+        text = src
+        try:
+            if isinstance(src, str) and len(src) < 4096 and os.path.exists(src):
+                from pathlib import Path as _Path
+
+                text = _Path(src).read_text(encoding="utf-8")
+        except (OSError, ValueError):
+            text = src
+        detected = fmt
+        if detected is None:
+            stripped = text.lstrip()
+            if stripped.startswith("{"):
+                detected = "json"
+            elif stripped.startswith("# Sherlock"):
+                detected = "markdown"
+            else:
+                return {
+                    "error": "could not detect format (expected JSON '{' or '# Sherlock' markdown)",
+                    "imported": 0,
+                    "skipped": 0,
+                    "warnings": [],
+                }
+        detected = detected.strip().lower()
+        from sherlock.memory import portability as _port
+
+        if detected == "json":
+            result = _port.import_ltm_json(self._memory, text)
+        elif detected in ("markdown", "md"):
+            result = _port.import_ltm_markdown(self._memory, text)
+        else:
+            return {
+                "error": f"unknown import format {fmt!r} (use 'json' or 'markdown')",
+                "imported": 0,
+                "skipped": 0,
+                "warnings": [],
+            }
+        if "error" not in result:
+            self._emit(
+                "memory.imported",
+                "memory",
+                {"imported": result.get("imported", 0), "skipped": result.get("skipped", 0)},
+            )
+        return result
 
     # ---- bootstrap wiring (filled by sherlock.bootstrap.engine) ----
 
@@ -4499,7 +4627,11 @@ class Sherlock:
             elif kind == "forget-confirm":
                 self._emit("memory.deleted", "memory", {"count": result.get("deleted", 0)})
             elif kind == "wipe-confirm":
-                self._emit("memory.wiped", "memory", {"count": result.get("wiped", 0)})
+                self._emit(
+                    "memory.wiped",
+                    "memory",
+                    {"count": result.get("wiped", 0), "backup_path": result.get("backup_path")},
+                )
         except Exception:
             pass
 
@@ -6104,6 +6236,13 @@ class Sherlock:
                     incognito=bool(_lt and getattr(_lt, "incognito", False)),
                     turn_index=self._turn_index,
                     pending=self._ltm_pending,
+                    # v1.12 Stage A4: a chat-driven wipe-confirm backs up first
+                    # too (same knob + backup dir the agent-level wipe uses).
+                    # F6 (audit): pass the dir-resolver as a CALLABLE so its mkdir
+                    # side effect fires lazily on wipe-confirm only, not on every
+                    # (mostly read) memory dispatch.
+                    auto_export_on_wipe=bool(_lt and getattr(_lt, "auto_export_on_wipe", False)),
+                    backup_dir=self._ltm_storage_dir,
                 )
                 result = dispatch_memory(
                     payload,
