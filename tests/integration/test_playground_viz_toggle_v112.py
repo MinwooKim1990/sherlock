@@ -118,6 +118,26 @@ def test_export_includes_rendered_viz(monkeypatch):
     assert "[📊 visualization: bar chart of quarterly sales](viz/t1-1.html)" in md
 
 
+def test_export_viz_link_uses_conv_subdir(monkeypatch):
+    """v1.12 F2: when the viz.rendered event carries a ``conv`` component (the real
+    emitted shape now), the export link points at the per-conversation subdir."""
+    _, server = _client(monkeypatch)
+    md = _export_session(
+        server,
+        [
+            {"type": "turn.start", "turn": 1, "data": {"user_text": "sales?"}},
+            {"type": "turn.completed", "turn": 1, "data": {"response_text": "Here: ⟦viz:t1-1⟧"}},
+            {"type": "viz.pending", "turn": 1, "data": {"viz_id": "t1-1", "description": "chart"}},
+            {
+                "type": "viz.rendered",
+                "turn": 1,
+                "data": {"viz_id": "t1-1", "conv": "conv-abc123", "validated": "static"},
+            },
+        ],
+    )
+    assert "[📊 visualization: chart](viz/conv-abc123/t1-1.html)" in md
+
+
 def test_export_no_viz_line_when_none_rendered(monkeypatch):
     _, server = _client(monkeypatch)
     md = _export_session(

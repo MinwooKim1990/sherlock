@@ -762,12 +762,17 @@ def dispatch_memory(
 # Native tool-calling schema generators (for users not using the tag)
 # ---------------------------------------------------------------------------
 
-_MEMORY_DESCRIPTION = (
-    "Read AND manage Sherlock's memory. READ verbs recall a specific fact the "
-    "user shared before (allergies, names, dates, preferences) that may have "
-    "fallen out of the recent K-turn window: lookup (semantic+entity), entity "
-    "(deterministic), timeline (last N raw turns), pinned (all pinned facts). "
-    "MANAGE verbs act on cross-conversation LONG-TERM memory: profile (list "
+# READ verbs work under any config; they recall a fact the user shared before
+# (allergies, names, dates, preferences) that may have fallen out of the recent
+# K-turn window.
+_MEMORY_READ_DESCRIPTION = (
+    "Read Sherlock's memory. READ verbs recall a specific fact the user shared "
+    "before (allergies, names, dates, preferences) that may have fallen out of "
+    "the recent K-turn window: lookup (semantic+entity), entity (deterministic), "
+    "timeline (last N raw turns), pinned (all pinned facts)."
+)
+_MEMORY_DESCRIPTION = _MEMORY_READ_DESCRIPTION + (
+    " MANAGE verbs act on cross-conversation LONG-TERM memory: profile (list "
     "what is remembered), save (remember this fact permanently), update "
     "(correct one durable fact by id-prefix), forget (PREVIEW facts to delete "
     "+ get a confirm token), forget-confirm (execute the previewed delete only "
@@ -775,41 +780,51 @@ _MEMORY_DESCRIPTION = (
     "Deletions ALWAYS require a two-step preview→confirm with the token."
 )
 
-# v1.12 A3: the full verb set for the native-tool ``kind`` enum.
-_MEMORY_KINDS = [
-    "lookup",
-    "entity",
-    "timeline",
-    "pinned",
-    "profile",
-    "save",
-    "update",
-    "forget",
-    "forget-confirm",
-    "wipe",
-    "wipe-confirm",
-]
+# v1.12 A3: the verb sets for the native-tool ``kind`` enum. NICE-1: the seven
+# cross-conversation MANAGE verbs are only meaningful when long-term memory is
+# enabled, so they're gated OUT of the schema when it's off — that keeps the
+# native-tool surface byte-identical to the pre-LTM / LTM-off world (the
+# dispatcher already safe-errors these verbs, but the SCHEMA shouldn't advertise
+# them). Pass ``long_term`` to the builders to mirror ``memory.long_term.enabled``.
+_MEMORY_READ_KINDS = ["lookup", "entity", "timeline", "pinned"]
+_LTM_KINDS = ["profile", "save", "update", "forget", "forget-confirm", "wipe", "wipe-confirm"]
+_MEMORY_KINDS = _MEMORY_READ_KINDS + _LTM_KINDS  # full surface (LTM on)
+
+_KIND_DESC_FULL = "lookup/entity/timeline/pinned = read; profile = list long-term facts; save = remember permanently; update = correct by id-prefix; forget/wipe = PREVIEW a deletion (returns a confirm token); forget-confirm/wipe-confirm = execute with that token after the user confirms"
+_KIND_DESC_READ = "lookup (semantic+entity), entity (deterministic), timeline (last N raw turns), pinned (all pinned facts)"
 
 
-def make_openai_memory_tool() -> list[dict]:
-    """OpenAI Chat Completions tools= entry for the memory tool."""
+def _memory_kinds(long_term: bool) -> list[str]:
+    return _MEMORY_READ_KINDS + _LTM_KINDS if long_term else list(_MEMORY_READ_KINDS)
+
+
+def make_openai_memory_tool(long_term: bool = True) -> list[dict]:
+    """OpenAI Chat Completions tools= entry for the memory tool.
+
+    ``long_term`` mirrors ``config.memory.long_term.enabled``: when False the
+    cross-conversation MANAGE verbs are omitted so the schema stays byte-identical
+    to the pre-LTM / LTM-off world (NICE-1)."""
     return [
         {
             "type": "function",
             "function": {
                 "name": "memory_lookup",
-                "description": _MEMORY_DESCRIPTION,
+                "description": _MEMORY_DESCRIPTION if long_term else _MEMORY_READ_DESCRIPTION,
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "kind": {
                             "type": "string",
-                            "enum": _MEMORY_KINDS,
-                            "description": "lookup/entity/timeline/pinned = read; profile = list long-term facts; save = remember permanently; update = correct by id-prefix; forget/wipe = PREVIEW a deletion (returns a confirm token); forget-confirm/wipe-confirm = execute with that token after the user confirms",
+                            "enum": _memory_kinds(long_term),
+                            "description": _KIND_DESC_FULL if long_term else _KIND_DESC_READ,
                         },
                         "args": {
                             "type": "string",
-                            "description": "Query / entity / count / text / id-prefix / confirm token, depending on kind. Empty for 'pinned', 'profile', 'wipe'.",
+                            "description": (
+                                "Query / entity / count / text / id-prefix / confirm token, depending on kind. Empty for 'pinned', 'profile', 'wipe'."
+                                if long_term
+                                else "Query / entity / count, depending on kind. Empty for 'pinned'."
+                            ),
                         },
                     },
                     "required": ["kind"],
@@ -819,18 +834,19 @@ def make_openai_memory_tool() -> list[dict]:
     ]
 
 
-def make_anthropic_memory_tool() -> list[dict]:
-    """Anthropic Messages tools= entry for the memory tool."""
+def make_anthropic_memory_tool(long_term: bool = True) -> list[dict]:
+    """Anthropic Messages tools= entry for the memory tool. ``long_term`` gates the
+    cross-conversation MANAGE verbs exactly as in ``make_openai_memory_tool``."""
     return [
         {
             "name": "memory_lookup",
-            "description": _MEMORY_DESCRIPTION,
+            "description": _MEMORY_DESCRIPTION if long_term else _MEMORY_READ_DESCRIPTION,
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "kind": {
                         "type": "string",
-                        "enum": _MEMORY_KINDS,
+                        "enum": _memory_kinds(long_term),
                     },
                     "args": {
                         "type": "string",

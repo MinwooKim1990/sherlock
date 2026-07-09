@@ -233,3 +233,53 @@ def test_dispatch_memory_unknown_kind_error():
 def test_dispatch_memory_no_store_returns_error():
     res = dispatch_memory("lookup foo")
     assert "error" in res
+
+
+# ---------- NICE-1: native-tool schema gates the LTM verbs on long_term -------
+
+_LTM_VERBS = {"profile", "save", "update", "forget", "forget-confirm", "wipe", "wipe-confirm"}
+_READ_VERBS = {"lookup", "entity", "timeline", "pinned"}
+
+
+def _openai_kinds(long_term):
+    from sherlock.tools import make_openai_memory_tool
+
+    tool = make_openai_memory_tool(long_term=long_term)
+    return set(tool[0]["function"]["parameters"]["properties"]["kind"]["enum"])
+
+
+def _anthropic_kinds(long_term):
+    from sherlock.tools import make_anthropic_memory_tool
+
+    tool = make_anthropic_memory_tool(long_term=long_term)
+    return set(tool[0]["input_schema"]["properties"]["kind"]["enum"])
+
+
+def test_native_tool_schema_full_surface_when_long_term_on():
+    # default AND explicit-True expose read + the seven manage verbs
+    for kinds in (_openai_kinds(True), _anthropic_kinds(True)):
+        assert kinds == _READ_VERBS | _LTM_VERBS
+    from sherlock.tools import make_anthropic_memory_tool, make_openai_memory_tool
+
+    assert (
+        set(make_openai_memory_tool()[0]["function"]["parameters"]["properties"]["kind"]["enum"])
+        == _READ_VERBS | _LTM_VERBS
+    )
+    assert (
+        set(make_anthropic_memory_tool()[0]["input_schema"]["properties"]["kind"]["enum"])
+        == _READ_VERBS | _LTM_VERBS
+    )
+
+
+def test_native_tool_schema_hides_ltm_verbs_when_off():
+    # LTM off → only the read verbs, byte-identical to the pre-LTM surface
+    for kinds in (_openai_kinds(False), _anthropic_kinds(False)):
+        assert kinds == _READ_VERBS
+        assert not (kinds & _LTM_VERBS)
+
+
+def test_native_tool_off_description_has_no_manage_language():
+    from sherlock.tools import make_openai_memory_tool
+
+    desc = make_openai_memory_tool(long_term=False)[0]["function"]["description"]
+    assert "MANAGE" not in desc and "long-term" not in desc.lower()

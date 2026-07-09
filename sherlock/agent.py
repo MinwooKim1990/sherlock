@@ -1465,15 +1465,31 @@ class Sherlock:
             data["research_id"] = job["research_id"]
         self._emit("viz.failed", "llm4", data)
 
+    def _viz_conv_component(self) -> str:
+        """v1.12 F2: a sanitized single path component naming the ACTIVE
+        conversation, used to namespace viz artifacts. In a persistent profile dir
+        the session-local viz_id (``t1-1``) is reused across restarts/sessions, so
+        a flat ``viz/<viz_id>.html`` silently clobbers a prior conversation's chart;
+        keying by conversation_id keeps them separate. ``None`` (pre-conversation)
+        collapses to ``_``."""
+        cid = self.conversation_id or "_"
+        return re.sub(r"[^A-Za-z0-9._-]", "_", str(cid)) or "_"
+
     def _write_viz_artifact(self, viz_id: str, html: str) -> str:
-        """Persist a validated artifact to ``<storage_dir>/viz/<viz_id>.html`` and
-        return the path. viz_id is sanitised for the filename."""
+        """Persist a validated artifact to ``<storage_dir>/viz/<conv_id>/<viz_id>.html``
+        and return the path. Both the conversation component and viz_id are
+        sanitised for the filesystem, and the resolved path is confined under the
+        viz dir (defense-in-depth against a literal ``..`` component slipping the
+        char filter)."""
         from pathlib import Path as _Path
 
-        base = _Path(self.config.storage.sqlite_path).resolve().parent / "viz"
-        base.mkdir(parents=True, exist_ok=True)
+        base = (_Path(self.config.storage.sqlite_path).resolve().parent / "viz").resolve()
+        conv = self._viz_conv_component()
         safe = re.sub(r"[^A-Za-z0-9._-]", "_", str(viz_id))
-        path = base / f"{safe}.html"
+        path = (base / conv / f"{safe}.html").resolve()
+        if not str(path).startswith(str(base) + os.sep):
+            raise ValueError("unsafe viz artifact path")
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(html, encoding="utf-8")
         return str(path)
 
@@ -1497,6 +1513,9 @@ class Sherlock:
             "html": validated,
             "validated": "static",
             "bytes": len(validated.encode("utf-8")),
+            # v1.12 F2: the conversation component the artifact is filed under, so
+            # the export's relative link (viz/<conv>/<viz_id>.html) resolves.
+            "conv": self._viz_conv_component(),
         }
         if job.get("turn") is not None:
             data["turn"] = job["turn"]
@@ -1727,7 +1746,11 @@ class Sherlock:
 
         _lt = getattr(self.config.memory, "long_term", None)
         if backup is None:
-            backup = bool(_lt and getattr(_lt, "auto_export_on_wipe", False))
+            # NICE-4: fall back to True so the resolved default matches the
+            # documented "default True" AND config.memory.long_term.auto_export_on_wipe
+            # (itself default True). ``_lt is None`` (no long-term config at all)
+            # still short-circuits to no-backup via the ``_lt and`` guard.
+            backup = bool(_lt and getattr(_lt, "auto_export_on_wipe", True))
         backup_path: str | None = None
         if backup:
             try:
@@ -2023,6 +2046,9 @@ class Sherlock:
         # v1.12 A3: confirm tokens + the remember-cue latch are session-local.
         self._ltm_pending = {}
         self._ltm_remember_promote_pending = False
+        # NICE-2: drop any per-turn LTM profile snapshot stashed by retrieval but
+        # not yet consumed by the USER PROFILE block, so it can't leak cross-session.
+        self._ltm_profile_selection = None
         # Re-seed domain hints into the new conversation.
         self._ensure_conversation()
         return conv.id
@@ -2061,6 +2087,8 @@ class Sherlock:
         # v1.12 A3: a confirm token from another session must never carry over.
         self._ltm_pending = {}
         self._ltm_remember_promote_pending = False
+        # NICE-2: clear any stale per-turn LTM profile snapshot.
+        self._ltm_profile_selection = None
         # Restore last-compact turn from existing summaries so the fallback
         # doesn't immediately fire on resume.
         self._last_compact_turn = self._turn_index
@@ -2095,6 +2123,8 @@ class Sherlock:
             # v1.12 A3: drop confirm tokens + the remember-cue latch.
             self._ltm_pending = {}
             self._ltm_remember_promote_pending = False
+            # NICE-2: clear any stale per-turn LTM profile snapshot.
+            self._ltm_profile_selection = None
         return {
             "session_id": conversation_id,
             "messages_removed": msgs_removed,
@@ -6767,7 +6797,9 @@ class Sherlock:
                     # F6 (audit): pass the dir-resolver as a CALLABLE so its mkdir
                     # side effect fires lazily on wipe-confirm only, not on every
                     # (mostly read) memory dispatch.
-                    auto_export_on_wipe=bool(_lt and getattr(_lt, "auto_export_on_wipe", False)),
+                    # NICE-4: True fallback, same as agent-level wipe_long_term (the
+                    # config default for this knob is True) — keep the two aligned.
+                    auto_export_on_wipe=bool(_lt and getattr(_lt, "auto_export_on_wipe", True)),
                     backup_dir=self._ltm_storage_dir,
                 )
                 result = dispatch_memory(

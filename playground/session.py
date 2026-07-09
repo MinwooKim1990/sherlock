@@ -91,11 +91,27 @@ class Session:
     # the set of viz_ids this session has emitted a ``viz.*`` event for — the
     # registry the /api/viz/repair endpoint checks so it rejects an unknown id.
     # ``viz_repair_rounds`` bounds runtime-repair attempts PER viz_id ACROSS the
-    # (browser-driven) repair calls. Both are populated automatically in ``emit``.
+    # (browser-driven) repair calls. viz_ids is populated automatically in ``emit``;
+    # viz_repair_rounds is written via ``note_viz_repair_round`` (bounded — NICE-3).
     viz_ids: "_BoundedIdSet" = field(default_factory=_BoundedIdSet)
     viz_repair_rounds: dict = field(default_factory=dict)
 
     EVENTS_LOG_CAP = 20_000
+    # v1.12 NICE-3: cap the repair-round bookkeeping the same way viz_ids is bounded.
+    VIZ_REPAIR_ROUNDS_CAP = 512
+
+    def note_viz_repair_round(self, viz_id: str, round_no: int) -> None:
+        """Record the per-viz repair-round count, bounded with the same
+        oldest-first eviction as ``viz_ids``. A plain dict would otherwise grow one
+        entry per repaired viz_id for the whole session lifetime (viz_ids is
+        bounded, rounds wasn't). The count is only consulted while the id is still
+        registered in ``viz_ids`` (the /api/viz/repair endpoint rejects unknown
+        ids), so evicting the oldest entries is safe."""
+        d = self.viz_repair_rounds
+        d[viz_id] = int(round_no)  # existing key keeps its insertion position
+        if len(d) > self.VIZ_REPAIR_ROUNDS_CAP:
+            for old in list(d)[: -self.VIZ_REPAIR_ROUNDS_CAP]:
+                del d[old]
 
     def emit(self, event: dict) -> None:
         """Push an event onto the loop-bound asyncio queue from ANY thread.
@@ -158,10 +174,17 @@ def build_agent(session: Session, system_prompt: str, settings: dict):
     main_cb = make_role_callable("main", session, session.emit)
     summary_cb = make_role_callable("summary", session, session.emit)
     inference_cb = make_role_callable("inference", session, session.emit)
-    # v1.12 Stage B1: LLM-4 VISUALIZER (backend plumbing; UI lands in B4). Build a
-    # dedicated viz callable ONLY when the user selected a viz model; otherwise
-    # leave it None so the library falls back to the main provider (_viz_llm).
-    viz_cb = make_role_callable("viz", session, session.emit) if session.models.get("viz") else None
+    # v1.12 Stage B1: LLM-4 VISUALIZER (backend plumbing; UI lands in B4). ALWAYS
+    # build a dedicated viz callable — even when no viz model is selected. The
+    # callable resolves its model as ``models["viz"] or models["main"]``, so with
+    # no viz model it still uses the MAIN model, but under role="viz": that keeps
+    # viz generation on the NON-streaming branch with actor llm4 and correct L4
+    # token accounting. Leaving it None instead made the library fall back to the
+    # MAIN CallableProvider (_viz_llm), whose role="main" streaming branch leaked
+    # the raw viz HTML into the live chat bubble as llm.delta and mis-booked the
+    # spend as L1. (Off-state stays byte-identical: with visualization disabled the
+    # marker protocol is dormant and _viz_llm is never called.)
+    viz_cb = make_role_callable("viz", session, session.emit)
 
     # Search engine: DuckDuckGo (free, no key) by default; brave/tavily/valyu
     # use the api key the user typed in the UI. "off" disables search. The same

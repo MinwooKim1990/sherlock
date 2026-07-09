@@ -448,7 +448,7 @@ async def api_viz_repair(req: VizRepairReq):
     if used >= max_rounds:
         return {"ok": False, "error": "repair rounds exhausted", "exhausted": True}
     round_no = used + 1
-    sess.viz_repair_rounds[req.viz_id] = round_no
+    sess.note_viz_repair_round(req.viz_id, round_no)  # NICE-3: bounded write
     exhausted = round_no >= max_rounds
 
     anchor = f"⟦viz:{req.viz_id}⟧"
@@ -515,6 +515,8 @@ async def api_viz_repair(req: VizRepairReq):
             "html": validated,
             "validated": "runtime",
             "bytes": len(validated.encode("utf-8")),
+            # v1.12 F2: same conv namespacing as the agent's static-render emit.
+            "conv": agent._viz_conv_component(),
         },
     )
     return {"ok": True, "html": validated, "validated": "runtime"}
@@ -522,11 +524,16 @@ async def api_viz_repair(req: VizRepairReq):
 
 @app.get("/api/viz/{viz_id}")
 async def api_viz_artifact(viz_id: str, session_id: str):
-    """Serve a saved LLM-4 artifact (``<storage>/viz/<viz_id>.html``) as
+    """Serve a saved LLM-4 artifact (``<storage>/viz/<conv_id>/<viz_id>.html``) as
     text/html for a reopened session to re-hydrate. The client still renders it
     inside the sandboxed iframe (B4); this endpoint just returns the bytes.
     Path-safe: the id is sanitized to one filename component and the resolved
-    path is confined to the session's viz dir."""
+    path is confined to the session's viz dir.
+
+    v1.12 F2: artifacts are namespaced under a per-conversation subdir, so the
+    viz dir is searched (one glob) for ``<viz_id>.html`` under any conversation —
+    the endpoint only takes viz_id + session_id and a session may span several
+    conversations (switch_session)."""
     sess = SESSIONS.get(session_id)
     if sess is None:
         return {"error": "no such session"}
@@ -538,10 +545,16 @@ async def api_viz_artifact(viz_id: str, session_id: str):
 
     safe = _re.sub(r"[^A-Za-z0-9._-]", "_", str(viz_id))
     base = (Path(sess.agent.config.storage.sqlite_path).resolve().parent / "viz").resolve()
-    path = (base / f"{safe}.html").resolve()
-    if not (str(path) == str(base) or str(path).startswith(str(base) + os.sep)):
-        return {"error": "no such artifact"}
-    if not path.is_file():
+    # Locate <base>/<conv>/<safe>.html across conversation subdirs (F2), keeping
+    # the legacy flat <base>/<safe>.html working. rglob confines matches under
+    # base; the explicit prefix check is defense-in-depth against symlinks.
+    path = None
+    for cand in base.rglob(f"{safe}.html"):
+        rp = cand.resolve()
+        if str(rp).startswith(str(base) + os.sep) and rp.is_file():
+            path = rp
+            break
+    if path is None:
         return {"error": "no such artifact"}
     # v1.12 F6: this endpoint is for B4's sandboxed iframe; a direct visit would
     # otherwise run the artifact as first-party HTML in the playground origin. Add
@@ -824,8 +837,10 @@ def build_export_markdown(sess: Session) -> str:
         # NOTE: this dedup is PER-TURN (seen_viz is reset for each turn), so a viz
         # that is re-rendered at runtime (e.g. an /api/viz/repair re-render) and
         # re-recorded under a later turn will emit a second link for the same vid.
-        # Also the viz/{vid}.html target is RELATIVE: it only resolves when this
-        # export is written beside the session's viz storage dir.
+        # Also the target is RELATIVE: it only resolves when this export is written
+        # beside the session's viz storage dir. v1.12 F2: the artifact lives under a
+        # per-conversation subdir (viz/<conv>/<vid>.html) — the ``conv`` component
+        # rides the viz.rendered event.
         seen_viz: set[str] = set()
         for e in evts:
             if e.get("type") != "viz.rendered":
@@ -835,7 +850,9 @@ def build_export_markdown(sess: Session) -> str:
                 continue
             seen_viz.add(vid)
             desc = _one(viz_desc.get(vid)) or "visualization"
-            lines.append(f"- [📊 visualization: {desc}](viz/{vid}.html)")
+            conv = data(e).get("conv")
+            sub = f"{conv}/" if conv else ""
+            lines.append(f"- [📊 visualization: {desc}](viz/{sub}{vid}.html)")
         if base:
             srch = " (+web search)" if base.get("searched") else ""
             lines.append(

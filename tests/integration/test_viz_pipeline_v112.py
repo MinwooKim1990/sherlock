@@ -109,10 +109,15 @@ def test_valid_first_try_renders_and_persists(tmp_path):
     assert d["bytes"] == len(d["html"].encode("utf-8"))
     # valid first try short-circuits: exactly ONE viz LLM call (no self-review)
     assert len(viz.prompts) == 1
-    # artifact persisted with the validated meta
+    # artifact persisted with the validated meta, v1.12 F2: namespaced under the
+    # conversation subdir (<storage>/viz/<conv_id>/t1-1.html) and the emitted
+    # ``conv`` matches so the export link can resolve it.
     path = Path(d["path"])
     assert path.exists()
     assert path.name == "t1-1.html"
+    assert path.parent.name == agent.conversation_id  # conv-namespaced subdir
+    assert path.parent.parent.name == "viz"
+    assert d["conv"] == agent.conversation_id
     assert VALIDATED_META in path.read_text(encoding="utf-8")
     # no failure event
     assert _events_of(events, "viz.failed") == []
@@ -168,8 +173,9 @@ def test_all_broken_fails_no_artifact(tmp_path):
     # generation + 2 repair rounds = 3 calls; 2 repairing events
     assert len(viz.prompts) == 3
     assert len(_events_of(events, "viz.repairing")) == 2
-    # NO artifact written on failure
-    assert not (tmp_path / "c" / "viz" / "t1-1.html").exists()
+    # NO artifact written on failure (F2: check anywhere under the viz dir, incl.
+    # the per-conversation subdir).
+    assert not list((tmp_path / "c" / "viz").rglob("t1-1.html"))
 
 
 # ------------------------------------------------------------ (d) provider raises
@@ -189,7 +195,7 @@ def test_provider_exception_fails_gracefully(tmp_path):
     assert len(failed) == 1
     assert "RuntimeError" in failed[0]["data"]["reason"]
     assert _events_of(events, "viz.rendered") == []
-    assert not (tmp_path / "d" / "viz" / "t1-1.html").exists()
+    assert not list((tmp_path / "d" / "viz").rglob("t1-1.html"))
 
 
 # --------------------------------------------------------- (e) fence unwrapping

@@ -3,9 +3,10 @@
 The enabled path exercised through the real agent (marker → placeholder swap,
 ``viz.pending`` events, stashed render jobs, TIER-1 guidance injection) on BOTH
 the sync ``chat()`` and async ``achat()`` seams, plus the playground backend
-wiring (build_agent builds a viz callable only when a viz model is selected;
-``_ROLE_ACTOR`` maps the viz role to the ``llm4`` actor). The pure parser + the
-off-state kill switch live in the unit suite (test_viz_markers_v112.py).
+wiring (v1.12 F1: build_agent ALWAYS builds a viz callable — with no viz model it
+resolves the MAIN model under role="viz", staying non-streaming with actor
+``llm4``; ``_ROLE_ACTOR`` maps the viz role to the ``llm4`` actor). The pure
+parser + the off-state kill switch live in the unit suite (test_viz_markers_v112.py).
 """
 
 from __future__ import annotations
@@ -167,14 +168,69 @@ def test_build_agent_builds_viz_callable_when_model_selected(monkeypatch, tmp_pa
     assert agent.config.visualization.enabled is True
 
 
-def test_build_agent_no_viz_callable_when_model_absent(monkeypatch, tmp_path):
+def test_build_agent_builds_viz_callable_even_without_model(monkeypatch, tmp_path):
+    # v1.12 F1: the viz callable is ALWAYS built, even with no viz model selected,
+    # so viz generation runs under role="viz" (non-streaming / actor llm4) instead
+    # of leaking into the MAIN streaming path via the library's _viz_llm fallback.
     agent, roles = _build_playground(
         monkeypatch,
         tmp_path,
         models={"main": {"provider": "p", "model": "m"}},  # no viz entry
         settings={},  # visualization off
     )
-    assert "viz" not in roles
-    assert agent._viz_provider is None  # falls back to the main provider
-    assert agent._viz_llm() is agent._provider
-    assert agent.config.visualization.enabled is False  # byte-identical off
+    assert "viz" in roles  # a viz callable is requested regardless of viz model
+    assert agent._viz_provider is not None  # wired onto the agent (uses main model)
+    assert agent._viz_llm() is agent._viz_provider  # NOT the main provider
+    # Off-state stays byte-identical: visualization disabled → the marker protocol
+    # is dormant and the viz callable is never actually invoked.
+    assert agent.config.visualization.enabled is False
+
+
+def test_viz_callable_without_viz_model_is_nonstreaming_llm4(monkeypatch):
+    # v1.12 F1 confirmation: a viz callable with NO dedicated viz model resolves to
+    # the MAIN model but under role="viz" → the NON-streaming branch. It must NOT
+    # emit any llm.delta (that would pollute the live chat bubble), and its llm.call
+    # must carry role="viz" + actor="llm4" (so L4 spend is booked correctly).
+    import playground.providers as prov
+
+    class _Usage:
+        prompt_tokens, completion_tokens, total_tokens = 5, 9, 14
+
+    class _Msg:
+        content = "<svg>chart</svg>"
+        reasoning_content = None
+
+    class _Resp:
+        choices = [type("C", (), {"message": _Msg()})()]
+        usage = _Usage()
+
+    nonstream_calls: list = []
+
+    def _fake_call(model, messages, **extra):
+        nonstream_calls.append(model)
+        return _Resp()
+
+    def _fake_stream(*a, **k):  # streaming path must never be taken for viz
+        raise AssertionError("viz role must not stream")
+
+    monkeypatch.setattr(prov, "_call_litellm", _fake_call)
+    monkeypatch.setattr(prov, "_call_litellm_stream", _fake_stream)
+
+    class _Sess:
+        models = {"main": {"provider": "gemini", "model": "g-main"}}  # NO viz entry
+        providers = {"gemini": {"api_key": "k"}}
+        settings: dict = {}
+        turn = 3
+        agent = None  # _stopped() reads agent._stop_event → False when absent
+
+    emitted: list[dict] = []
+    call = prov.make_role_callable("viz", _Sess(), emitted.append)
+    resp = call([{"role": "user", "content": "draw it"}])
+
+    assert resp.text == "<svg>chart</svg>"
+    assert nonstream_calls == ["gemini/g-main"]  # used the MAIN model, non-streaming
+    assert not [e for e in emitted if e["type"] == "llm.delta"]  # no live-bubble leak
+    calls = [e for e in emitted if e["type"] == "llm.call"]
+    assert len(calls) == 1
+    assert calls[0]["actor"] == "llm4"
+    assert calls[0]["data"]["role"] == "viz"

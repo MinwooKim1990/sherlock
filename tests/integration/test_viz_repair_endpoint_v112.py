@@ -246,7 +246,15 @@ def test_get_artifact_after_successful_repair(monkeypatch):
         "/api/viz/repair",
         json={"session_id": sid, "viz_id": "t1-1", "html": BROKEN_INPUT, "error": "boom"},
     )
-    # the runtime-validated artifact was persisted → served as text/html
+    # v1.12 F2: the artifact is filed under a per-conversation subdir (no chat
+    # happened here → conv id is None → the "_" bucket), NOT the flat viz dir.
+    from pathlib import Path as _Path
+
+    viz_dir = _Path(sess.agent.config.storage.sqlite_path).resolve().parent / "viz"
+    assert not (viz_dir / "t1-1.html").exists()  # never the flat legacy path
+    matches = list(viz_dir.rglob("t1-1.html"))
+    assert len(matches) == 1 and matches[0].parent.parent == viz_dir  # one conv subdir deep
+    # the runtime-validated artifact was persisted → the GET globs it → text/html
     g = client.get("/api/viz/t1-1", params={"session_id": sid})
     assert g.status_code == 200
     assert "text/html" in g.headers["content-type"]
@@ -313,3 +321,21 @@ def test_get_artifact_rejects_path_traversal(monkeypatch):
         g = client.get(f"/api/viz/{bad}", params={"session_id": sid})
         assert g.status_code == 404 or g.json().get("error")
         assert "TOP-SECRET-DO-NOT-SERVE" not in g.text
+
+
+# ------------------------------------------------------------ NICE-3 bounded rounds
+
+
+def test_viz_repair_rounds_dict_is_bounded():
+    """v1.12 NICE-3: note_viz_repair_round caps the round bookkeeping (oldest-first)
+    so it can't grow one entry per repaired viz_id for the whole session; the most
+    recent ids survive and the value stays readable."""
+    from playground.session import Session
+
+    sess = Session(sid="s", models={}, loop=None, queue=None)
+    cap = Session.VIZ_REPAIR_ROUNDS_CAP
+    for i in range(cap + 50):
+        sess.note_viz_repair_round(f"v{i}", 1)
+    assert len(sess.viz_repair_rounds) <= cap
+    assert sess.viz_repair_rounds[f"v{cap + 49}"] == 1  # newest kept + readable
+    assert "v0" not in sess.viz_repair_rounds  # oldest evicted
