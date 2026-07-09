@@ -30,7 +30,7 @@ from sherlock.providers.base import ChatMessage, ChatResponse, TokenUsage
 _GEMINI_MODELS_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 _OPENAI_MODELS_URL = "https://api.openai.com/v1/models"
 _ANTHROPIC_MODELS_URL = "https://api.anthropic.com/v1/models"
-_ROLE_ACTOR = {"main": "llm1", "summary": "llm2", "inference": "llm3"}
+_ROLE_ACTOR = {"main": "llm1", "summary": "llm2", "inference": "llm3", "viz": "llm4"}
 
 # OpenAI /v1/models lists every modality; keep only chat-capable families.
 _OPENAI_CHAT_RE = re.compile(r"^(gpt-[45o]|gpt-oss|o[134](-|$)|chatgpt-)")
@@ -491,7 +491,10 @@ def _is_internal_research_prompt(messages: list[dict]) -> bool:
 
 
 def make_role_callable(role: str, session, emit):
-    """Build a Sherlock chat callable for ``role`` ∈ {main, summary, inference}.
+    """Build a Sherlock chat callable for ``role`` ∈ {main, summary, inference, viz}.
+
+    Only ``main`` streams; every other role (including the v1.12 Stage B1 ``viz``
+    role — LLM-4, the inline visualizer) takes the non-streaming branch below.
 
     Reads the CURRENT model selection from ``session.models`` each call (so a
     mid-session dropdown change takes effect next turn). Emits an ``llm.call``

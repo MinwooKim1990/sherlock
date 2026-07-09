@@ -103,6 +103,10 @@ def build_agent(session: Session, system_prompt: str, settings: dict):
     main_cb = make_role_callable("main", session, session.emit)
     summary_cb = make_role_callable("summary", session, session.emit)
     inference_cb = make_role_callable("inference", session, session.emit)
+    # v1.12 Stage B1: LLM-4 VISUALIZER (backend plumbing; UI lands in B4). Build a
+    # dedicated viz callable ONLY when the user selected a viz model; otherwise
+    # leave it None so the library falls back to the main provider (_viz_llm).
+    viz_cb = make_role_callable("viz", session, session.emit) if session.models.get("viz") else None
 
     # Search engine: DuckDuckGo (free, no key) by default; brave/tavily/valyu
     # use the api key the user typed in the UI. "off" disables search. The same
@@ -114,6 +118,7 @@ def build_agent(session: Session, system_prompt: str, settings: dict):
         main_chat=main_cb,
         summary_chat=summary_cb,
         inference_chat=inference_cb,
+        viz_chat=viz_cb,
         system_prompt=system_prompt or "You are a helpful assistant.",
         storage_dir=storage,
         embedding=settings.get("embedding", "local"),
@@ -146,6 +151,10 @@ def build_agent(session: Session, system_prompt: str, settings: dict):
             if long_term_on
             else None
         ),
+        # v1.12 Stage B1: LLM-4 inline visualizer (backend plumbing; the toggle UI
+        # lands in B4). Off (default / absent) → visualization=None → byte-identical
+        # construction: the marker protocol stays dormant.
+        visualization=(True if settings.get("visualization") else None),
     )
     # v1.11: expose the deep-research VERIFY tier (off | faithfulness |
     # faithfulness+web) so the accuracy layer can be A/B'd live in the playground.

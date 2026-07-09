@@ -223,6 +223,82 @@ def _parse_deep_research_tag(text: str) -> tuple[str, str | None]:
     return cleaned, topic
 
 
+# v1.12 Stage B1: LLM-4 VISUALIZER marker protocol. LLM-1 (and, later, the
+# deep-research report) may drop an INLINE marker where a diagram/chart belongs:
+#   <<sherlock-viz: a bar chart of Q1-Q4 revenue | Q1 12, Q2 19, Q3 3, Q4 5>>
+# PAYLOAD is free text "description | optional data hint" — the FIRST '|' splits
+# the two halves. No nesting; ``.{1,2000}?`` is non-greedy so two markers on one
+# line don't merge into one; DOTALL lets ``.`` match any rune incl. newlines, so
+# CJK/multiline payloads pass through intact. The ``{1,2000}`` upper bound caps
+# how far the engine scans past each ``<<sherlock-viz:`` before giving up: an
+# UNCLOSED marker (no ``>>``) — or a payload longer than 2000 chars — never
+# matches and is left VERBATIM, instead of the old ``.+?`` which rescanned to
+# end-of-string from every opener (quadratic backtracking: a flood of unclosed
+# openers + a long tail could block chat()/achat() for tens of seconds). The
+# one-line-description guidance keeps real payloads far under 2000.
+_VIZ_TAG_RE = re.compile(
+    r"<<\s*sherlock-viz\s*:\s*(.{1,2000}?)\s*>>",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _parse_viz_tags(text: str, cap: int, id_prefix: str) -> tuple[str, list[dict]]:
+    """Replace the first ``cap`` ``<<sherlock-viz: ...>>`` markers with placeholder
+    tokens and return ``(new_text, jobs)``.
+
+    Placeholder token = ``⟦viz:<id_prefix>-<n>⟧`` (n from 1; U+27E6/U+27E7 white
+    brackets — plain text that survives markdown → marked+DOMPurify, so a later
+    render can find and swap it in). Markers beyond ``cap`` are STRIPPED entirely
+    (no placeholder, no job), and a marker whose payload is empty
+    (``<<sherlock-viz: >>``) is likewise stripped without minting a placeholder
+    or job (and without consuming cap budget). Each job is
+    ``{"viz_id", "description", "data_hint", "anchor"}`` where description/
+    data_hint are the two halves of the FIRST '|' (both stripped; ``data_hint``
+    is ``""`` when the payload has no pipe) and ``anchor`` is the placeholder
+    token. Doubled blank lines left where a marker was removed WITHOUT a
+    placeholder are collapsed so the reply still reads cleanly.
+    """
+    if not text:
+        return text, []
+    jobs: list[dict] = []
+    seen = 0
+    stripped = False  # a marker was removed WITHOUT leaving a placeholder
+
+    def _sub(m: "re.Match[str]") -> str:
+        nonlocal seen, stripped
+        payload = (m.group(1) or "").strip()
+        if not payload:
+            # empty payload → strip the marker, mint no placeholder / no job
+            # and don't spend cap budget on it.
+            stripped = True
+            return ""
+        seen += 1
+        if seen > cap:
+            stripped = True
+            return ""  # over the cap → strip entirely, no placeholder/job
+        desc, sep, hint = payload.partition("|")
+        viz_id = f"{id_prefix}-{seen}"
+        anchor = f"⟦viz:{viz_id}⟧"
+        jobs.append(
+            {
+                "viz_id": viz_id,
+                "description": desc.strip(),
+                "data_hint": hint.strip() if sep else "",
+                "anchor": anchor,
+            }
+        )
+        return anchor
+
+    new_text = _VIZ_TAG_RE.sub(_sub, text)
+    # Tidy ONLY when a marker was actually removed without a placeholder (over-cap
+    # OR empty payload): an empty replacement can leave a 3+-newline gap where the
+    # marker sat on its own line. Collapse those to a single paragraph break;
+    # untouched text is never reflowed.
+    if stripped:
+        new_text = re.sub(r"\n{3,}", "\n\n", new_text)
+    return new_text, jobs
+
+
 # Cheap affirmative classifier for the conversational deep-research approval
 # (no UI). English + Korean. This gates an EXPENSIVE action, so it is
 # deliberately conservative — a non-affirmative simply cancels the pending
@@ -828,6 +904,25 @@ Long-term memory (durable ACROSS conversations) — extra `<<sherlock-tool: memo
 Deletion rule: on any "forget X" / "wipe my memory" request, FIRST run `memory forget`/`memory wipe`, tell the user exactly what will be erased, and WAIT for their confirmation before emitting the matching `-confirm`."""
 
 
+# v1.12 Stage B1: LLM-4 VISUALIZER marker guidance. Injected into TIER 1 ONLY when
+# visualization is enabled (off, the default → never added → slot byte-identical).
+# Deliberately ENGLISH-INTERNAL: this only teaches LLM-1 the marker SYNTAX; the
+# v1.11 language lesson (pin OUTPUT/label language to the user's) lands in B2's
+# render prompt, not here. {N} = the per-reply marker cap from config; the string
+# is constant per config, so it rides the stable cached TIER-1 prefix.
+_VIZ_MARKER_GUIDANCE_TEMPLATE = """\
+Inline visualizations: when a chart / diagram / small table would genuinely help the reader grasp your answer (a trend, a comparison, a distribution, a step-by-step flow), insert a marker EXACTLY where the visual belongs, on its own line:
+  <<sherlock-viz: one-line description of the visual | the exact numbers/labels from your answer>>
+- Only reference data ALREADY present in your reply — never invent figures just to draw them.
+- The part after `|` is an optional data hint (the concrete series/labels); omit it (and the `|`) when there is nothing numeric to pass.
+- At most {N} marker(s) per reply. If a visual would not genuinely add understanding, do NOT emit one — plain prose is the right answer."""
+
+
+def _viz_marker_guidance(cap: int) -> str:
+    """Render the (constant-per-config) visualizer marker guidance block."""
+    return _VIZ_MARKER_GUIDANCE_TEMPLATE.format(N=cap)
+
+
 # The one-line TIER-3 nudge injected the SAME turn a deterministic "remember
 # this" cue fires (long-term enabled only). An internal English control line —
 # it rides the SYSTEM-ANALYSIS block, never the user-visible reply.
@@ -950,6 +1045,7 @@ class Sherlock:
         provider: BaseProvider | None = None,
         background_summary_provider: BaseProvider | None = None,
         background_inference_provider: BaseProvider | None = None,
+        background_viz_provider: BaseProvider | None = None,
         background: bool | None = None,
     ) -> None:
         self.config = config
@@ -959,6 +1055,12 @@ class Sherlock:
         )
         self._inference_provider = background_inference_provider or self._build_optional(
             config.models.background_inference
+        )
+        # v1.12 Stage B1: optional 4th role — LLM-4 VISUALIZER. Unset (no
+        # background_viz_provider AND no config.models.viz) → None, and _viz_llm()
+        # falls back to the MAIN provider, so visualization works with no 4th key.
+        self._viz_provider = background_viz_provider or self._build_optional(
+            getattr(config.models, "viz", None)
         )
         # Storage: conversations + messages
         self._storage = Storage(config.storage.sqlite_path)
@@ -1107,6 +1209,19 @@ class Sherlock:
         self._ltm_pending: dict[str, dict] = {}
         self._ltm_remember_promote_pending: bool = False
 
+        # v1.12 Stage B1: LLM-4 VISUALIZER pending render jobs. Each honoured
+        # <<sherlock-viz: ...>> marker parsed out of an LLM-1 reply stashes a job
+        # here for LLM-4 (Stage B2) to render; for now they only accumulate. The
+        # stash is bounded (32, oldest dropped) so it can't grow unboundedly. When
+        # visualization is disabled the parse never runs, so this stays empty.
+        # B2 CONTRACT (F7): the placeholder anchors are persisted in the reply
+        # TEXT, but this stash is in-memory only and is trimmed (bound of 32) and
+        # cleared on session boundaries — so a persisted placeholder may have NO
+        # surviving job. Consumers (the B2 renderer / any UI) MUST gracefully
+        # degrade such orphaned placeholders — remove or replace them in the
+        # rendered text — rather than assuming every ⟦viz:…⟧ has a job to render.
+        self._pending_viz_jobs: list[dict] = []
+
         # v0.5.0 Phase 3: true background execution. Default ON (v1.8): chat()
         # returns the LLM-1 reply immediately and runs companions (LLM-2/LLM-3) +
         # decay in a single-worker background thread, so the user-facing reply
@@ -1182,6 +1297,43 @@ class Sherlock:
         if model_cfg is None:
             return None
         return build_provider(model_cfg)
+
+    # ---- v1.12 Stage B1: LLM-4 VISUALIZER plumbing ----
+
+    def _viz_llm(self) -> BaseProvider:
+        """The provider LLM-4 (the visualizer) uses. Falls back to the MAIN
+        provider when no dedicated viz model is configured, so visualization can
+        be enabled with no extra model key."""
+        return self._viz_provider or self._provider
+
+    def _extract_viz_jobs(self, text: str, turn_index: int) -> str:
+        """Parse inline ``<<sherlock-viz: ...>>`` markers out of an LLM-1 reply:
+        replace each (up to the chat cap) with a placeholder token, emit a
+        ``viz.pending`` event per job, and stash the jobs for LLM-4 (Stage B2) to
+        consume. Returns the reply with markers → placeholders. Called ONLY when
+        ``config.visualization.enabled`` — off (default) → never invoked, so a
+        stray marker stays verbatim (byte-identical)."""
+        cap = int(self.config.visualization.max_markers_chat)
+        new_text, jobs = _parse_viz_tags(text, cap=cap, id_prefix=f"t{turn_index}")
+        if not jobs:
+            return new_text
+        for job in jobs:
+            self._emit(
+                "viz.pending",
+                "llm4",
+                {
+                    "turn": turn_index,
+                    "viz_id": job["viz_id"],
+                    "anchor": job["anchor"],
+                    "description": job["description"],
+                },
+            )
+            self._pending_viz_jobs.append(job)
+        # Bound the stash so pending jobs (B2 consumes them later) can't grow
+        # without limit — keep the 32 most recent, drop the oldest.
+        if len(self._pending_viz_jobs) > 32:
+            del self._pending_viz_jobs[:-32]
+        return new_text
 
     @property
     def provider(self) -> BaseProvider:
@@ -1517,6 +1669,10 @@ class Sherlock:
         self._pending_notebook = None
         self._slot_notebook = None
         self._conv_tool_calls = 0
+        # v1.12 B1: viz jobs (and their viz_ids) are keyed off the session-local
+        # turn index, which resets to 0 here — clear the stash so next session's
+        # ``t1-1`` can't collide with a stale one from this session.
+        self._pending_viz_jobs = []
         self._reset_companion_pressure()
         self._last_compact_turn = 0
         # v1.12 A3: confirm tokens + the remember-cue latch are session-local.
@@ -1548,6 +1704,9 @@ class Sherlock:
         self._pending_inference_extras = {}
         self._pending_search_results = []
         self._conv_tool_calls = 0
+        # v1.12 B1: drop viz jobs from the previous session — the incoming turn
+        # index (restored below) keys viz_ids, so a stale stash risks collisions.
+        self._pending_viz_jobs = []
         # v1.6: zero the gating state, then re-seed intent pressure from the last
         # user message so a long sustained-need conversation doesn't silently drop
         # to single-model after a reload (one free stdlib perception pass).
@@ -1581,6 +1740,9 @@ class Sherlock:
             self._pending_inference_extras = {}
             self._pending_search_results = []
             self._conv_tool_calls = 0
+            # v1.12 B1: clear the viz stash — turn index resets to 0 below, so a
+            # stale ``t1-1`` would otherwise collide with the next session's.
+            self._pending_viz_jobs = []
             self._reset_companion_pressure()
             self._last_compact_turn = 0
             # v1.12 A3: drop confirm tokens + the remember-cue latch.
@@ -5821,6 +5983,13 @@ class Sherlock:
         _lt_cfg = getattr(self.config.memory, "long_term", None)
         if _lt_cfg is not None and getattr(_lt_cfg, "enabled", False):
             tier1_parts.append(LTM_TOOL_GUIDANCE)
+        # v1.12 Stage B1: teach LLM-1 the inline visualizer marker syntax ONLY when
+        # visualization is enabled. Same discipline as LTM_TOOL_GUIDANCE — a bounded
+        # constant block appended AFTER the cached base-prompt truncation, so OFF
+        # (the default) → nothing added → TIER 1 byte-identical to a no-viz build.
+        _viz_cfg = getattr(self.config, "visualization", None)
+        if _viz_cfg is not None and getattr(_viz_cfg, "enabled", False):
+            tier1_parts.append(_viz_marker_guidance(int(_viz_cfg.max_markers_chat)))
         # P0-1: do NOT inject the timestamp here. A fresh microsecond
         # timestamp at the head of TIER 1 mutates the stable prefix every
         # turn and destroys prompt-cache hits across the whole TIER 1+2
@@ -6618,6 +6787,12 @@ class Sherlock:
             cleaned_text = (
                 (cleaned_text + "\n\n" + _dr_notice).strip() if cleaned_text.strip() else _dr_notice
             )
+        # v1.12 Stage B1: LLM-4 VISUALIZER — turn inline <<sherlock-viz: ...>>
+        # markers into placeholder tokens + stashed render jobs. GATED: off
+        # (default) → the parse never runs, so a stray marker survives verbatim
+        # in the reply exactly as it does today (byte-identical off-state).
+        if self.config.visualization.enabled:
+            cleaned_text = self._extract_viz_jobs(cleaned_text, turn_index)
         # Replace the response text with the cleaned version so downstream
         # storage + return value don't show the tag to the user.
         response = ChatResponse(
@@ -6939,6 +7114,10 @@ class Sherlock:
             cleaned_text = (
                 (cleaned_text + "\n\n" + _dr_notice).strip() if cleaned_text.strip() else _dr_notice
             )
+        # v1.12 Stage B1: LLM-4 VISUALIZER (parity with sync chat()) — GATED; off
+        # (default) → the parse never runs → marker stays verbatim (byte-identical).
+        if self.config.visualization.enabled:
+            cleaned_text = self._extract_viz_jobs(cleaned_text, turn_index)
         if requested:
             self._companion_request_count += 1
         # P0 (achat tag leak): rebuild the response with cleaned text so the
@@ -7247,6 +7426,10 @@ class Sherlock:
         system_prompt: str,
         summary_chat=None,
         inference_chat=None,
+        # v1.12 Stage B1: optional 4th role — LLM-4 VISUALIZER. Unset → the
+        # visualizer falls back to main_chat (see _viz_llm), so `visualization`
+        # can be turned on with no dedicated viz callable.
+        viz_chat=None,
         project: str = "sherlock_app",
         domain_hints: list[str] | None = None,
         storage_dir: str | Path | None = None,
@@ -7301,6 +7484,10 @@ class Sherlock:
         # default; dev gate). Pass True to enable with defaults, or a dict of
         # LongTermMemoryConfig overrides (e.g. {"enabled": True, "incognito": True}). ---
         long_term: bool | dict | None = None,
+        # --- v1.12 Stage B1: LLM-4 inline visualizer (off by default). Pass True
+        # to enable with defaults, or a dict of VisualizationConfig overrides
+        # (e.g. {"enabled": True, "max_markers_chat": 2}). ---
+        visualization: bool | dict | None = None,
     ) -> "Sherlock":
         """Bring-your-own-LLM constructor.
 
@@ -7568,6 +7755,16 @@ class Sherlock:
                 cfg.memory.long_term = LongTermMemoryConfig(**{"enabled": True, **long_term})
             else:
                 cfg.memory.long_term = LongTermMemoryConfig(enabled=True)
+        # v1.12 Stage B1: opt in to the LLM-4 inline visualizer (mirrors long_term).
+        # Off (default) → byte-identical: marker protocol dormant, no system-prompt
+        # guidance. Must be set BEFORE construction so _assemble_messages sees it.
+        if visualization:
+            from sherlock.config import VisualizationConfig
+
+            if isinstance(visualization, dict):
+                cfg.visualization = VisualizationConfig(**{"enabled": True, **visualization})
+            else:
+                cfg.visualization = VisualizationConfig(enabled=True)
 
         main_provider = CallableProvider(main_chat, model_id=model_id)
         summary_provider = (
@@ -7580,12 +7777,18 @@ class Sherlock:
             if inference_chat is not None
             else main_provider
         )
+        # v1.12 Stage B1: build the viz provider ONLY when a viz callable is
+        # given; unset → None → _viz_llm() resolves to the main provider.
+        viz_provider = (
+            CallableProvider(viz_chat, model_id=model_id) if viz_chat is not None else None
+        )
 
         agent = cls(
             cfg,
             provider=main_provider,
             background_summary_provider=summary_provider,
             background_inference_provider=inference_provider,
+            background_viz_provider=viz_provider,
         )
         # Record the split so consumers / tests can inspect both halves.
         agent._user_system_prompt = user_prompt_text

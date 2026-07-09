@@ -66,6 +66,11 @@ class ModelsConfig(BaseModel):
     main: ModelConfig
     background_summary: ModelConfig | None = None
     background_inference: ModelConfig | None = None
+    # v1.12 Stage B1: optional 4th role — LLM-4 VISUALIZER (turns an inline
+    # <<sherlock-viz: ...>> marker into a self-contained HTML/SVG artifact).
+    # Unset → the visualizer falls back to the MAIN provider, so `visualization`
+    # can be enabled with no extra model key.
+    viz: ModelConfig | None = None
 
 
 class EmbeddingConfig(BaseModel):
@@ -427,6 +432,41 @@ class PerceptionConfig(BaseModel):
     freshness: bool = True
 
 
+class VisualizationConfig(BaseModel):
+    """v1.12 Stage B1: LLM-4 VISUALIZER — inline data visualizations.
+
+    When LLM-1 answers a question where a diagram/chart would genuinely help, it
+    drops an inline ``<<sherlock-viz: description | data hint>>`` marker at the
+    spot the visual belongs. The agent replaces each marker with a stable
+    placeholder token (``⟦viz:...⟧``) that survives markdown rendering, stashes a
+    per-marker job, and (from Stage B2 onward) LLM-4 renders each job into a
+    self-contained HTML/SVG artifact swapped in for its placeholder.
+
+    ``enabled`` defaults to ``False`` so the marker protocol + system-prompt
+    guidance are completely dormant — a stray marker in an LLM reply stays
+    verbatim exactly as it does today (byte-identical off-state). The playground
+    flips it on. Every knob below is a bound, not a behaviour change when off.
+    """
+
+    enabled: bool = False
+    # LLM-4 self-critique rounds before a render is accepted (Stage B2+).
+    self_review_rounds: int = 1
+    # Max render-repair attempts when a produced artifact fails validation.
+    max_repair_rounds: int = 2
+    # Hard wall-clock budget for one marker's render (seconds); best-effort —
+    # a timeout drops that visual, the placeholder degrades to plain text.
+    timeout_s: float = 30.0
+    # Cap on how many markers are honoured per CHAT reply / per deep-research
+    # REPORT. Markers beyond the cap are stripped (no placeholder), never queued.
+    max_markers_chat: int = 3
+    max_markers_report: int = 4
+    # Upper bound on a single rendered artifact's HTML payload (bytes).
+    max_html_bytes: int = 64_000
+    # Persist rendered artifacts to storage so a reopened session can re-hydrate
+    # them (Stage B3+). Best-effort; off = render-and-forget.
+    save_artifacts: bool = True
+
+
 class ToolsConfig(BaseModel):
     builtin: list[str] = Field(
         default_factory=lambda: ["web_search", "current_time", "calculator", "url_fetch"]
@@ -486,6 +526,8 @@ class Config(BaseModel):
     inference: InferenceConfig = Field(default_factory=InferenceConfig)
     perception: PerceptionConfig = Field(default_factory=PerceptionConfig)
     companions: CompanionsConfig = Field(default_factory=CompanionsConfig)
+    # v1.12 Stage B1: LLM-4 visualizer (off by default → dormant marker protocol).
+    visualization: VisualizationConfig = Field(default_factory=VisualizationConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     bootstrap: BootstrapConfig = Field(default_factory=BootstrapConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
