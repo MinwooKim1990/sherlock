@@ -111,10 +111,12 @@ class LongTermMemoryConfig(BaseModel):
     alone — decides what is durable enough to keep forever.
     """
 
-    # Dev gate for the staged rollout. WILL DEFAULT TO True at release — the
-    # whole point of long-term memory is to be on. Kept False here so each
-    # stage lands byte-identical for existing users until the release flip.
-    enabled: bool = False
+    # v1.12 release: long-term memory is ON by default — the whole point of the
+    # feature is to be on. Set False to disable; the OFF path is byte-identical
+    # to pre-v1.12 (no USER PROFILE block, no sentinel RAG search, no telemetry
+    # keys), and with an EMPTY sentinel scope the ON path is result-identical too
+    # (only a wasted empty search + telemetry differ).
+    enabled: bool = True
     # Suppress long-term WRITES only (promotions). Reads are unaffected, so a
     # user can pause accumulating new durable facts without losing recall of
     # what's already stored. Mirrors a browser "incognito" session.

@@ -75,11 +75,22 @@ def test_build_agent_sanitizes_profile_to_default(monkeypatch, tmp_path, evil):
     assert os.path.abspath(sess.storage_dir).startswith(root + os.sep)
 
 
-def test_build_agent_off_uses_tempdir(monkeypatch, tmp_path):
-    agent, sess = _build(monkeypatch, tmp_path, {})  # long_term absent → off
+def test_build_agent_explicit_off_uses_tempdir(monkeypatch, tmp_path):
+    # setup toggle explicitly OFF → feature disabled + throwaway tempdir
+    agent, sess = _build(monkeypatch, tmp_path, {"long_term": False})
     assert "sherlock_pg_" in sess.storage_dir
     assert ".sherlock_playground" not in sess.storage_dir
     assert agent.config.memory.long_term.enabled is False
+
+
+def test_build_agent_absent_follows_library_default(monkeypatch, tmp_path):
+    # v1.12: no long_term key → the ENABLED flag inherits the library default
+    # (ON), but with no explicit opt-in the storage stays a throwaway tempdir —
+    # persisting to a stable per-profile dir requires an explicit toggle.
+    agent, sess = _build(monkeypatch, tmp_path, {})
+    assert "sherlock_pg_" in sess.storage_dir
+    assert ".sherlock_playground" not in sess.storage_dir
+    assert agent.config.memory.long_term.enabled is True
 
 
 # ============================================================ eviction guard

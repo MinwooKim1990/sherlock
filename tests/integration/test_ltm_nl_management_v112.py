@@ -139,7 +139,7 @@ def test_save_via_chat_creates_row_and_event(tmp_path):
 
 def test_save_blocked_when_disabled(tmp_path):
     main = ToolMain()
-    agent = _agent(tmp_path, main, long_term=None)
+    agent = _agent(tmp_path, main, long_term=False)
     main.next_tag = "<<sherlock-tool: memory save remember this>>"
     agent.chat("save it")
     assert agent.memory.list(conversation_id=LTM_CONVERSATION_ID) == []
@@ -301,7 +301,7 @@ def test_remember_cue_nudges_and_promotes(tmp_path):
 def test_off_no_cue_no_nudge_byte_identical(tmp_path):
     main = ToolMain()
     events: list[dict] = []
-    agent = _agent(tmp_path, main, long_term=None)
+    agent = _agent(tmp_path, main, long_term=False)
     agent.set_event_sink(events.append)
 
     agent.chat("항상 미터법으로 답해줘. 기억해!")

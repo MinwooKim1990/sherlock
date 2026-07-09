@@ -7845,9 +7845,10 @@ class Sherlock:
         # the SHERLOCK_COMPANIONS env (used to keep the test suite hermetic on
         # legacy) else "cold_start". ---
         companions_mode: str | None = None,
-        # --- v1.12 Stage A1: cross-conversation long-term memory (off by
-        # default; dev gate). Pass True to enable with defaults, or a dict of
-        # LongTermMemoryConfig overrides (e.g. {"enabled": True, "incognito": True}). ---
+        # --- v1.12: cross-conversation long-term memory. None (default) → the
+        # library default (ON as of v1.12); False → force OFF (byte-identical to
+        # pre-v1.12); True → enable with defaults; a dict → LongTermMemoryConfig
+        # overrides (enabled defaults True, e.g. {"incognito": True}). ---
         long_term: bool | dict | None = None,
         # --- v1.12 Stage B1: LLM-4 inline visualizer (off by default). Pass True
         # to enable with defaults, or a dict of VisualizationConfig overrides
@@ -8110,10 +8111,16 @@ class Sherlock:
         # v1.5 Stage 4: recursive inference notebook.
         cfg.inference.inference_notebook = bool(inference_notebook)
         cfg.inference.notebook_max_rounds = int(notebook_max_rounds)
-        # v1.12 Stage A1: opt in to cross-conversation long-term memory. Must be
-        # set BEFORE the agent is constructed so install_companion_prompts hands
-        # the enabled config to the summarizer. Off (default) → byte-identical.
-        if long_term:
+        # v1.12: cross-conversation long-term memory. Must be resolved BEFORE the
+        # agent is constructed so install_companion_prompts hands the enabled
+        # config to the summarizer. None → leave the library default (ON in
+        # v1.12); False → force OFF (byte-identical to pre-v1.12); True/dict →
+        # enable (a dict supplies LongTermMemoryConfig overrides).
+        if long_term is False:
+            from sherlock.config import LongTermMemoryConfig
+
+            cfg.memory.long_term = LongTermMemoryConfig(enabled=False)
+        elif long_term:
             from sherlock.config import LongTermMemoryConfig
 
             if isinstance(long_term, dict):

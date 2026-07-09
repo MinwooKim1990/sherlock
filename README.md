@@ -100,7 +100,9 @@ agent-runtime breadth — it wins when you want to keep your own callable and
 
 ## How it works
 
-Three LLM roles, all wired by you (they can be one function or three):
+Three LLM roles, all wired by you (they can be one function or three) — plus an
+optional **4th role, LLM-4 the visualizer** (v1.12, off by default; renders inline
+`<<sherlock-viz: …>>` markers into sandboxed HTML/SVG — see the changelog):
 
 ```
             ┌────────────────────────────────────────────────┐
@@ -717,6 +719,30 @@ caching, deep-research trust, memory reconciliation — lives in
 **[docs/ROADMAP.md](docs/ROADMAP.md)** (R1–R35, evidence-linked).
 
 ## Changelog highlights
+
+### v1.12 — cross-session long-term memory + LLM-4 inline visualizations
+Two headline features, each with a byte-identical off-state.
+- **Long-term memory (default ON):** Sherlock now remembers durable facts *across
+  conversations*. LLM-2 **promotes** a small, high-value subset — identity/health,
+  explicit "remember this" directives, stable preferences/relationships/projects — into a
+  reserved sentinel scope through a **code-level taxonomy gate** (the model proposes; code,
+  never the model alone, decides what is durable enough to keep forever). LLM-1 recalls
+  them via an always-on **USER PROFILE** block plus a sentinel RAG channel. Full
+  **natural-language management** — save, forget, wipe — is code-gated with single-use
+  confirm tokens so a destructive verb never fires on the model's say-so; **confirmed
+  deletion** hard-removes the row *and* its vector. **Portability:** export / import as
+  Markdown, JSON, or SQL, with a fail-closed Markdown backup before any wipe. On by
+  default; set `config.memory.long_term.enabled=False` to disable (off is byte-identical to
+  pre-v1.12), or flip **incognito** to recall existing facts while pausing new writes.
+- **LLM-4 inline visualizations (opt-in):** a **fourth async role**. When a diagram or
+  chart would genuinely help, LLM-1 drops an inline `<<sherlock-viz: …>>` marker; LLM-4
+  renders it into a **sandboxed-iframe** HTML/JS artifact through a
+  **generate → static-lint → self-review → runtime-repair** pipeline, so even a small model
+  never ships a broken visual (a job that can't be made valid is dropped and its
+  placeholder degrades to plain text). Unset viz model → falls back to the main provider.
+  Opt in with `config.visualization.enabled`; off (default) the marker protocol is dormant
+  and a stray marker stays verbatim (byte-identical). See the new LLM-4 role + the
+  `memory.*` / `viz.*` events in [`docs/EVENTS.md`](docs/EVENTS.md).
 
 ### v1.11 — audit hardening: correctness fixes, parallel search, observability
 A five-agent audit of v1.10 drove this maintenance release. No accuracy defaults

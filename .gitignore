@@ -38,7 +38,12 @@ deep.md
 
 # Internal / dev-only — kept on disk locally, NOT published to the public repo
 SPEC.md
-docs/
+# docs/ is dev-only EXCEPT the two files the public README links to — track
+# those so the GitHub links resolve. `docs/*` (not `docs/`) leaves the dir
+# itself un-excluded so the negations below can re-include specific files.
+docs/*
+!docs/EVENTS.md
+!docs/ROADMAP.md
 Makefile
 bootstrap.sh
 sherlock.live.yaml

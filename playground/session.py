@@ -141,11 +141,15 @@ def build_agent(session: Session, system_prompt: str, settings: dict):
 
     session.settings = settings or {}
     session.system_prompt = system_prompt or "You are a helpful assistant."
-    # v1.12 Stage A5: opt-in long-term memory persists across sessions/restarts,
-    # so it needs a STABLE storage dir keyed by profile. Off (the default) keeps
-    # the throwaway tempdir behaviour byte-identical.
-    long_term_on = bool(settings.get("long_term"))
-    if long_term_on:
+    # v1.12: the setup "long_term" toggle. None (key absent) → follow the LIBRARY
+    # default (ON as of v1.12) for the enabled flag, but keep the throwaway
+    # tempdir — persisting to a stable per-profile dir under ~/.sherlock_playground
+    # is a heavier commitment that requires an EXPLICIT opt-in (checkbox on).
+    # True → persist to the profile dir so memory survives a restart. False →
+    # force OFF (throwaway tempdir).
+    _lt_setting = settings.get("long_term")  # None absent | True | False
+    lt_explicit_on = bool(_lt_setting)
+    if lt_explicit_on:
         storage = _ltm_profile_dir(settings.get("ltm_profile"))
     else:
         storage = tempfile.mkdtemp(prefix="sherlock_pg_")
@@ -193,14 +197,15 @@ def build_agent(session: Session, system_prompt: str, settings: dict):
         # v1.6: dynamic companion gating. "cold_start" (default) = cheap, escalate
         # on signal pressure; "turbo" = the prior all-on; "off" = legacy.
         companions_mode=settings.get("companions_mode", "cold_start"),
-        # v1.12 Stage A5: cross-conversation long-term memory (off by default in
-        # the playground — the user opts in per session). When on, incognito
-        # (read existing but pause new writes) is carried through too. Off →
-        # long_term=None → byte-identical construction to the pre-A5 agent.
+        # v1.12: cross-conversation long-term memory. Explicit toggle ON → enable
+        # + carry incognito (read existing but pause new writes). Explicit OFF →
+        # long_term=False → force disabled. Key ABSENT → long_term=None → inherit
+        # the library default (ON in v1.12), so the playground no longer forces it
+        # off; the setup toggle stays authoritative when present.
         long_term=(
             {"enabled": True, "incognito": bool(settings.get("ltm_incognito"))}
-            if long_term_on
-            else None
+            if lt_explicit_on
+            else (False if _lt_setting is False else None)
         ),
         # v1.12 Stage B1: LLM-4 inline visualizer (backend plumbing; the toggle UI
         # lands in B4). Off (default / absent) → visualization=None → byte-identical

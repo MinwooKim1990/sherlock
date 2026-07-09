@@ -95,7 +95,7 @@ def _spy_search(agent):
 def test_off_default_no_profile_no_sentinel_search(tmp_path):
     captured: list[str] = []
     events: list[dict] = []
-    agent = _agent(tmp_path, long_term=None, main_chat=_capturing_main(captured))
+    agent = _agent(tmp_path, long_term=False, main_chat=_capturing_main(captured))
     # Sentinel rows EXIST but the feature is off — they must be invisible.
     _seed(agent, "User's name is Kim", "identity_health", 1.0)
     agent.set_event_sink(events.append)

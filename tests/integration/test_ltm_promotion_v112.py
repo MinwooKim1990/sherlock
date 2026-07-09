@@ -89,7 +89,7 @@ def test_kill_switch_no_suffix_no_sentinel_rows(tmp_path):
     captured: list[str] = []
     agent = _agent(
         tmp_path,
-        long_term=None,  # feature OFF (default)
+        long_term=False,  # feature explicitly OFF
         summary_chat=_make_summary_chat(_llm2_payload([dict(_IDENTITY_FACT)]), captured),
     )
     agent.chat(_USER_MSG)
@@ -214,7 +214,7 @@ def test_no_memory_promoted_event_when_disabled(tmp_path):
     events: list[dict] = []
     agent = _agent(
         tmp_path,
-        long_term=None,
+        long_term=False,
         summary_chat=_make_summary_chat(_llm2_payload([dict(_IDENTITY_FACT)])),
     )
     agent.set_event_sink(events.append)

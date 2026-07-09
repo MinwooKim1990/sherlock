@@ -80,7 +80,7 @@ class ToolMain:
 
 def test_export_works_when_disabled(tmp_path):
     # Feature OFF: reading/exporting existing rows is harmless and still works.
-    agent = _agent(tmp_path, long_term=None)
+    agent = _agent(tmp_path, long_term=False)
     _seed(agent, "User is allergic to peanuts")
     md = agent.export_memory("markdown")
     assert "User is allergic to peanuts" in md
@@ -111,7 +111,7 @@ def test_export_writes_file_and_emits_event(tmp_path):
 
 
 def test_import_requires_enabled(tmp_path):
-    agent = _agent(tmp_path, long_term=None)  # disabled
+    agent = _agent(tmp_path, long_term=False)  # disabled
     envelope = {
         "format": "sherlock-ltm",
         "version": 1,
