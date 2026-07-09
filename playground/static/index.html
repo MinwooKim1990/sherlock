@@ -48,6 +48,16 @@
   /* streaming caret */
   .stream-caret::after { content:"▋"; margin-left:1px; animation:blink 1s step-end infinite; color:#94a3b8; }
   @keyframes blink { 50% { opacity:0; } }
+  /* v1.12 B4: LLM-4 inline visualizer slots (placeholder → loading → sandboxed iframe) */
+  .viz-slot { position:relative; margin:.55em 0; border-radius:10px; }
+  .viz-slot-loading, .viz-slot-failed { display:flex; align-items:center; gap:.5em; padding:.7em .9em; font-size:.8em; color:#64748b; background:#f8fafc; border:1px dashed #cbd5e1; border-radius:10px; }
+  .viz-slot-failed { border-style:solid; color:#94a3b8; font-style:italic; }
+  .viz-slot-ready { border:1px solid #e2e8f0; overflow:hidden; background:#fff; }
+  .viz-slot iframe { display:block; }
+  .viz-spin { width:13px; height:13px; flex:0 0 auto; border:2px solid #cbd5e1; border-top-color:#6366f1; border-radius:50%; display:inline-block; animation:vizspin .7s linear infinite; }
+  @keyframes vizspin { to { transform:rotate(360deg); } }
+  html.dark .viz-slot-loading, html.dark .viz-slot-failed { background:#0f172a; border-color:#334155; color:#94a3b8; }
+  html.dark .viz-slot-ready { border-color:#293548; background:#111827; }
   /* ---------- dark mode ---------- */
   html.dark body { background:#0b1220 !important; color:#e2e8f0; }
   html.dark .bg-white { background:#111827 !important; }
@@ -198,6 +208,18 @@
     </div>
     <p class="text-xs text-slate-500 -mt-2" data-i18n="longterm_help">🧠 Long-term memory keeps durable facts (name, allergies, “remember this”) under the named <b>profile</b> across sessions and restarts. Off by default. <b>Incognito</b> keeps recalling what's stored but pauses new writes.</p>
 
+    <!-- v1.12 B4: LLM-4 inline visualizer -->
+    <div class="flex flex-wrap gap-4 text-sm items-center">
+      <label class="flex items-center gap-2" data-i18n-title="viz_title" title="inline data visualizations (LLM-4)">
+        <input id="optViz" type="checkbox" /> <b>📊 <span data-i18n="viz">Visualizations</span></b>
+      </label>
+      <label class="flex items-center gap-1 text-xs text-slate-500">
+        <span class="text-orange-700 font-semibold" data-i18n="viz_role">Visualizer</span> · LLM-4
+        <select id="modelViz" class="border rounded-lg px-2 py-1 text-xs mono" disabled></select>
+      </label>
+    </div>
+    <p class="text-xs text-slate-500 -mt-2" data-i18n="viz_help">📊 When on, LLM-1 (and deep research) may drop an inline chart where a visual genuinely helps; LLM-4 renders it into a self-contained, sandboxed artifact. Off by default.</p>
+
     <div class="flex items-center gap-2 text-sm">
       <label class="font-semibold" data-i18n="websearch">🌐 Web search</label>
       <select id="searchEngine" class="border rounded-lg px-2 py-1.5 text-xs">
@@ -241,6 +263,10 @@
       <option value="off" data-i18n="incog_off">rec</option>
       <option value="on" data-i18n="incog_on">incognito</option>
     </select></span>
+    <span class="flex items-center gap-1" data-i18n-title="viz_title" title="inline data visualizations (LLM-4) — change live"><span>📊</span> <select id="liveVizOn" class="bg-slate-800 rounded px-1 py-0.5 mono">
+      <option value="off" data-i18n="viz_off">viz off</option>
+      <option value="on" data-i18n="viz_on">viz on</option>
+    </select> <select id="liveViz" class="bg-slate-800 rounded px-1 py-0.5 mono"></select></span>
     <span id="tokBar" class="ml-auto mono text-slate-300" title="cumulative tokens this session (in+out per role)"></span>
     <span id="wsStatus" class="text-slate-400">ws: …</span>
     <button id="darkToggle2" class="bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded" title="toggle dark mode" aria-label="toggle dark mode">🌙</button>

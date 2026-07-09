@@ -27,7 +27,8 @@ VALID = (
     '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; '
     "script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:\">\n"
     "</head><body><div><span>Q1 12</span><span>Q2 19</span></div>\n"
-    "<script>parent.postMessage('viz-ready', '*');</script></body></html>"
+    "<script>window.onerror=(e)=>parent.postMessage({sherlockViz:'error',message:String(e)},'*');"
+    "parent.postMessage({sherlockViz:'ready'}, '*');</script></body></html>"
 )
 
 

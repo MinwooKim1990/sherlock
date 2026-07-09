@@ -379,6 +379,30 @@ async def api_verify(req: VerifyReq):
     return {"ok": True, "tier": req.tier}
 
 
+class VisualizationReq(BaseModel):
+    session_id: str
+    on: bool
+
+
+@app.post("/api/visualization")
+async def api_visualization(req: VisualizationReq):
+    """v1.12 Stage B4: live-flip the LLM-4 inline visualizer on/off mid-session.
+    The chat marker-extraction seam and the deep-research report hook both read
+    ``config.visualization.enabled`` fresh, so this takes effect on the NEXT turn:
+    ON → LLM-1 may drop ``<<sherlock-viz: …>>`` markers that render into sandboxed
+    charts; OFF → any stray marker stays verbatim (the byte-identical off-state).
+    Mirrors /api/long_term."""
+    sess = SESSIONS.get(req.session_id)
+    if sess is None:
+        return {"error": "no such session"}
+    try:
+        sess.agent.config.visualization.enabled = bool(req.on)
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
+    sess.settings["visualization"] = bool(req.on)
+    return {"ok": True, "on": bool(req.on)}
+
+
 # ============== v1.12 Stage B3: LLM-4 visualizer runtime repair ==============
 # The browser sandbox (B4) renders each ``viz.rendered`` artifact inside a
 # locked-down iframe. If it throws a REAL runtime error (a JS exception, a blank
@@ -788,6 +812,30 @@ def build_export_markdown(sess: Session) -> str:
                 f"- tokens in/out: {_tok_pair(d.get('prompt_tokens'), d.get('completion_tokens'))}"
                 f" · cache read: {d.get('cache_read_tokens', 0)}"
             )
+
+        # v1.12 Stage B4: LLM-4 visualizations rendered this turn (chat OR the DR
+        # report). Each ⟦viz:id⟧ placeholder that actually rendered becomes a link
+        # to its saved artifact; the description rides the earlier viz.pending event.
+        viz_desc = {
+            data(e).get("viz_id"): data(e).get("description", "")
+            for e in evts
+            if e.get("type") == "viz.pending"
+        }
+        # NOTE: this dedup is PER-TURN (seen_viz is reset for each turn), so a viz
+        # that is re-rendered at runtime (e.g. an /api/viz/repair re-render) and
+        # re-recorded under a later turn will emit a second link for the same vid.
+        # Also the viz/{vid}.html target is RELATIVE: it only resolves when this
+        # export is written beside the session's viz storage dir.
+        seen_viz: set[str] = set()
+        for e in evts:
+            if e.get("type") != "viz.rendered":
+                continue
+            vid = data(e).get("viz_id")
+            if not vid or vid in seen_viz:
+                continue
+            seen_viz.add(vid)
+            desc = _one(viz_desc.get(vid)) or "visualization"
+            lines.append(f"- [📊 visualization: {desc}](viz/{vid}.html)")
         if base:
             srch = " (+web search)" if base.get("searched") else ""
             lines.append(

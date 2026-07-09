@@ -24,7 +24,8 @@ VALID = (
     '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; '
     "script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:\">\n"
     "</head><body><div><span>Q1 12</span><span>Q2 19</span></div>\n"
-    "<script>parent.postMessage('viz-ready', '*');</script></body></html>"
+    "<script>window.onerror=(e)=>parent.postMessage({sherlockViz:'error',message:String(e)},'*');"
+    "parent.postMessage({sherlockViz:'ready'}, '*');</script></body></html>"
 )
 
 # The HTML the browser holds (has the data, so a repair's numbers trace) but is
@@ -120,7 +121,7 @@ def test_repair_fixes_and_marks_runtime(monkeypatch):
 
     assert r["ok"] is True
     assert r["validated"] == "runtime"
-    assert "viz-ready" in r["html"]
+    assert "sherlockViz:'ready'" in r["html"]
     assert 'name="sherlock-viz-validated"' in r["html"]
     # flow-log events fired through the session sink
     assert len(_events_of(sess, "viz.repairing")) == 1
@@ -249,7 +250,7 @@ def test_get_artifact_after_successful_repair(monkeypatch):
     g = client.get("/api/viz/t1-1", params={"session_id": sid})
     assert g.status_code == 200
     assert "text/html" in g.headers["content-type"]
-    assert "viz-ready" in g.text
+    assert "sherlockViz:'ready'" in g.text
 
     # a missing id → structured error, not a served file
     g2 = client.get("/api/viz/does-not-exist", params={"session_id": sid})

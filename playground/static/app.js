@@ -74,8 +74,17 @@ const LANG = {
     ltm_remembered: "remembered", ltm_forgot: "forgot", ltm_wiped: "long-term wiped",
     ltm_imported: "imported to long-term", ltm_import_fail: "import failed",
     ltm_temp_note: "🧠 note: this session stores to a temporary dir — start a new session to persist under a profile",
+    // v1.12 B4: LLM-4 inline visualizer
+    viz: "📊 Visualizations", viz_on: "viz on", viz_off: "viz off",
+    viz_title: "inline data visualizations (LLM-4) — render charts the model proposes; change live",
+    viz_role: "Visualizer", viz_same_as_main: "— same as Main —",
+    viz_help: "📊 When on, LLM-1 (and deep research) may drop an inline chart where a visual genuinely helps; LLM-4 renders it into a self-contained, sandboxed artifact. Off by default.",
+    viz_loading: "📊 rendering visualization…",
+    viz_repairing: "📊 repairing visualization… (round {0})",
+    viz_repairing_runtime: "📊 repairing visualization…",
+    viz_unavailable: "📊 (visualization unavailable)",
   },
-  ko: {"subtitle":"아무 LLM이나 연결하세요 — Gemini, OpenAI, Anthropic, 오픈소스 모델 호스트(DeepInfra · Together · OpenRouter), 또는 로컬 OpenAI 호환 서버까지 — 그리고 Sherlock이 그 컨텍스트를 실시간으로 정리하는 모습을 지켜보세요.","providers":"제공자","providers_hint":"— 최소 하나는 연결하세요. 역할별로 자유롭게 조합 가능","role_main":"메인","role_summary":"요약기","role_infer":"추론기","sysprompt_label":"시스템 프롬프트 (LLM-1 페르소나)","companions":"컴패니언","companions_turbo":"turbo — 매 턴마다 LLM-2 + LLM-3","companions_cold":"cold_start — 신호가 필요할 때만","companions_off":"off — 단일 모델 (레거시)","companions_help":"💡 <b>turbo</b>는 매 턴마다 LLM-3 추론 + LLM-2 압축을 실행합니다(🧠 추론 / 🗜 압축 패널이 항상 채워짐). <b>cold_start</b>는 실제 신호로 컴패니언이 필요해질 때까지 단일 모델을 유지하고, <b>off</b>는 레거시 게이트입니다.","background":"백그라운드","redact":"비밀정보 가리기","verify":"검증","websearch":"🌐 웹 검색","engine_ddg":"DuckDuckGo (무료, 키 불필요)","engine_brave":"Brave (키 필요)","engine_tavily":"Tavily (키 필요)","engine_valyu":"Valyu (키 필요)","engine_off":"끔","searchkey_ph":"검색 API 키","websearch_help":"LLM-1(검색 + 가져오기)과 LLM-3(최신성)이 모두 이 엔진을 사용합니다. DuckDuckGo는 무료지만 뉴스에는 약하고, Brave/Tavily/Valyu는 키만 있으면 훨씬 나은 결과를 줍니다.","start_session":"세션 시작","export":"⬇ 내보내기","new_session":"새 세션","thinking":"Sherlock이 생각 중…","stop":"중지","try":"예시:","ex1":"우리 딸 유진이가 땅콩 알레르기가 있어요","ex2":"회사를 그만둘지 말지 고민이에요","ex3":"다음 주에 부산 가는데 호텔 추천해줘","ex4":"오늘 서울 날씨 검색해줘","ex5":"내가 아까 한 말 기억해?","dr_proposed":"🔬 심층 리서치 제안됨","approve":"승인","skip":"건너뛰기","dr_or_yes":"…또는 그냥 “네”라고 답하세요.","chatmode_title":"누가 답하는지: Sherlock, 순수 모델, 또는 둘을 나란히","mode_single":"단일 LLM","mode_both":"비교 (A/B)","baseline_search_title":"공정한 비교: 단일 LLM도 동일한 엔진으로 한 번 검색을 수행합니다","single_search":"🔎단일","msg_ph":"메시지를 입력하세요…","send":"전송","single_baseline":"⚖ 단일 LLM (기준)","tab_flow":"⚡ 흐름","tab_slot":"🧱 슬롯","tab_llmio":"💬 LLM 입출력","tab_infer":"🧠 추론","tab_compact":"🗜 압축","tab_memory":"🗃 메모리","tab_carry":"↪ 이월","tab_research":"🔬 리서치","thinking_single":"단일 LLM이 생각 중…","stopping":"중지하는 중…","building_agent":"에이전트 구성 중 (첫 실행 시 임베더를 다운로드합니다)…","need_provider":"✗ 먼저 제공자를 연결하고 모델을 선택하세요","dr_running":"🔬 심층 리서치 실행 중…","dr_synth":"🔬 최종 답변 종합 중…","dr_starting":"🔬 심층 리서치 시작 중…","bg_running":"🧩 백그라운드에서 메모리 갱신 중…","bg_on":"비동기","bg_off":"동기","async_title":"비동기 — LLM-2/LLM-3가 백그라운드에서 돌아 답변이 기다리지 않습니다 (실시간 변경 가능)","longterm":"장기 기억","ltm_profile":"프로필","ltm_profile_ph":"default","ltm_incognito":"시크릿 — 읽되 저장 안 함","longterm_help":"🧠 장기 기억은 이름·알레르기·“기억해 둬” 같은 지속적 사실을 지정한 <b>프로필</b>에 저장해 세션과 재시작을 넘어 유지합니다. 기본값은 꺼짐. <b>시크릿</b>은 저장된 내용은 계속 불러오되 새 쓰기는 멈춥니다.","tab_ltm":"🧠 장기기억","tab_ltm_full":"장기 기억","ltm_on":"장기 켬","ltm_off":"장기 끔","incog_off":"기록","incog_on":"시크릿","ltm_title":"장기(세션 간) 기억 — 실시간 변경","incog_title":"시크릿 — 회상은 하되 새 쓰기는 멈춤","ltm_refresh":"새로고침","ltm_export":"내보내기","ltm_import":"가져오기","ltm_wipe":"전체삭제","ltm_empty":"아직 장기 기억이 없습니다. 장기 기억이 켜지면 LLM-2가 지속적 사실(정체성·알레르기·명시적 “기억해 둬”·안정적 선호/프로젝트)을 여기로 승격하며, 모든 세션에서 공유됩니다.","ltm_col_cat":"분류","ltm_col_content":"사실","ltm_col_conf":"신뢰","ltm_col_created":"기록시점","ltm_delete":"삭제","ltm_delete_confirm":"이 장기 기억을 영구 삭제할까요?","ltm_wipe_confirm1":"모든 장기 기억을 삭제할까요? 먼저 마크다운 백업이 기록됩니다.","ltm_wipe_confirm2":"정말요? 이 프로필의 모든 지속적 사실이 지워집니다.","ltm_remembered":"기억됨","ltm_forgot":"잊음","ltm_wiped":"장기 기억 삭제됨","ltm_imported":"장기 기억으로 가져옴","ltm_import_fail":"가져오기 실패","ltm_temp_note":"🧠 참고: 이 세션은 임시 디렉터리에 저장됩니다 — 프로필에 영구 저장하려면 새 세션을 시작하세요"},
+  ko: {"subtitle":"아무 LLM이나 연결하세요 — Gemini, OpenAI, Anthropic, 오픈소스 모델 호스트(DeepInfra · Together · OpenRouter), 또는 로컬 OpenAI 호환 서버까지 — 그리고 Sherlock이 그 컨텍스트를 실시간으로 정리하는 모습을 지켜보세요.","providers":"제공자","providers_hint":"— 최소 하나는 연결하세요. 역할별로 자유롭게 조합 가능","role_main":"메인","role_summary":"요약기","role_infer":"추론기","sysprompt_label":"시스템 프롬프트 (LLM-1 페르소나)","companions":"컴패니언","companions_turbo":"turbo — 매 턴마다 LLM-2 + LLM-3","companions_cold":"cold_start — 신호가 필요할 때만","companions_off":"off — 단일 모델 (레거시)","companions_help":"💡 <b>turbo</b>는 매 턴마다 LLM-3 추론 + LLM-2 압축을 실행합니다(🧠 추론 / 🗜 압축 패널이 항상 채워짐). <b>cold_start</b>는 실제 신호로 컴패니언이 필요해질 때까지 단일 모델을 유지하고, <b>off</b>는 레거시 게이트입니다.","background":"백그라운드","redact":"비밀정보 가리기","verify":"검증","websearch":"🌐 웹 검색","engine_ddg":"DuckDuckGo (무료, 키 불필요)","engine_brave":"Brave (키 필요)","engine_tavily":"Tavily (키 필요)","engine_valyu":"Valyu (키 필요)","engine_off":"끔","searchkey_ph":"검색 API 키","websearch_help":"LLM-1(검색 + 가져오기)과 LLM-3(최신성)이 모두 이 엔진을 사용합니다. DuckDuckGo는 무료지만 뉴스에는 약하고, Brave/Tavily/Valyu는 키만 있으면 훨씬 나은 결과를 줍니다.","start_session":"세션 시작","export":"⬇ 내보내기","new_session":"새 세션","thinking":"Sherlock이 생각 중…","stop":"중지","try":"예시:","ex1":"우리 딸 유진이가 땅콩 알레르기가 있어요","ex2":"회사를 그만둘지 말지 고민이에요","ex3":"다음 주에 부산 가는데 호텔 추천해줘","ex4":"오늘 서울 날씨 검색해줘","ex5":"내가 아까 한 말 기억해?","dr_proposed":"🔬 심층 리서치 제안됨","approve":"승인","skip":"건너뛰기","dr_or_yes":"…또는 그냥 “네”라고 답하세요.","chatmode_title":"누가 답하는지: Sherlock, 순수 모델, 또는 둘을 나란히","mode_single":"단일 LLM","mode_both":"비교 (A/B)","baseline_search_title":"공정한 비교: 단일 LLM도 동일한 엔진으로 한 번 검색을 수행합니다","single_search":"🔎단일","msg_ph":"메시지를 입력하세요…","send":"전송","single_baseline":"⚖ 단일 LLM (기준)","tab_flow":"⚡ 흐름","tab_slot":"🧱 슬롯","tab_llmio":"💬 LLM 입출력","tab_infer":"🧠 추론","tab_compact":"🗜 압축","tab_memory":"🗃 메모리","tab_carry":"↪ 이월","tab_research":"🔬 리서치","thinking_single":"단일 LLM이 생각 중…","stopping":"중지하는 중…","building_agent":"에이전트 구성 중 (첫 실행 시 임베더를 다운로드합니다)…","need_provider":"✗ 먼저 제공자를 연결하고 모델을 선택하세요","dr_running":"🔬 심층 리서치 실행 중…","dr_synth":"🔬 최종 답변 종합 중…","dr_starting":"🔬 심층 리서치 시작 중…","bg_running":"🧩 백그라운드에서 메모리 갱신 중…","bg_on":"비동기","bg_off":"동기","async_title":"비동기 — LLM-2/LLM-3가 백그라운드에서 돌아 답변이 기다리지 않습니다 (실시간 변경 가능)","longterm":"장기 기억","ltm_profile":"프로필","ltm_profile_ph":"default","ltm_incognito":"시크릿 — 읽되 저장 안 함","longterm_help":"🧠 장기 기억은 이름·알레르기·“기억해 둬” 같은 지속적 사실을 지정한 <b>프로필</b>에 저장해 세션과 재시작을 넘어 유지합니다. 기본값은 꺼짐. <b>시크릿</b>은 저장된 내용은 계속 불러오되 새 쓰기는 멈춥니다.","tab_ltm":"🧠 장기기억","tab_ltm_full":"장기 기억","ltm_on":"장기 켬","ltm_off":"장기 끔","incog_off":"기록","incog_on":"시크릿","ltm_title":"장기(세션 간) 기억 — 실시간 변경","incog_title":"시크릿 — 회상은 하되 새 쓰기는 멈춤","ltm_refresh":"새로고침","ltm_export":"내보내기","ltm_import":"가져오기","ltm_wipe":"전체삭제","ltm_empty":"아직 장기 기억이 없습니다. 장기 기억이 켜지면 LLM-2가 지속적 사실(정체성·알레르기·명시적 “기억해 둬”·안정적 선호/프로젝트)을 여기로 승격하며, 모든 세션에서 공유됩니다.","ltm_col_cat":"분류","ltm_col_content":"사실","ltm_col_conf":"신뢰","ltm_col_created":"기록시점","ltm_delete":"삭제","ltm_delete_confirm":"이 장기 기억을 영구 삭제할까요?","ltm_wipe_confirm1":"모든 장기 기억을 삭제할까요? 먼저 마크다운 백업이 기록됩니다.","ltm_wipe_confirm2":"정말요? 이 프로필의 모든 지속적 사실이 지워집니다.","ltm_remembered":"기억됨","ltm_forgot":"잊음","ltm_wiped":"장기 기억 삭제됨","ltm_imported":"장기 기억으로 가져옴","ltm_import_fail":"가져오기 실패","ltm_temp_note":"🧠 참고: 이 세션은 임시 디렉터리에 저장됩니다 — 프로필에 영구 저장하려면 새 세션을 시작하세요","viz":"📊 시각화","viz_on":"시각화 켬","viz_off":"시각화 끔","viz_title":"인라인 데이터 시각화 (LLM-4) — 모델이 제안하는 차트를 렌더링합니다. 실시간 변경 가능","viz_role":"시각화기","viz_same_as_main":"— 메인과 동일 —","viz_help":"📊 켜면 LLM-1(및 심층 리서치)이 시각화가 정말 도움이 되는 자리에 인라인 차트를 넣고, LLM-4가 이를 독립적인 샌드박스 아티팩트로 렌더링합니다. 기본값은 꺼짐.","viz_loading":"📊 시각화 렌더링 중…","viz_repairing":"📊 시각화 복구 중… (라운드 {0})","viz_repairing_runtime":"📊 시각화 복구 중…","viz_unavailable":"📊 (시각화를 사용할 수 없음)"},
   zh: {"subtitle":"接入任意 LLM —— Gemini、OpenAI、Anthropic、开源模型托管服务（DeepInfra · Together · OpenRouter），或本地的 OpenAI 兼容服务器 —— 实时观看 Sherlock 整理它的上下文。","providers":"提供方","providers_hint":"—— 至少连接一个；每个角色可自由搭配","role_main":"主模型","role_summary":"摘要器","role_infer":"推断器","sysprompt_label":"系统提示词（LLM-1 人设）","companions":"协同模型","companions_turbo":"turbo —— 每轮都运行 LLM-2 + LLM-3","companions_cold":"cold_start —— 仅在出现信号时才启用","companions_off":"off —— 单模型（旧版）","companions_help":"💡 <b>turbo</b> 每轮都运行 LLM-3 推断 + LLM-2 压缩（🧠 推断 / 🗜 压缩 面板始终有内容）。<b>cold_start</b> 在出现真实信号需要协同模型之前一直保持单模型；<b>off</b> 是旧版门控。","background":"后台运行","redact":"隐去敏感信息","websearch":"🌐 联网搜索","engine_ddg":"DuckDuckGo（免费，无需密钥）","engine_brave":"Brave（需密钥）","engine_tavily":"Tavily（需密钥）","engine_valyu":"Valyu（需密钥）","engine_off":"关闭","searchkey_ph":"搜索 API 密钥","websearch_help":"LLM-1（搜索 + 抓取）和 LLM-3（时效性）都使用此引擎。DuckDuckGo 免费但新闻检索能力较弱；配上密钥后，Brave/Tavily/Valyu 的结果要好得多。","start_session":"开始会话","export":"⬇ 导出","new_session":"新建会话","thinking":"Sherlock 正在思考…","stop":"停止","try":"试试：","ex1":"我女儿雨欣对花生过敏","ex2":"我在纠结要不要辞职","ex3":"我下周要去东京——推荐一家酒店吧","ex4":"查一下今天上海的天气","ex5":"你还记得我之前说过什么吗？","dr_proposed":"🔬 已建议深度研究","approve":"同意","skip":"跳过","dr_or_yes":"…或者直接回复\"好\"。","chatmode_title":"谁来回答：Sherlock、原始模型，还是两者并排对比","mode_single":"单个 LLM","mode_both":"对比（A/B）","baseline_search_title":"公平对比：单个 LLM 也会用同一引擎执行一次搜索","single_search":"🔎单次","msg_ph":"说点什么…","send":"发送","single_baseline":"⚖ 单个 LLM（基准）","tab_flow":"⚡ 流程","tab_slot":"🧱 槽位","tab_llmio":"💬 LLM 输入/输出","tab_infer":"🧠 推断","tab_compact":"🗜 压缩","tab_memory":"🗃 记忆","tab_carry":"↪ 携带","tab_research":"🔬 研究","thinking_single":"单个 LLM 正在思考…","stopping":"正在停止…","building_agent":"正在构建智能体（首次运行会下载嵌入模型）…","need_provider":"✗ 请先连接提供方并选择模型","dr_running":"🔬 深度研究进行中…","dr_synth":"🔬 正在综合最终答案…","dr_starting":"🔬 深度研究启动中…"},
   ja: {"subtitle":"お好きなLLM — Gemini、OpenAI、Anthropic、オープンソースモデルのホスト（DeepInfra · Together · OpenRouter）、またはローカルのOpenAI互換サーバー — を接続すれば、Sherlockがそのコンテキストをリアルタイムで整える様子を見られます。","providers":"プロバイダー","providers_hint":"— 最低1つ接続してください。役割ごとに自由に組み合わせOK","role_main":"メイン","role_summary":"要約担当","role_infer":"推論担当","sysprompt_label":"システムプロンプト（LLM-1のペルソナ）","companions":"コンパニオン","companions_turbo":"turbo — 毎ターン LLM-2 + LLM-3 を実行","companions_cold":"cold_start — 必要な兆候があるときだけ起動","companions_off":"off — 単一モデル（レガシー）","companions_help":"💡 <b>turbo</b> は毎ターン LLM-3 の推論と LLM-2 の圧縮を実行します（🧠 推論 / 🗜 圧縮 パネルが常に埋まります）。<b>cold_start</b> は本物の兆候がコンパニオンを必要とするまで単一モデルのまま動作します。<b>off</b> はレガシーのゲートです。","background":"バックグラウンド","redact":"秘密情報を伏せる","websearch":"🌐 ウェブ検索","engine_ddg":"DuckDuckGo（無料・キー不要）","engine_brave":"Brave（キー要）","engine_tavily":"Tavily（キー要）","engine_valyu":"Valyu（キー要）","engine_off":"オフ","searchkey_ph":"検索APIキー","websearch_help":"LLM-1（検索＋取得）と LLM-3（鮮度チェック）はどちらもこのエンジンを使います。DuckDuckGo は無料ですがニュースには弱く、Brave / Tavily / Valyu はキーを使えばはるかに良い結果が得られます。","start_session":"セッション開始","export":"⬇ エクスポート","new_session":"新しいセッション","thinking":"Sherlock が考えています…","stop":"停止","try":"試してみる:","ex1":"娘の結衣がピーナッツアレルギーなんです","ex2":"仕事を辞めるべきか迷っています","ex3":"来週、京都に行くんだけどおすすめのホテルを教えて","ex4":"今日の東京の天気を調べて","ex5":"さっき私が言ったこと、覚えてる？","dr_proposed":"🔬 ディープリサーチを提案","approve":"承認","skip":"スキップ","dr_or_yes":"…または「はい」と返すだけでもOK。","chatmode_title":"誰が答えるか：Sherlock、素のモデル、または両方を並べて比較","mode_single":"単一LLM","mode_both":"比較（A/B）","baseline_search_title":"公平な比較：単一LLMも同じエンジンで1回検索を行います","single_search":"🔎単独","msg_ph":"メッセージを入力…","send":"送信","single_baseline":"⚖ 単一LLM（ベースライン）","tab_flow":"⚡ フロー","tab_slot":"🧱 スロット","tab_llmio":"💬 LLM入出力","tab_infer":"🧠 推論","tab_compact":"🗜 圧縮","tab_memory":"🗃 メモリ","tab_carry":"↪ 引き継ぎ","tab_research":"🔬 リサーチ","thinking_single":"単一LLM が考えています…","stopping":"停止中…","building_agent":"エージェントを構築中（初回はエンベッダーをダウンロードします）…","need_provider":"✗ まずプロバイダーを接続してモデルを選んでください","dr_running":"🔬 ディープリサーチを実行中…","dr_synth":"🔬 最終的な回答をまとめています…","dr_starting":"🔬 ディープリサーチを開始中…"},
   fr: {"subtitle":"Connectez n'importe quel LLM — Gemini, OpenAI, Anthropic, un hébergeur de modèles open source (DeepInfra · Together · OpenRouter) ou un serveur local compatible OpenAI — et regardez Sherlock organiser son contexte en temps réel.","providers":"Fournisseurs","providers_hint":"— connectez-en au moins un ; combinez-les librement selon le rôle","role_main":"Principal","role_summary":"Synthétiseur","role_infer":"Inférenceur","sysprompt_label":"Prompt système (persona LLM-1)","companions":"Compagnons","companions_turbo":"turbo — LLM-2 + LLM-3 à chaque tour","companions_cold":"cold_start — uniquement quand un signal les requiert","companions_off":"off — modèle unique (hérité)","companions_help":"💡 <b>turbo</b> exécute l'inférence LLM-3 + la compaction LLM-2 à chaque tour (les panneaux 🧠 Inférence / 🗜 Compaction se remplissent toujours). <b>cold_start</b> reste en modèle unique jusqu'à ce qu'un véritable signal requière les compagnons ; <b>off</b> est le mécanisme hérité.","background":"Arrière-plan","redact":"Masquer les secrets","websearch":"🌐 Recherche web","engine_ddg":"DuckDuckGo (gratuit, sans clé)","engine_brave":"Brave (clé)","engine_tavily":"Tavily (clé)","engine_valyu":"Valyu (clé)","engine_off":"Désactivé","searchkey_ph":"clé API de recherche","websearch_help":"LLM-1 (recherche + récupération) et LLM-3 (fraîcheur) utilisent tous deux ce moteur. DuckDuckGo est gratuit mais faible pour l'actualité ; Brave/Tavily/Valyu donnent de bien meilleurs résultats avec une clé.","start_session":"Démarrer la session","export":"⬇ exporter","new_session":"nouvelle session","thinking":"Sherlock réfléchit…","stop":"Arrêter","try":"essayez :","ex1":"Ma fille Camille est allergique aux arachides","ex2":"J'hésite à démissionner de mon poste","ex3":"Je pars à Lyon la semaine prochaine — conseille-moi un hôtel","ex4":"Cherche la météo d'aujourd'hui à Paris","ex5":"Tu te souviens de ce que je t'ai dit tout à l'heure ?","dr_proposed":"🔬 Recherche approfondie proposée","approve":"Approuver","skip":"Ignorer","dr_or_yes":"…ou répondez simplement « oui ».","chatmode_title":"qui répond : Sherlock, le modèle brut, ou les deux côte à côte","mode_single":"LLM unique","mode_both":"Comparer (A/B)","baseline_search_title":"Comparaison équitable : le LLM unique bénéficie aussi d'une passe de recherche avec le même moteur","single_search":"🔎unique","msg_ph":"Écrivez quelque chose…","send":"Envoyer","single_baseline":"⚖ LLM unique (référence)","tab_flow":"⚡ Flux","tab_slot":"🧱 Emplacement","tab_llmio":"💬 E/S LLM","tab_infer":"🧠 Inférence","tab_compact":"🗜 Compaction","tab_memory":"🗃 Mémoire","tab_carry":"↪ Report","tab_research":"🔬 Recherche","thinking_single":"Le LLM unique réfléchit…","stopping":"arrêt en cours…","building_agent":"construction de l'agent (le premier lancement télécharge l'encodeur)…","need_provider":"✗ connectez un fournisseur et choisissez d'abord les modèles","dr_running":"🔬 recherche approfondie en cours…","dr_synth":"🔬 synthèse de la réponse finale…","dr_starting":"🔬 démarrage de la recherche approfondie…"},
@@ -114,6 +123,7 @@ const ACTOR = {
   llm1: { stripe: "bg-blue-500", text: "text-blue-700", soft: "bg-blue-50", n: "LLM-1" },
   llm2: { stripe: "bg-green-500", text: "text-green-700", soft: "bg-green-50", n: "LLM-2" },
   llm3: { stripe: "bg-purple-500", text: "text-purple-700", soft: "bg-purple-50", n: "LLM-3" },
+  llm4: { stripe: "bg-orange-500", text: "text-orange-700", soft: "bg-orange-50", n: "LLM-4" },
   memory: { stripe: "bg-amber-500", text: "text-amber-700", soft: "bg-amber-50", n: "memory" },
   decay: { stripe: "bg-slate-400", text: "text-slate-600", soft: "bg-slate-50", n: "decay" },
   carry: { stripe: "bg-rose-500", text: "text-rose-700", soft: "bg-rose-50", n: "carry" },
@@ -126,7 +136,11 @@ const STATE_CHIP = {
   cold: "bg-blue-100 text-blue-700", forgotten: "bg-slate-200 text-slate-500 line-through",
 };
 
-const S = { prov: {}, sid: null, ws: null, llmio: {}, research: {}, streamOpen: false };
+const S = { prov: {}, sid: null, ws: null, llmio: {}, research: {}, streamOpen: false,
+  // v1.12 B4: LLM-4 visualizer — bubble registry (KEY→rendered-markdown element),
+  // per-viz status ('pending'|'harnessing'|'ready'|'failed'), a buffer for viz.*
+  // events that arrive before their slot exists, and the live iframe harnesses.
+  bubbles: {}, vizBuffer: {}, vizStatus: {}, vizHarnesses: new Set() };
 
 /* ---------------- setup: multi-provider connect ---------------- */
 // S.prov = { gemini: {creds:{api_key}, models:[...]}, openai: {...}, anthropic: {...}, local: {creds:{base_url,api_key}, models:[...]} }
@@ -182,6 +196,20 @@ function pickDefault(role) {
   for (const re of ROLE_PREF[role] || []) { const hit = opts.find((o) => re.test(o.label)); if (hit) return hit.value; }
   return opts.length ? opts[0].value : "";
 }
+// v1.12 B4: the VISUALIZER (LLM-4) model select — a leading "— same as Main —"
+// option (value "") means no dedicated viz model, so the library falls back to
+// the main provider. Otherwise identical to fillSelect.
+function fillVizSelect(el, current) {
+  if (!el) return;
+  el.innerHTML = ""; el.disabled = false;
+  const same = h("option", "", esc(t("viz_same_as_main"))); same.value = ""; el.appendChild(same);
+  for (const [p, info] of Object.entries(S.prov)) {
+    const og = document.createElement("optgroup"); og.label = PROV_LABEL[p] || p;
+    info.models.forEach((m) => { const o = h("option", "", esc(m.id)); o.value = `${p}::${m.id}`; og.appendChild(o); });
+    el.appendChild(og);
+  }
+  el.value = current && [...el.options].some((o) => o.value === current) ? current : "";
+}
 function rebuildRoleSelects() {
   for (const [sel, role] of [["modelMain", "main"], ["modelSummary", "summary"], ["modelInference", "inference"]]) {
     const el = $(sel);
@@ -189,6 +217,8 @@ function rebuildRoleSelects() {
     fillSelect(el, keep);
     if (!keep) el.value = pickDefault(role);
   }
+  const vz = $("modelViz");
+  if (vz) fillVizSelect(vz, vz.value || "");  // default: — same as Main —
 }
 const parseSpec = (v) => { const i = (v || "").indexOf("::"); return i < 0 ? null : { provider: v.slice(0, i), model: v.slice(i + 2) }; };
 
@@ -260,6 +290,23 @@ function mirrorLive() {
       if ($("optIncognito")) $("optIncognito").checked = linc.value === "on";
     };
   }
+  // v1.12 B4: live visualizer MODEL select — mirrors the setup pick ("same as Main")
+  const lvz = $("liveViz");
+  if (lvz) {
+    fillVizSelect(lvz, lvz.value || ($("modelViz") ? $("modelViz").value : ""));
+    lvz.onchange = async () => {
+      await fetch("/api/select_models", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: S.sid, models: { viz: parseSpec(lvz.value) } }) });
+    };
+  }
+  // v1.12 B4: live visualizer ON/OFF toggle — mirrors the setup checkbox → /api/visualization
+  const lvo = $("liveVizOn");
+  if (lvo) {
+    lvo.value = $("optViz") && $("optViz").checked ? "on" : "off";
+    lvo.onchange = async () => {
+      await fetch("/api/visualization", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: S.sid, on: lvo.value === "on" }) });
+      if ($("optViz")) $("optViz").checked = lvo.value === "on";
+    };
+  }
 }
 
 // Build the session config from the CURRENT controls — live top-bar selects (if a
@@ -270,6 +317,8 @@ function currentModels() {
     main: parseSpec(pickVal("liveMain", "modelMain")),
     summary: parseSpec(pickVal("liveSummary", "modelSummary")),
     inference: parseSpec(pickVal("liveInference", "modelInference")),
+    // v1.12 B4: viz (LLM-4) — null when "— same as Main —" (falls back to main)
+    viz: parseSpec(pickVal("liveViz", "modelViz")),
   };
 }
 function currentSettings() {
@@ -283,6 +332,8 @@ function currentSettings() {
     long_term: !!($("optLongTerm") && $("optLongTerm").checked),
     ltm_profile: ($("ltmProfile") && $("ltmProfile").value.trim()) || "default",
     ltm_incognito: !!($("optIncognito") && $("optIncognito").checked),
+    // v1.12 B4: LLM-4 inline visualizer (off by default; opt-in per session)
+    visualization: !!($("optViz") && $("optViz").checked),
   };
 }
 // POST /api/session with the current config, swap the WebSocket. Returns true on
@@ -313,8 +364,13 @@ function resetChatUI() {
   $("chat").innerHTML = ""; if ($("chatB")) $("chatB").innerHTML = "";
   if ($("tab-flow")) $("tab-flow").innerHTML = "";
   initPanels();
-  for (const k of ["main", "summary", "inference"]) TOK[k] = { i: 0, o: 0, n: 0, c: 0 };
+  for (const k of ["main", "summary", "inference", "viz"]) TOK[k] = { i: 0, o: 0, n: 0, c: 0 };
   BASE.i = 0; BASE.o = 0; renderTokBar();
+  // v1.12 B4: drop stale viz harnesses + registries so a new session starts clean.
+  // Cancel each in-flight 4s harness timer too, else a stale settle could fire
+  // repairViz against the NEW S.sid after the reset.
+  try { S.vizHarnesses.forEach((hh) => { try { clearTimeout(hh.timer); } catch (e) {} try { hh.iframe.remove(); } catch (e) {} }); } catch (e) {}
+  S.bubbles = {}; S.vizBuffer = {}; S.vizStatus = {}; S.vizHarnesses = new Set();
   S.stream = null; S.streamOpen = false; S.llmio = {}; S.research = {}; S.busy = false; lastTurn = null;
   setThinking(false); hideDRBanner();
 }
@@ -427,6 +483,10 @@ function addBubble(role, text, target) {
   wrap.appendChild(bubble);
   if (role === "assistant" && text) attachCopy(bubble, text);
   box.appendChild(wrap); box.scrollTop = box.scrollHeight;
+  // v1.12 B4: turn any ⟦viz:id⟧ placeholders in a rendered assistant bubble into
+  // loading slots (spliced with sandboxed iframes once viz.rendered arrives).
+  if (role === "assistant") spliceVizSlots(bubble);
+  return bubble;
 }
 function addMetaLine(text, target) {
   const box = target || $("chat");
@@ -464,8 +524,30 @@ function liveBubble(turn) {
 function streamAnswer(turn, chunk) {
   if (!chunk || !S.streamOpen) return; // drop late deltas after turn.completed (no zombie bubble)
   const s = liveBubble(turn);
-  s.answer += chunk; s.answerEl.textContent = s.answer;
+  s.answer += chunk;
+  // v1.12 B4: deltas are PRE-strip, so the raw <<sherlock-viz: …>> marker (or a
+  // ⟦viz:…⟧ placeholder) can flash mid-stream. Hide complete AND partial markers
+  // from the live text; the finalized bubble gets proper slots. (Display only —
+  // s.answer keeps the raw accumulation for the fallback path.)
+  s.answerEl.textContent = filterVizForStream(s.answer);
   autoScroll();
+}
+// Strip viz markers/placeholders (complete + trailing-partial) from streaming text.
+function filterVizForStream(text) {
+  let out = String(text == null ? "" : text)
+    .replace(/<<\s*sherlock-viz\s*:[\s\S]*?>>/gi, "")
+    .replace(/⟦viz:[^⟧]*⟧/g, "");
+  // a trailing partial placeholder ⟦… with no closing ⟧ (still streaming in)
+  const lb = out.lastIndexOf("⟦");
+  if (lb !== -1 && out.indexOf("⟧", lb) === -1) out = out.slice(0, lb);
+  // a trailing partial marker <<… that could still become <<sherlock-viz:…>>
+  const lt = out.lastIndexOf("<<");
+  if (lt !== -1 && out.indexOf(">>", lt) === -1) {
+    const tail = out.slice(lt).replace(/\s+/g, "").toLowerCase();
+    const P = "<<sherlock-viz";
+    if (tail.length <= P.length ? P.startsWith(tail) : tail.startsWith(P)) out = out.slice(0, lt);
+  }
+  return out;
 }
 function streamReasoning(turn, chunk) {
   if (!chunk || !S.streamOpen) return; // drop late deltas after turn.completed
@@ -482,11 +564,18 @@ function finalizeStream(turn, finalText) {
   // turn) must never strand a streamed reply.
   if (!S.stream) return false;
   const s = S.stream; S.stream = null;
-  const txt = finalText != null && finalText !== "" ? finalText : s.answer;
+  // finalText (turn.completed response_text) already carries the ⟦viz:…⟧
+  // placeholders; the raw-stream fallback (s.answer) still has <<sherlock-viz>>
+  // markers, so filter those out of the fallback so nothing raw survives.
+  const txt = finalText != null && finalText !== "" ? finalText : filterVizForStream(s.answer);
   s.answerEl.className = "prose-md"; // drops the streaming caret
   s.answerEl.innerHTML = mdRender(txt);
   if (s.reasoning) s.thinkWrap.open = false; else s.thinkWrap.remove();
   if (txt) attachCopy(s.bubble, txt);
+  // v1.12 B4: splice loading slots for any placeholders + register the bubble so
+  // async viz.rendered events (which land AFTER finalize) can find it by turn.
+  spliceVizSlots(s.answerEl);
+  registerBubble("t" + turn, s.answerEl);
   autoScroll();
   return true;
 }
@@ -604,7 +693,8 @@ function handleEvent(ev) {
       // a valid reply — show it. Only fall back to a notice if there's nothing.
       const txt = d.response_text || "";
       if (!finalizeStream(ev.turn, txt)) {
-        if (txt) addBubble("assistant", txt);
+        // v1.12 B4: register the fallback bubble too so async viz.rendered can find it
+        if (txt) registerBubble("t" + ev.turn, addBubble("assistant", txt));
         else if (d.error) addBubble("system", "⚠ provider error — check the LLM I/O panel");
       }
       S.streamOpen = false; // reply done → any further deltas for this turn are stale, ignore them
@@ -624,6 +714,11 @@ function handleEvent(ev) {
     case "memory.deleted": addBubble("system", `🧠 ${t("ltm_forgot")}${d.count ? " (" + d.count + ")" : ""}`); refreshLTM(); break;
     case "memory.wiped": addBubble("system", `🧠 ${t("ltm_wiped")}${d.count != null ? " (" + d.count + ")" : ""}`); refreshLTM(); break;
     case "memory.imported": addBubble("system", `🧠 ${t("ltm_imported")}: ${d.imported || 0}${d.skipped ? " · skip " + d.skipped : ""}`); refreshLTM(); break;
+    // v1.12 B4: LLM-4 inline visualizer — placeholder → sandboxed iframe lifecycle
+    case "viz.pending": onVizPending(d); break;
+    case "viz.rendered": onVizRendered(d); break;
+    case "viz.repairing": onVizRepairing(d); break;
+    case "viz.failed": onVizFailed(d); break;
     case "decay.done": S.lastDecay = d; break;
     case "carry.snapshot": renderCarry(d); break;
     case "carry.stored": renderCarry(d); break;
@@ -667,14 +762,17 @@ function handleEvent(ev) {
 }
 
 /* ---------------- cumulative token bar ---------------- */
-const TOK = { main: { i: 0, o: 0, n: 0, c: 0 }, summary: { i: 0, o: 0, n: 0, c: 0 }, inference: { i: 0, o: 0, n: 0, c: 0 } };
+const TOK = { main: { i: 0, o: 0, n: 0, c: 0 }, summary: { i: 0, o: 0, n: 0, c: 0 }, inference: { i: 0, o: 0, n: 0, c: 0 }, viz: { i: 0, o: 0, n: 0, c: 0 } };
 const BASE = { i: 0, o: 0 }; // cumulative bare-model (A/B baseline) tokens
 const kfmt = (n) => (n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k" : String(n));
 function renderTokBar() {
-  const total = TOK.main.i + TOK.main.o + TOK.summary.i + TOK.summary.o + TOK.inference.i + TOK.inference.o;
-  const cached = TOK.main.c + TOK.summary.c + TOK.inference.c;
+  // v1.12 B4: L4 = the visualizer (LLM-4). Only shown once it's actually spent
+  // tokens (a dedicated viz model) — viz-via-main tokens count under L1, honestly.
+  const total = TOK.main.i + TOK.main.o + TOK.summary.i + TOK.summary.o + TOK.inference.i + TOK.inference.o + TOK.viz.i + TOK.viz.o;
+  const cached = TOK.main.c + TOK.summary.c + TOK.inference.c + TOK.viz.c;
+  const l4 = TOK.viz.i + TOK.viz.o ? ` · L4 ${kfmt(TOK.viz.i)}/${kfmt(TOK.viz.o)}` : "";
   $("tokBar").textContent =
-    `🪙 L1 ${kfmt(TOK.main.i)}/${kfmt(TOK.main.o)} · L2 ${kfmt(TOK.summary.i)}/${kfmt(TOK.summary.o)} · L3 ${kfmt(TOK.inference.i)}/${kfmt(TOK.inference.o)} · Σ ${kfmt(total)}${cached ? ` · ⚡cached ${kfmt(cached)}` : ""}${BASE.i + BASE.o ? ` · single ${kfmt(BASE.i)}/${kfmt(BASE.o)}` : ""}`;
+    `🪙 L1 ${kfmt(TOK.main.i)}/${kfmt(TOK.main.o)} · L2 ${kfmt(TOK.summary.i)}/${kfmt(TOK.summary.o)} · L3 ${kfmt(TOK.inference.i)}/${kfmt(TOK.inference.o)}${l4} · Σ ${kfmt(total)}${cached ? ` · ⚡cached ${kfmt(cached)}` : ""}${BASE.i + BASE.o ? ` · single ${kfmt(BASE.i)}/${kfmt(BASE.o)}` : ""}`;
 }
 function countTokens(d) {
   const t = TOK[d.role]; if (!t) return;
@@ -714,7 +812,10 @@ function onDRFolded(d) {
 }
 function onDRDone(d) {
   S.research.status = "done"; S.research.answer = d.answer || "";
-  addBubble("assistant", d.answer || "");
+  const el = addBubble("assistant", d.answer || "");
+  // v1.12 B4: register the DR answer bubble so its viz.rendered events (keyed by
+  // research_id) can find the placeholders that addBubble just spliced into slots.
+  if (d.research_id != null) registerBubble("dr:" + d.research_id, el);
   setThinking(false); renderResearch(); flashTab("research");
 }
 
@@ -773,6 +874,11 @@ const SUMMARY = {
   "memory.imported": (d) => `🧠 imported long-term · ${d.imported || 0} (skipped ${d.skipped || 0})`,
   "memory.remember_cue": (d) => `🧠 remember-cue detected`,
   "memory.consistency_confirm_error": (d) => `LLM-2 ✗ consistency confirm error · ${trim(d.error, 45)}`,
+  // v1.12 B4: LLM-4 inline visualizer
+  "viz.pending": (d) => `📊 viz queued · ${trim(d.description || d.viz_id, 55)}`,
+  "viz.rendered": (d) => `📊 viz rendered · ${d.viz_id} · ${d.validated || "static"} · ${d.bytes || 0}B`,
+  "viz.repairing": (d) => `📊 viz repairing · ${d.viz_id} · round ${d.round}${d.runtime ? " (runtime)" : ""}`,
+  "viz.failed": (d) => `📊 ✗ viz failed · ${d.viz_id} · ${trim(d.reason, 50)}`,
   "compact.error": (d) => `LLM-2 ✗ compaction error · ${trim(d.error, 55)}`,
   "infer.error": (d) => `LLM-3 ✗ inference error · ${trim(d.error, 55)}`,
 };
@@ -1213,6 +1319,220 @@ $("drSkip").onclick = async () => {
   catch (e) { addBubble("system", "✗ " + e); }
   S.research.status = "skipped"; renderResearch();
 };
+
+/* ---------------- LLM-4 VISUALIZER (v1.12 B4) ---------------- */
+// Lifecycle: the reply/DR text carries ⟦viz:id⟧ placeholders (they survive
+// markdown). spliceVizSlots swaps each for a loading .viz-slot; a viz.rendered
+// event mounts a SANDBOXED iframe (sandbox="allow-scripts" ONLY — opaque origin,
+// no same-origin/network/storage). The artifact posts {sherlockViz:'ready'[,
+// height]} when painted and {sherlockViz:'error',message} from window.onerror; a
+// ~4s runtime harness validates the paint before the frame is un-hidden. A
+// runtime failure/timeout round-trips the current HTML to /api/viz/repair (≤2
+// client attempts); an exhausted/failed/orphaned viz degrades to a muted note —
+// never a broken iframe, never a crash. The host page is NEVER innerHTML'd the
+// artifact HTML — it only ever reaches the DOM as an iframe srcdoc.
+const VIZ_TOKEN_RE = /⟦viz:([A-Za-z0-9._:-]{1,80})⟧/g;
+const VIZ_DEF_H = 360, VIZ_MAX_H = 640, VIZ_HARNESS_MS = 4000, VIZ_ORPHAN_MS = 40000, VIZ_CLIENT_REPAIRS = 2;
+
+// Bounded (≈50) KEY→element registry so async viz events find the right bubble
+// AFTER it finalized (chat: "t{turn}", deep research: "dr:{research_id}").
+function registerBubble(key, el) {
+  if (!key || !el) return el;
+  if (S.bubbles[key] && S.bubbles[key] !== el) delete S.bubbles[key]; // move to newest slot
+  S.bubbles[key] = el;
+  const keys = Object.keys(S.bubbles);
+  if (keys.length > 50) delete S.bubbles[keys[0]];
+  return el;
+}
+const cssEscId = (id) => (window.CSS && CSS.escape ? CSS.escape(id) : String(id).replace(/["\\\]]/g, "\\$&"));
+
+// Replace EXACT ⟦viz:id⟧ tokens (only that precise pattern — model content can't
+// forge one) in a container's text nodes with loading slots, then apply any viz
+// events that arrived before the slot existed.
+function spliceVizSlots(container) {
+  if (!container) return;
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
+  const targets = [];
+  let node;
+  while ((node = walker.nextNode())) { VIZ_TOKEN_RE.lastIndex = 0; if (VIZ_TOKEN_RE.test(node.nodeValue)) targets.push(node); }
+  targets.forEach(replaceTokenTextNode);
+  container.querySelectorAll(".viz-slot[data-viz-id]").forEach((slot) => {
+    const buf = S.vizBuffer[slot.dataset.vizId];
+    if (buf) { delete S.vizBuffer[slot.dataset.vizId]; applyVizEvent(slot, buf); }
+  });
+}
+function replaceTokenTextNode(textNode) {
+  const text = textNode.nodeValue, frag = document.createDocumentFragment();
+  let last = 0, m; VIZ_TOKEN_RE.lastIndex = 0;
+  while ((m = VIZ_TOKEN_RE.exec(text))) {
+    if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+    frag.appendChild(makeVizSlot(m[1]));
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+  textNode.parentNode.replaceChild(frag, textNode);
+}
+function makeVizSlot(id) {
+  const slot = h("div", "viz-slot");
+  slot.dataset.vizId = id;
+  setVizLoading(slot, t("viz_loading"));
+  if (!S.vizStatus[id]) S.vizStatus[id] = "pending";
+  // orphan sweep: a placeholder that never gets a rendered/failed (dropped job /
+  // over cap) degrades to the muted note after a global timeout.
+  setTimeout(() => {
+    const st = S.vizStatus[id];
+    if (st == null || st === "pending") { S.vizStatus[id] = "failed"; degradeVizSlot(slot); }
+    // duplicate slot for a shared viz_id: the real slot already settled the shared
+    // status, but THIS slot never got an iframe → degrade it so it can't spin forever.
+    else if (slot.dataset.state === "loading" && !slot.querySelector("iframe")) degradeVizSlot(slot);
+  }, VIZ_ORPHAN_MS);
+  return slot;
+}
+function setVizLoading(slot, text) {
+  slot.dataset.state = "loading";
+  slot.className = "viz-slot viz-slot-loading";
+  slot.innerHTML = "";
+  slot.appendChild(h("span", "viz-spin"));
+  slot.appendChild(h("span", "viz-loading-text", esc(text)));
+}
+function degradeVizSlot(slot) {
+  if (!slot) return;
+  slot.dataset.state = "failed";
+  slot.className = "viz-slot viz-slot-failed";
+  slot.textContent = t("viz_unavailable");
+}
+// Prefer the registered bubble (by turn / research_id), then a global chat scan
+// (runtime re-renders from /api/viz/repair carry neither turn nor research_id).
+function findVizSlot(d) {
+  const vid = d && d.viz_id;
+  if (!vid) return null;
+  const sel = '.viz-slot[data-viz-id="' + cssEscId(vid) + '"]';
+  let host = null;
+  if (d.research_id != null) host = S.bubbles["dr:" + d.research_id];
+  else if (d.turn != null) host = S.bubbles["t" + d.turn];
+  const slot = host && host.querySelector(sel);
+  if (slot) return slot;
+  const chat = $("chat");
+  return chat ? chat.querySelector(sel) : null;
+}
+
+/* ---- viz.* event entry points ---- */
+// Buffer a viz event whose slot hasn't appeared yet, capped (≈20) so a stream of
+// buffered-but-never-mounted records can't retain up to 64KB html each forever.
+function bufferViz(id, rec) { S.vizBuffer[id] = rec; const bk = Object.keys(S.vizBuffer); if (bk.length > 20) delete S.vizBuffer[bk[0]]; }
+function onVizPending(d) { if (d && d.viz_id && !S.vizStatus[d.viz_id]) S.vizStatus[d.viz_id] = "pending"; }
+function onVizRendered(d) {
+  const id = d && d.viz_id;
+  if (!id) return;
+  // already mounted / a client repair is driving it → ignore the redundant WS echo
+  if (S.vizStatus[id] === "ready" || S.vizStatus[id] === "harnessing") return;
+  const slot = findVizSlot(d);
+  if (slot) mountVizIframe(slot, d);
+  else bufferViz(id, { kind: "rendered", data: d }); // arrived before its slot
+}
+function onVizRepairing(d) {
+  const id = d && d.viz_id;
+  if (!id || S.vizStatus[id] === "ready" || S.vizStatus[id] === "failed") return;
+  const slot = findVizSlot(d);
+  if (slot) setVizLoading(slot, t("viz_repairing", d.round || "?"));
+  else bufferViz(id, { kind: "repairing", data: d });
+}
+function onVizFailed(d) {
+  const id = d && d.viz_id;
+  if (!id || S.vizStatus[id] === "ready") return;
+  S.vizStatus[id] = "failed";
+  const slot = findVizSlot(d);
+  if (slot) degradeVizSlot(slot);
+  else bufferViz(id, { kind: "failed", data: d });
+}
+function applyVizEvent(slot, buf) {
+  if (!buf) return;
+  if (buf.kind === "rendered") mountVizIframe(slot, buf.data);
+  else if (buf.kind === "repairing") setVizLoading(slot, t("viz_repairing", buf.data.round || "?"));
+  else if (buf.kind === "failed") { S.vizStatus[slot.dataset.vizId] = "failed"; degradeVizSlot(slot); }
+}
+
+/* ---- sandboxed iframe mount + runtime validation harness ---- */
+let _vizMsgWired = false;
+function ensureVizMessageListener() {
+  if (_vizMsgWired) return;
+  _vizMsgWired = true;
+  // opaque-origin frames post with event.origin === "null", so correlate by
+  // event.source === the iframe's contentWindow (not by origin).
+  window.addEventListener("message", (e) => {
+    if (!e.source) return; // a detached iframe has contentWindow===null; never match on null
+    const data = e.data;
+    if (!data || typeof data !== "object" || !data.sherlockViz) return;
+    for (const hh of S.vizHarnesses) { if (hh.iframe.contentWindow === e.source) { hh.onMessage(data); return; } }
+  });
+}
+function mountVizIframe(slot, d) {
+  const id = slot.dataset.vizId;
+  if (!d || !d.html) { S.vizStatus[id] = "failed"; degradeVizSlot(slot); return; }
+  S.vizStatus[id] = "harnessing";
+  startVizHarness(slot, d, d.html, 0);
+}
+function startVizHarness(slot, d, html, attempt) {
+  ensureVizMessageListener();
+  const iframe = document.createElement("iframe");
+  iframe.setAttribute("sandbox", "allow-scripts"); // NO allow-same-origin → opaque origin
+  iframe.setAttribute("referrerpolicy", "no-referrer");
+  iframe.setAttribute("title", "visualization " + (d.viz_id || ""));
+  // overlay the loading placeholder INVISIBLY and in-flow-width (slot is
+  // position:relative) so the artifact measures its real width; revealed only
+  // once it posts {sherlockViz:'ready'}.
+  iframe.style.cssText = "position:absolute;top:0;left:0;width:100%;height:" + VIZ_DEF_H + "px;border:0;visibility:hidden";
+  iframe.srcdoc = html; // NEVER innerHTML — the artifact only runs inside the sandbox
+
+  let settled = false;
+  const harness = { iframe, height: 0 };
+  const timer = setTimeout(() => settle("timeout"), VIZ_HARNESS_MS);
+  harness.timer = timer; // so resetChatUI can cancel an in-flight settle across sessions
+  function settle(kind, msg) {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    S.vizHarnesses.delete(harness);
+    if (kind === "ready") { revealVizIframe(slot, iframe, harness.height); return; }
+    try { if (iframe.parentNode) iframe.parentNode.removeChild(iframe); } catch (e) {}
+    const err = kind === "timeout"
+      ? "runtime timeout: no ready signal within " + VIZ_HARNESS_MS / 1000 + "s"
+      : msg || "runtime error";
+    repairViz(slot, d, html, attempt, err);
+  }
+  harness.onMessage = (data) => {
+    if (data.sherlockViz === "ready") {
+      const hgt = Number(data.height);
+      if (hgt > 0) harness.height = Math.max(120, Math.min(hgt + 8, VIZ_MAX_H));
+      settle("ready");
+    } else if (data.sherlockViz === "error") {
+      settle("error", String(data.message || "").slice(0, 300));
+    }
+  };
+  S.vizHarnesses.add(harness);
+  slot.appendChild(iframe); // keep the loading children visible beneath the hidden frame
+}
+function revealVizIframe(slot, iframe, height) {
+  S.vizStatus[slot.dataset.vizId] = "ready";
+  slot.dataset.state = "ready";
+  slot.className = "viz-slot viz-slot-ready";
+  [].slice.call(slot.childNodes).forEach((n) => { if (n !== iframe) slot.removeChild(n); });
+  const hgt = height || VIZ_DEF_H;
+  iframe.style.cssText = "position:static;display:block;width:100%;height:" + hgt + "px;max-height:" + VIZ_MAX_H + "px;border:0;border-radius:10px;background:#fff;overflow:auto";
+  autoScroll();
+}
+function repairViz(slot, d, html, attempt, errorMsg) {
+  const id = slot.dataset.vizId;
+  setVizLoading(slot, t("viz_repairing_runtime"));
+  // client attempt cap (≤2), independent of the server's authoritative per-viz cap
+  if (attempt >= VIZ_CLIENT_REPAIRS || !S.sid) { S.vizStatus[id] = "failed"; degradeVizSlot(slot); return; }
+  fetch("/api/viz/repair", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: S.sid, viz_id: id, html: html, error: errorMsg }), signal: AbortSignal.timeout(30000) })
+    .then((r) => r.json()).catch(() => ({ ok: false }))
+    .then((j) => {
+      if (j && j.ok && j.html) startVizHarness(slot, Object.assign({}, d, { html: j.html }), j.html, attempt + 1);
+      else { S.vizStatus[id] = "failed"; degradeVizSlot(slot); } // ok:false / exhausted / error
+    });
+}
 
 /* ---------------- tabs ---------------- */
 const TABS = ["flow", "slot", "llmio", "infer", "compact", "memory", "ltm", "carry", "research"];

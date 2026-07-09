@@ -33,10 +33,21 @@ CSP_META = (
     "style-src 'unsafe-inline'; img-src data:\">"
 )
 
-# The exact ready-signal literal. The sandbox host (playground B4) waits for
-# this postMessage before it un-hides the frame, so a missing signal means the
-# visual would never appear. ``parent.postMessage`` is allowed ONLY as this.
-READY_SIGNAL = "parent.postMessage('viz-ready'"
+# v1.12 Stage B4: the iframe→parent signalling protocol. The sandboxed artifact
+# runs at an OPAQUE origin (sandbox="allow-scripts", NO allow-same-origin), so the
+# host cannot read window.onerror across the boundary — instead the artifact posts
+# a structured message the host correlates by ``event.source``. TWO signals, one
+# shape ``{sherlockViz: 'ready'|'error', message?}``:
+#   * READY — posted as the LAST thing after the visual paints (optionally carrying
+#     the content height). The host waits for it (behind a ~4s runtime harness)
+#     before it un-hides the frame; a missing ready means the visual never appears.
+#   * ERROR — a top-of-script ``window.onerror`` handler forwards any runtime throw
+#     so the host can repair immediately instead of waiting out the timeout.
+# ``parent.postMessage`` is allowed ONLY as one of these two signals.
+READY_SIGNAL = "parent.postMessage({sherlockViz:'ready'}, '*')"
+ERROR_HANDLER = (
+    "window.onerror = (e) => parent.postMessage({sherlockViz:'error', message:String(e)}, '*')"
+)
 
 # Stamped into the persisted artifact after a successful static lint so a
 # re-hydrated artifact records HOW it was validated (Stage B3+ may add runtime).
@@ -118,9 +129,15 @@ _FORBIDDEN: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"javascript:", re.IGNORECASE), "javascript: URL"),
 ]
 
-# ``parent.postMessage(`` call sites — every one must be the viz-ready literal.
+# ``parent.postMessage(`` call sites — every one must be a sherlockViz ready/error
+# signal (whitespace/quote-tolerant so trivial drift never forces a repair round).
 _POSTMESSAGE_CALL = re.compile(r"parent\.postMessage\s*\(\s*", re.IGNORECASE)
-_POSTMESSAGE_READY = re.compile(r"parent\.postMessage\s*\(\s*'viz-ready'", re.IGNORECASE)
+_POSTMESSAGE_READY = re.compile(
+    r"parent\.postMessage\s*\(\s*\{\s*sherlockViz\s*:\s*['\"]ready['\"]", re.IGNORECASE
+)
+_POSTMESSAGE_ERROR = re.compile(
+    r"parent\.postMessage\s*\(\s*\{\s*sherlockViz\s*:\s*['\"]error['\"]", re.IGNORECASE
+)
 
 # Numeric tokens in TEXT content: integers/decimals with optional thousands
 # commas and an optional trailing percent. Bare single digits and years are
@@ -210,7 +227,8 @@ def _viz_static_lint(html: str, source_text: str, cfg) -> tuple[bool, list[str]]
     single repair round sees every problem at once.
 
     Checks: non-empty; ``len(utf-8) <= cfg.max_html_bytes``; required CSP meta +
-    viz-ready ready-signal present; structural tags balanced (stdlib
+    the ``{sherlockViz:'ready'}`` ready signal + the ``window.onerror`` →
+    ``{sherlockViz:'error'}`` handler present; structural tags balanced (stdlib
     ``html.parser``); no forbidden patterns (external refs / network / storage /
     frame-busting / disallowed elements / ``javascript:``); and DATA FIDELITY —
     every significant number rendered in the artifact's TEXT must appear in
@@ -240,10 +258,16 @@ def _viz_static_lint(html: str, source_text: str, cfg) -> tuple[bool, list[str]]
             + f" — emit exactly: {CSP_META}"
         )
 
-    if READY_SIGNAL not in html:
+    if not _POSTMESSAGE_READY.search(html):
         errors.append(
             "missing ready signal — end the script with "
-            "parent.postMessage('viz-ready', '*') after render"
+            "parent.postMessage({sherlockViz:'ready'}, '*') after render"
+        )
+    if not _POSTMESSAGE_ERROR.search(html):
+        errors.append(
+            "missing error handler — start the script with "
+            "window.onerror = (e) => parent.postMessage({sherlockViz:'error', "
+            "message:String(e)}, '*')"
         )
 
     # Structural balance + text extraction.
@@ -262,11 +286,13 @@ def _viz_static_lint(html: str, source_text: str, cfg) -> tuple[bool, list[str]]
     for pattern, message in _FORBIDDEN:
         if pattern.search(html):
             errors.append(f"forbidden: {message}")
-    # parent.postMessage only as the viz-ready signal.
+    # parent.postMessage only as a sherlockViz ready/error signal.
     n_calls = len(_POSTMESSAGE_CALL.findall(html))
-    n_ready = len(_POSTMESSAGE_READY.findall(html))
-    if n_calls > n_ready:
-        errors.append("forbidden: parent.postMessage call other than the viz-ready signal")
+    n_ok = len(_POSTMESSAGE_READY.findall(html)) + len(_POSTMESSAGE_ERROR.findall(html))
+    if n_calls > n_ok:
+        errors.append(
+            "forbidden: parent.postMessage call other than the sherlockViz ready/error signal"
+        )
 
     # Data fidelity: significant numbers in the rendered text must trace to the
     # source material.
@@ -351,8 +377,14 @@ VIZ_GENERATION_SYSTEM = (
     f"  {CSP_META}\n"
     "- ALL CSS in inline <style>; ALL JS in inline <script>. No external "
     "stylesheets, scripts, fonts, images, or imports of any kind.\n"
-    "- After the visual has painted, signal readiness by calling "
-    "parent.postMessage('viz-ready', '*') as the last thing your script does.\n"
+    "- At the TOP of your <script>, install an error handler so a runtime throw is "
+    "reported to the host:\n"
+    "  window.onerror = (e) => parent.postMessage({sherlockViz:'error', "
+    "message:String(e)}, '*');\n"
+    "- After the visual has painted, signal readiness as the LAST thing your script "
+    "does (optionally carry the content height):\n"
+    "  parent.postMessage({sherlockViz:'ready', height: document.documentElement."
+    "scrollHeight}, '*');\n"
     "\n"
     "TECHNIQUE: use inline SVG, <canvas>, or plain styled DOM — your choice. "
     "Interactivity (hover, click, tooltips) is allowed as long as it stays "
@@ -367,7 +399,8 @@ VIZ_GENERATION_SYSTEM = (
     "\n"
     "SANDBOX: no network (no fetch/XMLHttpRequest/WebSocket/EventSource/"
     "sendBeacon), no storage (cookie/localStorage/indexedDB), no navigation, no "
-    "window.top/window.parent access other than the viz-ready signal, no "
+    "window.top/window.parent access — signal ONLY via parent.postMessage("
+    "{sherlockViz:'ready'|'error'}), no "
     "<iframe>/<object>/<embed>/<base>, no javascript: URLs, no external URLs."
 )
 
@@ -400,8 +433,9 @@ _REVIEW_CHECKLIST = (
     "Review your HTML below against this checklist:\n"
     "- Is the HTML syntactically valid and are all tags balanced?\n"
     "- Is the Content-Security-Policy meta present exactly as required?\n"
-    "- Does the script call parent.postMessage('viz-ready', '*') AFTER the visual "
-    "paints?\n"
+    "- Does the script install window.onerror → parent.postMessage({sherlockViz:"
+    "'error', …}) at the top AND post parent.postMessage({sherlockViz:'ready'}, "
+    "'*') AFTER the visual paints?\n"
     "- Are there zero external references, network calls, storage accesses, and "
     "imports?\n"
     "- Are all visible labels in the SAME language as the material?\n"

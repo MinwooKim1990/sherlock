@@ -29,7 +29,8 @@ VALID = """<!DOCTYPE html><html><head>
 script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:">
 <style>body{font-family:sans-serif}</style></head>
 <body><div id="c"><span>Q1 12</span><span>Q2 19</span></div>
-<script>parent.postMessage('viz-ready', '*');</script></body></html>"""
+<script>window.onerror=(e)=>parent.postMessage({sherlockViz:'error',message:String(e)},'*');
+parent.postMessage({sherlockViz:'ready'}, '*');</script></body></html>"""
 
 SRC = "bar chart of Q1 sales | Q1 12, Q2 19"
 
@@ -48,10 +49,10 @@ def test_valid_skeleton_passes():
 
 
 def test_ready_signal_passes():
-    # the exact single-quote literal is the accepted ready signal
+    # the {sherlockViz:'ready'} postMessage is the accepted ready signal
     ok, _ = _lint(VALID)
     assert ok is True
-    assert "parent.postMessage('viz-ready'" in VALID
+    assert "parent.postMessage({sherlockViz:'ready'}" in VALID
 
 
 def test_number_present_in_data_hint_passes():
@@ -117,7 +118,7 @@ def test_missing_csp_meta_fails():
 
 
 def test_missing_viz_ready_fails():
-    html = VALID.replace("parent.postMessage('viz-ready', '*');", "")
+    html = VALID.replace("parent.postMessage({sherlockViz:'ready'}, '*');", "")
     ok, errors = _lint(html)
     assert ok is False
     assert any("ready signal" in e for e in errors)
@@ -125,9 +126,8 @@ def test_missing_viz_ready_fails():
 
 def test_external_script_src_fails():
     html = VALID.replace(
-        "<script>parent.postMessage('viz-ready', '*');</script>",
-        '<script src="https://cdn.example.com/x.js"></script>'
-        "<script>parent.postMessage('viz-ready', '*');</script>",
+        "<style>body{font-family:sans-serif}</style>",
+        '<script src="https://cdn.example.com/x.js"></script>',
     )
     ok, errors = _lint(html)
     assert ok is False
@@ -146,8 +146,8 @@ def test_protocol_relative_ref_fails():
 
 def test_fetch_call_fails():
     html = VALID.replace(
-        "parent.postMessage('viz-ready', '*');",
-        "fetch('/data.json');parent.postMessage('viz-ready', '*');",
+        "parent.postMessage({sherlockViz:'ready'}, '*');",
+        "fetch('/data.json');parent.postMessage({sherlockViz:'ready'}, '*');",
     )
     ok, errors = _lint(html)
     assert ok is False
@@ -156,8 +156,8 @@ def test_fetch_call_fails():
 
 def test_window_parent_non_ready_fails():
     html = VALID.replace(
-        "parent.postMessage('viz-ready', '*');",
-        "var z = window.parent.location;parent.postMessage('viz-ready', '*');",
+        "parent.postMessage({sherlockViz:'ready'}, '*');",
+        "var z = window.parent.location;parent.postMessage({sherlockViz:'ready'}, '*');",
     )
     ok, errors = _lint(html)
     assert ok is False
@@ -165,10 +165,10 @@ def test_window_parent_non_ready_fails():
 
 
 def test_disallowed_postmessage_fails():
-    # a parent.postMessage that is NOT the viz-ready signal
+    # a parent.postMessage that is NOT a sherlockViz ready/error signal
     html = VALID.replace(
-        "parent.postMessage('viz-ready', '*');",
-        "parent.postMessage('exfil', '*');parent.postMessage('viz-ready', '*');",
+        "parent.postMessage({sherlockViz:'ready'}, '*');",
+        "parent.postMessage('exfil', '*');parent.postMessage({sherlockViz:'ready'}, '*');",
     )
     ok, errors = _lint(html)
     assert ok is False
@@ -177,8 +177,8 @@ def test_disallowed_postmessage_fails():
 
 def test_localStorage_fails():
     html = VALID.replace(
-        "parent.postMessage('viz-ready', '*');",
-        "localStorage.setItem('a','b');parent.postMessage('viz-ready', '*');",
+        "parent.postMessage({sherlockViz:'ready'}, '*');",
+        "localStorage.setItem('a','b');parent.postMessage({sherlockViz:'ready'}, '*');",
     )
     ok, errors = _lint(html)
     assert ok is False
@@ -201,12 +201,25 @@ def test_javascript_url_fails():
 
 def test_import_statement_fails():
     html = VALID.replace(
-        "<script>parent.postMessage('viz-ready', '*');</script>",
-        "<script>\nimport x from 'y';\nparent.postMessage('viz-ready', '*');</script>",
+        "parent.postMessage({sherlockViz:'ready'}, '*');",
+        "\nimport x from 'y';\nparent.postMessage({sherlockViz:'ready'}, '*');",
     )
     ok, errors = _lint(html)
     assert ok is False
     assert any("import" in e for e in errors)
+
+
+def test_missing_error_handler_fails():
+    # v1.12 B4: the runtime harness contract requires the window.onerror →
+    # {sherlockViz:'error'} handler; a doc with only the ready signal fails.
+    html = VALID.replace(
+        "window.onerror=(e)=>parent.postMessage({sherlockViz:'error',message:String(e)},'*');\n",
+        "",
+    )
+    ok, errors = _lint(html)
+    assert ok is False
+    assert any("error handler" in e for e in errors)
+    assert not any("ready signal" in e for e in errors)  # ready is still present
 
 
 def test_unbalanced_div_fails():
@@ -232,7 +245,9 @@ def test_invented_number_fails():
 
 def test_multiple_errors_all_collected():
     # missing ready signal AND an invented number → both surface (no short-circuit)
-    html = VALID.replace("parent.postMessage('viz-ready', '*');", "").replace("Q2 19", "Q2 88.8")
+    html = VALID.replace("parent.postMessage({sherlockViz:'ready'}, '*');", "").replace(
+        "Q2 19", "Q2 88.8"
+    )
     ok, errors = _lint(html)
     assert ok is False
     assert any("ready signal" in e for e in errors)
@@ -310,6 +325,36 @@ def test_self_review_prompt_carries_html_and_checklist():
     assert "checklist" in user.lower()
 
 
+# ------------------------------------------------ v1.12 B4 ready/error protocol
+
+
+def test_ready_error_protocol_self_consistent():
+    """The B4 runtime protocol must be threaded consistently: the generation prompt
+    instructs BOTH the {sherlockViz:'ready'} post and the window.onerror →
+    {sherlockViz:'error'} handler, the same two literals the lint requires — a doc
+    that emits both passes, and dropping either one fails with a matching message."""
+    from sherlock.viz import ERROR_HANDLER, READY_SIGNAL, VIZ_GENERATION_SYSTEM, _REVIEW_CHECKLIST
+
+    # the canonical literals ride the generation prompt + the self-review checklist
+    assert "sherlockViz:'ready'" in READY_SIGNAL
+    assert "sherlockViz:'error'" in ERROR_HANDLER and "window.onerror" in ERROR_HANDLER
+    assert "sherlockViz:'ready'" in VIZ_GENERATION_SYSTEM
+    assert "sherlockViz:'error'" in VIZ_GENERATION_SYSTEM
+    assert "window.onerror" in VIZ_GENERATION_SYSTEM
+    assert "sherlockViz:'ready'" in _REVIEW_CHECKLIST
+
+    # a doc carrying BOTH signals passes; dropping either one fails specifically
+    assert _lint(VALID)[0] is True
+    no_error = VALID.replace(
+        "window.onerror=(e)=>parent.postMessage({sherlockViz:'error',message:String(e)},'*');\n", ""
+    )
+    ok, errs = _lint(no_error)
+    assert ok is False and any("error handler" in e for e in errs)
+    no_ready = VALID.replace("parent.postMessage({sherlockViz:'ready'}, '*');", "")
+    ok, errs = _lint(no_ready)
+    assert ok is False and any("ready signal" in e for e in errs)
+
+
 # ------------------------------------------------ v1.12 audit regressions (F1)
 
 
@@ -352,8 +397,8 @@ def test_f2_meta_refresh_navigation_fails():
 
 def test_f2_location_href_navigation_fails():
     html = VALID.replace(
-        "parent.postMessage('viz-ready', '*');",
-        "location.href='#x';parent.postMessage('viz-ready', '*');",
+        "parent.postMessage({sherlockViz:'ready'}, '*');",
+        "location.href='#x';parent.postMessage({sherlockViz:'ready'}, '*');",
     )
     ok, errors = _lint(html)
     assert ok is False
@@ -362,8 +407,8 @@ def test_f2_location_href_navigation_fails():
 
 def test_f2_window_open_navigation_fails():
     html = VALID.replace(
-        "parent.postMessage('viz-ready', '*');",
-        "window.open('#x');parent.postMessage('viz-ready', '*');",
+        "parent.postMessage({sherlockViz:'ready'}, '*');",
+        "window.open('#x');parent.postMessage({sherlockViz:'ready'}, '*');",
     )
     ok, errors = _lint(html)
     assert ok is False
