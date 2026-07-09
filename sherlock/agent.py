@@ -44,7 +44,7 @@ from sherlock.memory import (
     SummarizerEngine,
     build_embedding_provider,
 )
-from sherlock.memory.entry import MemoryEntry, MemorySource, MemoryType
+from sherlock.memory.entry import MemoryEntry, MemorySource, MemoryState, MemoryType
 from sherlock.providers import BaseProvider, ChatMessage, ChatResponse, build_provider
 from sherlock.rag import HybridSearch
 from sherlock.storage import Conversation, Message, Storage
@@ -1456,7 +1456,94 @@ class Sherlock:
         # v1.1 R13: pinned entries already ride TIER 2 verbatim every turn —
         # re-surfacing them via RAG pays for the same fact twice.
         hits = [(e, s) for (e, s) in hits if not e.pinned]
+        # v1.12 Stage A2: cross-conversation LONG-TERM sentinel RAG channel. A
+        # SECOND small hybrid search over the sentinel scope so durable facts
+        # that DON'T ride this turn's always-on USER PROFILE block can still
+        # surface semantically. OFF (or rag_channel=False) → zero extra work,
+        # byte-identical to a no-LTM run.
+        lt = getattr(self.config.memory, "long_term", None)
+        if lt is not None and getattr(lt, "enabled", False):
+            # v1.12 A2 F3: compute the profile selection ONCE per turn, here inside
+            # the retrieval _mem_lock, and stash it so the sentinel dedup below and
+            # the assembly-side USER PROFILE block reuse the SAME snapshot — a
+            # background compaction committing a promotion/supersede mid-turn can't
+            # desync the two selections (fact duplicated in profile+RAG, or dropped
+            # from both) and we pay for the store.list+sort only once.
+            self._ltm_profile_selection = self._select_ltm_profile_rows()
+            self._last_ltm_rag_hits = 0
+            if getattr(lt, "rag_channel", True) and query.strip():
+                try:
+                    sentinel = self._ltm_sentinel_hits(query, current_turn_index)
+                except Exception:
+                    sentinel = []
+                if sentinel:
+                    # Append AFTER the session hits (already downweighted) so a
+                    # session-relevant memory always wins position on a tie.
+                    hits = hits + sentinel
+                    self._last_ltm_rag_hits = len(sentinel)
         return hits
+
+    def _ltm_sentinel_hits(
+        self, query: str, current_turn_index: int | None
+    ) -> list[tuple[MemoryEntry, float]]:
+        """v1.12 Stage A2: hybrid search over the long-term sentinel scope.
+
+        Caller has already gated on ``enabled`` + ``rag_channel`` + non-empty
+        query. Drops facts already shown in THIS turn's USER PROFILE block
+        (reusing the per-turn selection snapshot so the two can't drift), then
+        DOWN-WEIGHTS the survivors — mirroring the tier-4 RAG-fallback weight —
+        so a session-scoped hit always wins a tie.
+
+        The R13 pinned-drop is deliberately NOT applied here: every sentinel row
+        is pinned, but only the top ``profile_max_facts`` ride TIER 2 verbatim,
+        so the narrower profile-dedup above (not "drop all pinned") is correct.
+        """
+        from sherlock.memory.entry import LTM_CONVERSATION_ID
+
+        top_k = min(3, int(self.config.memory.rag_top_k or 0))
+        if top_k <= 0:
+            return []
+        raw = self._hybrid.search(
+            query,
+            conversation_id=LTM_CONVERSATION_ID,
+            top_k=top_k,
+            confidence_threshold=0.0,
+            exclude_inferences_below=self.config.inference.confidence_threshold,
+            # v1.12 A2 F1: NEVER feed a session turn index into the sentinel scope.
+            # Its rows carry created_turn_index values from OTHER conversations, so
+            # the R29 recency boost (0.2*exp(-age/40)) would compare across
+            # conversations and dominate the RRF base term. The session search
+            # (above) doesn't pass it either — keep the two symmetric.
+            current_turn_index=None,
+        )
+        if not raw:
+            return []
+        # v1.12 A2 F3: reuse the per-turn snapshot stashed by the retrieval branch
+        # so this dedup can't drift from the injected profile block. Fall back to a
+        # direct compute for the direct-call/test path where retrieval hasn't run.
+        sel = getattr(self, "_ltm_profile_selection", None)
+        if sel is None:
+            sel = self._select_ltm_profile_rows()
+        profile_ids = {e.id for e, _ in sel}
+        weight = float(
+            (getattr(self.config.memory, "memory_tier_weights", {}) or {}).get(
+                "tier4_rag_fallback", 0.5
+            )
+        )
+        out: list[tuple[MemoryEntry, float]] = []
+        for e, s in raw:
+            if e.id in profile_ids:
+                continue
+            # v1.12 A2 F5: a pinned row can bypass the store's state filter, so a
+            # FORGOTTEN sentinel fact could resurface here even though the
+            # profile-side selection already excludes it — drop it to keep the two
+            # channels symmetric (and to not leak a future soft-deleted forget).
+            if e.state == MemoryState.FORGOTTEN:
+                continue
+            if e.type == MemoryType.DEEP_RESEARCH:
+                continue
+            out.append((e, s * weight))
+        return out
 
     # ---- v0.5.0 helpers: redaction + durable carry-forward ----
 
@@ -4810,6 +4897,127 @@ class Sherlock:
         latest = max(personas, key=lambda p: p.last_used_turn_index)
         return "[PERSONA SUMMARY — system-tracked, may need correction]\n" f"{latest.content}"
 
+    # ---- v1.12 Stage A2: long-term USER PROFILE tier-2 block ----
+
+    def _select_ltm_profile_rows(self) -> list[tuple[MemoryEntry, str]]:
+        """Rank + cap the durable long-term (sentinel-scope) facts for the
+        USER PROFILE block.
+
+        SINGLE source of truth for BOTH the injected block
+        (:meth:`_format_user_profile_block`) and the RAG-channel dedup in
+        :meth:`_retrieve_memories`, so the two can never disagree on which facts
+        are "already in the profile". Called ONCE per turn from the retrieval
+        branch, which stashes the result on ``self._ltm_profile_selection`` for
+        both consumers to reuse (F3 — retrieval and assembly no longer recompute
+        it independently, which used to let a mid-turn compaction desync them).
+
+        Ranking: ALWAYS categories (user_directive, identity_health) first, then
+        the conservative bucket, then everything else; within a bucket by
+        confidence desc, then created_at desc (newest). Truncated to
+        ``profile_max_facts`` AND ``profile_max_chars`` (whichever binds first);
+        an over-long fact is word-trimmed to the remaining char budget.
+
+        Returns (row, display_content) pairs. ``[]`` when long-term memory is
+        disabled, the sentinel scope is empty, or on any store error
+        (best-effort — a memory fault must never kill the turn).
+        """
+        lt = getattr(self.config.memory, "long_term", None)
+        if lt is None or not getattr(lt, "enabled", False):
+            return []
+        try:
+            from sherlock.memory.entry import (
+                LTM_CONVERSATION_ID,
+                MemoryState,
+                ltm_category,
+            )
+            from sherlock.memory.summarizer import (
+                _LTM_ALWAYS_CATEGORIES,
+                _LTM_CONSERVATIVE_CATEGORIES,
+            )
+
+            rows = [
+                e
+                for e in self._memory.list(conversation_id=LTM_CONVERSATION_ID)
+                if not e.superseded_by and e.state != MemoryState.FORGOTTEN
+            ]
+            if not rows:
+                return []
+
+            def _bucket(cat: str) -> int:
+                if cat in _LTM_ALWAYS_CATEGORIES:
+                    return 0
+                if cat in _LTM_CONSERVATIVE_CATEGORIES:
+                    return 1
+                return 2
+
+            rows.sort(
+                key=lambda e: (
+                    _bucket(ltm_category(e.tags)),
+                    -float(e.confidence or 0.0),
+                    -e.created_at.timestamp(),
+                )
+            )
+            max_facts = int(getattr(lt, "profile_max_facts", 12) or 0)
+            max_chars = int(getattr(lt, "profile_max_chars", 1200) or 0)
+            selected: list[tuple[MemoryEntry, str]] = []
+            chars_used = 0
+            for e in rows:
+                if max_facts and len(selected) >= max_facts:
+                    break
+                content = (e.content or "").strip()
+                if not content:
+                    continue
+                if max_chars:
+                    remaining = max_chars - chars_used
+                    # v1.12 A2 F6: stop before spending a nearly-exhausted char
+                    # budget on a meaningless <16-char fragment.
+                    if remaining < 16:
+                        break
+                    if len(content) > remaining:
+                        content = _trim_at_boundary(content, remaining)
+                selected.append((e, content))
+                chars_used += len(content)
+            return selected
+        except Exception:
+            return []
+
+    def _format_user_profile_block(self) -> str:
+        """USER PROFILE tier-2 block: durable facts remembered across sessions.
+
+        Gated on ``config.memory.long_term.enabled`` — off (the default) returns
+        ``""`` with ZERO extra work, so the assembled slot stays byte-identical
+        to a build without long-term memory. Records this turn's fact count for
+        the ``slot.assembled`` observability key. Empty when the sentinel scope
+        has no live rows. (The RAG-channel dedup and this block share the SAME
+        per-turn selection snapshot — stashed by :meth:`_retrieve_memories` under
+        the memory lock — so a compaction committing between retrieval and
+        assembly can't desync them.)
+        """
+        lt = getattr(self.config.memory, "long_term", None)
+        if lt is None or not getattr(lt, "enabled", False):
+            self._ltm_profile_facts_this_turn = 0
+            return ""
+        # v1.12 A2 F3: consume the snapshot the retrieval branch stashed this turn;
+        # fall back to a direct compute on the paths that skip retrieval
+        # (rag_channel off / empty query / direct callers).
+        selected = getattr(self, "_ltm_profile_selection", None)
+        if selected is not None:
+            self._ltm_profile_selection = None
+        else:
+            selected = self._select_ltm_profile_rows()
+        self._ltm_profile_facts_this_turn = len(selected)
+        if not selected:
+            return ""
+        from sherlock.memory.entry import ltm_category
+
+        lines = [
+            "[USER PROFILE — durable facts remembered across sessions "
+            "(long-term memory); these persist beyond this conversation]"
+        ]
+        for e, content in selected:
+            lines.append(f"- [{ltm_category(e.tags)}] {content}")
+        return "\n".join(lines)
+
     def _format_compacted_highlights_block(
         self, conv_id: str, max_tokens: int, entries: list[MemoryEntry] | None = None
     ) -> str:
@@ -5358,6 +5566,24 @@ class Sherlock:
         persona = self._format_persona_summary_block(conv.id, entries=all_entries)
         if persona:
             tier2_parts.append(persona)
+        # v1.12 Stage A2: durable cross-session USER PROFILE, right after persona.
+        # Appended into tier2_parts BEFORE the highlights-budget subtraction so
+        # its tokens are counted against the same TIER-2 budget as its siblings
+        # (the highlights block gets what's left, and the final tier-2 truncation
+        # clamps the total) — the profile can never silently inflate the slot.
+        # OFF (default) → "" → tier2_parts unchanged → byte-identical.
+        profile = self._format_user_profile_block()
+        if profile:
+            # v1.12 A2 F2: cap the profile at a THIRD of the tier-2 budget so a
+            # worst-case (e.g. Korean, ~1000+ token) profile can't consume the
+            # whole compacted_memory_max — which would drive highlights_budget to 0
+            # (killing session highlights) and then tail-truncate the profile
+            # itself at the final tier-2 clamp.
+            if budget is not None:
+                profile = self._truncate_to_tokens(
+                    profile, max(1, budget.compacted_memory_max // 3)
+                )
+            tier2_parts.append(profile)
         if budget is not None:
             highlights_budget = max(
                 0, budget.compacted_memory_max - count_tokens("\n".join(tier2_parts))
@@ -5602,28 +5828,38 @@ class Sherlock:
         ]
         messages.extend(tail)
         messages.append(ChatMessage(role="user", content=final_user_content))
+        slot_data = {
+            "system_prompt": composite_system,
+            "system_tokens": count_tokens(composite_system),
+            "slot_budget": budget.as_dict() if budget is not None else {},
+            "k_turn_turns": self._last_k_turn_turns_used,
+            "k_turn_tokens": self._last_k_turn_tokens_used,
+            "tail": [{"role": m.role, "content": m.content} for m in tail],
+            "active_intent": list(hypotheses or []),
+            "search_block": list(search_results or []),
+            "retrieved_count": len(retrieved or []),
+            "user_text": user_text,
+            # v1.5: the FINAL user message carries the volatile SYSTEM-ANALYSIS
+            # block (perception OBSERVED/PRIOR, memory-consistency cue, the
+            # inference notebook) — surface it so the playground inspector can
+            # show the upgrade's per-turn injections. Observability only.
+            "final_user_message": final_user_content,
+        }
+        # v1.12 Stage A2: long-term injection counters. Keys are ABSENT when the
+        # feature is off (off-state payload byte-identical) and only added when a
+        # non-empty USER PROFILE block was injected this turn.
+        _lt = getattr(self.config.memory, "long_term", None)
+        if _lt is not None and getattr(_lt, "enabled", False):
+            _profile_facts = int(getattr(self, "_ltm_profile_facts_this_turn", 0) or 0)
+            # v1.12 A2 F4: also emit the counters when the profile block was empty
+            # but the sentinel RAG channel still hit — gating on _profile_facts
+            # alone silently dropped ltm_rag_hits on a pure-RAG turn.
+            _rag_hits = int(getattr(self, "_last_ltm_rag_hits", 0) or 0)
+            if _profile_facts or _rag_hits:
+                slot_data["ltm_profile_facts"] = _profile_facts
+                slot_data["ltm_rag_hits"] = _rag_hits
         try:
-            self._emit(
-                "slot.assembled",
-                "slot",
-                {
-                    "system_prompt": composite_system,
-                    "system_tokens": count_tokens(composite_system),
-                    "slot_budget": budget.as_dict() if budget is not None else {},
-                    "k_turn_turns": self._last_k_turn_turns_used,
-                    "k_turn_tokens": self._last_k_turn_tokens_used,
-                    "tail": [{"role": m.role, "content": m.content} for m in tail],
-                    "active_intent": list(hypotheses or []),
-                    "search_block": list(search_results or []),
-                    "retrieved_count": len(retrieved or []),
-                    "user_text": user_text,
-                    # v1.5: the FINAL user message carries the volatile SYSTEM-ANALYSIS
-                    # block (perception OBSERVED/PRIOR, memory-consistency cue, the
-                    # inference notebook) — surface it so the playground inspector can
-                    # show the upgrade's per-turn injections. Observability only.
-                    "final_user_message": final_user_content,
-                },
-            )
+            self._emit("slot.assembled", "slot", slot_data)
         except Exception:
             pass
         return messages
