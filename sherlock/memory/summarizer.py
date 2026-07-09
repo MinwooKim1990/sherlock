@@ -297,8 +297,15 @@ class SummarizerEngine:
         conversation_id: str,
         recent_turns: list[ChatMessage],
         turn_index: int,
+        promote_user_directive: bool = False,
     ) -> dict:
-        """Call LLM 2 over the recent-turn window. Returns the parsed JSON dict."""
+        """Call LLM 2 over the recent-turn window. Returns the parsed JSON dict.
+
+        v1.12 Stage A3: when ``promote_user_directive`` is set (a deterministic
+        "remember this" cue fired on a covered turn), every fact in this window is
+        promoted to long-term memory under the ALWAYS category ``user_directive``
+        — belt-and-braces behind LLM-1's explicit ``memory save``. Inert when
+        long-term promotion is not active (feature off / incognito)."""
         # Build the user message for LLM 2: a compact transcript.
         transcript_lines = []
         for m in recent_turns:
@@ -474,6 +481,13 @@ class SummarizerEngine:
             # tags each fact with a category; the CODE gate below decides — the
             # model's flag alone never promotes anything.
             if ltm_active:
+                # v1.12 A3: a latched "remember this" cue forces every covered
+                # fact to the ALWAYS user_directive category (flag-independent),
+                # so the durable intent survives even if LLM-1 skipped `memory
+                # save`. The ungrounded-quote guard in _maybe_promote_long_term
+                # still blocks a hallucinated-quote fact from being made durable.
+                if promote_user_directive:
+                    fact = {**fact, "category": "user_directive", "long_term": True}
                 self._maybe_promote_long_term(
                     fact=fact,
                     conversation_id=conversation_id,

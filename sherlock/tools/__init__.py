@@ -30,13 +30,21 @@ from sherlock.tools.builtin import (
     sherlock_tool,
 )
 from sherlock.tools.memory_tool import (
+    LTMToolContext,
     dispatch_memory,
     make_anthropic_memory_tool,
     make_openai_memory_tool,
     memory_entity,
+    memory_forget,
+    memory_forget_confirm,
     memory_lookup,
     memory_pinned,
+    memory_profile,
+    memory_save,
     memory_timeline,
+    memory_update,
+    memory_wipe,
+    memory_wipe_confirm,
     parse_memory_payload,
 )
 from sherlock.tools.web_search import (
@@ -309,13 +317,21 @@ __all__ = [
     "make_anthropic_tools",
     "make_openai_tools",
     "web_search_fn",
-    # Memory tool (v0.4.0)
+    # Memory tool (v0.4.0; v1.12 A3 long-term management)
+    "LTMToolContext",
     "dispatch_memory",
     "make_anthropic_memory_tool",
     "make_openai_memory_tool",
     "memory_entity",
+    "memory_forget",
+    "memory_forget_confirm",
     "memory_lookup",
     "memory_pinned",
+    "memory_profile",
+    "memory_save",
     "memory_timeline",
+    "memory_update",
+    "memory_wipe",
+    "memory_wipe_confirm",
     "parse_memory_payload",
 ]

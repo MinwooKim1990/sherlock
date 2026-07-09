@@ -812,6 +812,74 @@ def build_sherlock_extension(*, search: bool = True, deep_research: bool | None 
     return text
 
 
+# v1.12 Stage A3: terse (small-model-friendly) protocol addendum documenting the
+# long-term memory MANAGEMENT verbs. Injected into TIER 1 ONLY when long-term
+# memory is enabled — off (the default) it is never added, so the slot stays
+# byte-identical. Kept as its own block (never edited into DEFAULT_SHERLOCK_
+# EXTENSION) so the build_sherlock_extension byte-identity invariant holds.
+LTM_TOOL_GUIDANCE = """\
+Long-term memory (durable ACROSS conversations) — extra `<<sherlock-tool: memory ...>>` verbs:
+- `memory profile` — list what you currently remember about the user long-term. Use when they ask "what do you remember / know about me?".
+- `memory save <fact>` — remember a fact PERMANENTLY. Use when the user tells you to remember something ("remember that…", "from now on…"). Write the fact in the user's own words.
+- `memory update <id> <fact>` — correct a durable fact. Run `memory profile` first to get the short id, then pass its prefix + the corrected fact.
+- `memory forget <what>` — find durable facts to delete. PREVIEW only: it deletes NOTHING and returns matches + a confirm token.
+- `memory forget-confirm <token>` — actually delete the previewed facts. Use ONLY after the user confirms; never invent a token.
+- `memory wipe` / `memory wipe-confirm <token>` — preview / confirm deletion of ALL long-term memory.
+Deletion rule: on any "forget X" / "wipe my memory" request, FIRST run `memory forget`/`memory wipe`, tell the user exactly what will be erased, and WAIT for their confirmation before emitting the matching `-confirm`."""
+
+
+# The one-line TIER-3 nudge injected the SAME turn a deterministic "remember
+# this" cue fires (long-term enabled only). An internal English control line —
+# it rides the SYSTEM-ANALYSIS block, never the user-visible reply.
+_LTM_REMEMBER_NUDGE = (
+    "[SHERLOCK LONG-TERM MEMORY] The user asked you to REMEMBER something this "
+    "turn. Emit <<sherlock-tool: memory save ...>> with the EXACT fact (in the "
+    "user's own words) so it persists across future conversations, then confirm "
+    "to the user that you will remember it."
+)
+
+# Deterministic "remember this" directive cue (multilingual). Intentionally
+# targets IMPERATIVE remember-directives ("remember that…", "from now on…",
+# "기억해", "覚えて", "merke dir", "recuerda"), not recall QUESTIONS ("do you
+# remember…?"). Advisory: a rare false positive only injects a nudge.
+_REMEMBER_CUE_RE = re.compile(
+    # English: imperative remember-directives only. The (?<!you ) guard drops the
+    # recall QUESTION form ("do you remember this?") while keeping "please
+    # remember …" / "remember to…" / "remember this".
+    # F2 (audit): the bare declarative "remember that…" alternative was REMOVED —
+    # it false-fired on "I remember that trip fondly". "please remember" (below)
+    # still covers the polite-directive case.
+    r"(?<!you )\bremember\s+(?:this|to)\b"
+    r"|\bplease\s+remember\b"
+    r"|\bfrom\s+now\s+on\b"
+    r"|\bkeep\s+in\s+mind\b"
+    r"|\bdon'?t\s+forget\b"
+    r"|\bmake\s+(?:a\s+)?note\s+(?:of|that)\b"
+    # F2 (audit): Korean + Spanish imperative directives, gated so a recall
+    # QUESTION ("기억해?", "¿recuerdas…?") does NOT fire. The trailing
+    # (?!.*[?？]\s*$) rejects a same-line trailing question mark; imperative
+    # forms ("기억해줘", "recuerda esto", "기억해!") still match.
+    r"|(?:"
+    r"기억\s*(?:해|하|해줘|해 줘|해둬|해 둬|해두|하세요|할 것)"
+    r"|잊지\s*마|잊지마|외워둬|외워"
+    r"|recu[eé]rda"
+    r")(?!.*[?？]\s*$)"
+    r"|覚え(?:て|とい|ておい)"
+    r"|忘れないで"
+    r"|merke\s+dir|merk\s+dir",
+    re.IGNORECASE,
+)
+
+
+def _detect_remember_cue(text: str) -> bool:
+    """True when the user's turn carries an imperative 'remember this' directive."""
+    # F2 (audit): collapse internal whitespace runs first — the fixed-width
+    # (?<!you ) lookbehind above is defeated by a double space ("do you  remember
+    # this"), which Python's re can't express as a variable-width lookbehind.
+    t = re.sub(r"\s+", " ", (text or "").strip())
+    return bool(t) and bool(_REMEMBER_CUE_RE.search(t))
+
+
 @dataclass
 class TurnState:
     """Read-only snapshot of the last turn for inspection (SPEC §8.1)."""
@@ -1028,6 +1096,16 @@ class Sherlock:
         # when unset; every emit is best-effort and never affects a turn.
         self._event_sink = None
         self._turn_index_for_emit = 0
+
+        # v1.12 Stage A3: natural-language long-term memory MANAGEMENT state.
+        # `_ltm_pending` is the AGENT-owned single-use confirm-token store the
+        # (stateless) memory_tool module mints into via an LTMToolContext:
+        #   token -> {"kind": "delete"|"wipe", "ids": [...]|None, "minted_turn": int}
+        # `_ltm_remember_promote_pending` latches when a deterministic
+        # "remember this" cue fires so the NEXT LLM-2 compaction promotes the
+        # turn's facts as user_directive (belt-and-braces behind the LLM-1 nudge).
+        self._ltm_pending: dict[str, dict] = {}
+        self._ltm_remember_promote_pending: bool = False
 
         # v0.5.0 Phase 3: true background execution. Default ON (v1.8): chat()
         # returns the LLM-1 reply immediately and runs companions (LLM-2/LLM-3) +
@@ -1313,6 +1391,9 @@ class Sherlock:
         self._conv_tool_calls = 0
         self._reset_companion_pressure()
         self._last_compact_turn = 0
+        # v1.12 A3: confirm tokens + the remember-cue latch are session-local.
+        self._ltm_pending = {}
+        self._ltm_remember_promote_pending = False
         # Re-seed domain hints into the new conversation.
         self._ensure_conversation()
         return conv.id
@@ -1344,6 +1425,9 @@ class Sherlock:
         # to single-model after a reload (one free stdlib perception pass).
         self._reset_companion_pressure()
         self._reseed_companion_pressure_from_last_user(self._prev_user_text)
+        # v1.12 A3: a confirm token from another session must never carry over.
+        self._ltm_pending = {}
+        self._ltm_remember_promote_pending = False
         # Restore last-compact turn from existing summaries so the fallback
         # doesn't immediately fire on resume.
         self._last_compact_turn = self._turn_index
@@ -1371,6 +1455,9 @@ class Sherlock:
             self._conv_tool_calls = 0
             self._reset_companion_pressure()
             self._last_compact_turn = 0
+            # v1.12 A3: drop confirm tokens + the remember-cue latch.
+            self._ltm_pending = {}
+            self._ltm_remember_promote_pending = False
         return {
             "session_id": conversation_id,
             "messages_removed": msgs_removed,
@@ -4385,6 +4472,37 @@ class Sherlock:
             },
         )
 
+    def _emit_ltm_management_event(self, result: dict) -> None:
+        """v1.12 Stage A3: emit a ``memory.*`` event for a long-term MANAGEMENT
+        tool result. Best-effort; no-op on errors or read-only verbs so the
+        off/read paths stay event-quiet."""
+        try:
+            if not isinstance(result, dict) or result.get("tool") != "memory":
+                return
+            if "error" in result:
+                return
+            kind = result.get("kind")
+            if kind == "save" and result.get("saved"):
+                self._emit(
+                    "memory.saved",
+                    "memory",
+                    {"id": result.get("id"), "category": result.get("category")},
+                )
+            elif kind == "update" and result.get("updated"):
+                self._emit(
+                    "memory.updated",
+                    "memory",
+                    {"old_id": result.get("old_id"), "new_id": result.get("new_id")},
+                )
+            elif kind == "forget" and result.get("count"):
+                self._emit("memory.delete_pending", "memory", {"count": result.get("count")})
+            elif kind == "forget-confirm":
+                self._emit("memory.deleted", "memory", {"count": result.get("deleted", 0)})
+            elif kind == "wipe-confirm":
+                self._emit("memory.wiped", "memory", {"count": result.get("wiped", 0)})
+        except Exception:
+            pass
+
     def _maybe_auto_infer(self, requested: set, turn_index: int, topic_changed: bool) -> set:
         """Selective auto-infer safety net (see MemoryConfig.auto_infer).
 
@@ -4671,6 +4789,12 @@ class Sherlock:
         summary_result = None
         if "compact" in requested and self._summarizer is not None:
             try:
+                # v1.12 A3 belt-and-braces: if a "remember this" cue latched, this
+                # compaction promotes the covered facts as user_directive. Consume
+                # the latch on the compaction ATTEMPT so it can't leak past the next
+                # compaction (bounded window). No-op when long-term is off/incognito.
+                _promote_ud = bool(getattr(self, "_ltm_remember_promote_pending", False))
+                self._ltm_remember_promote_pending = False
                 summary_result = self._summarizer.run(
                     conversation_id=conv_id,
                     # v1.0 B4: cover the FULL since-last-compaction span — the
@@ -4679,6 +4803,7 @@ class Sherlock:
                         conv_id, max(5, turn_index - self._last_compact_turn)
                     ),
                     turn_index=turn_index,
+                    promote_user_directive=_promote_ud,
                 )
                 summary_run = True
                 self._last_compact_turn = turn_index
@@ -5553,6 +5678,17 @@ class Sherlock:
             "═══ TIER 1: GROUND TRUTH — always trust ═══",
             tier1_prompt,
         ]
+        # v1.12 Stage A3: document the long-term memory MANAGEMENT verbs ONLY when
+        # the feature is enabled. Appended AFTER the base-prompt truncation (its
+        # own constant block) so the cached base prompt is untouched; OFF (the
+        # default) → nothing added → TIER 1 byte-identical to a no-LTM build.
+        # F3 (audit): when ENABLED this is a bounded, constant ~300-token TIER-1
+        # addition (the LTM_TOOL_GUIDANCE block) — it rides the stable cached
+        # prefix, so the per-turn cost is a one-time cache-write, not a recurring
+        # spend. Opt-in only; there is no growth-with-conversation term here.
+        _lt_cfg = getattr(self.config.memory, "long_term", None)
+        if _lt_cfg is not None and getattr(_lt_cfg, "enabled", False):
+            tier1_parts.append(LTM_TOOL_GUIDANCE)
         # P0-1: do NOT inject the timestamp here. A fresh microsecond
         # timestamp at the head of TIER 1 mutates the stable prefix every
         # turn and destroys prompt-cache hits across the whole TIER 1+2
@@ -5642,6 +5778,19 @@ class Sherlock:
                         ]
                     },
                 )
+        # v1.12 Stage A3: deterministic "remember this" cue. When the feature is
+        # enabled and the user's turn carries an imperative remember-directive,
+        # nudge LLM-1 (SAME turn) to emit `memory save`, emit a machine event, and
+        # latch the belt-and-braces flag so the NEXT compaction promotes this
+        # turn's facts as user_directive. OFF (default) → skipped → byte-identical.
+        if (
+            _lt_cfg is not None
+            and getattr(_lt_cfg, "enabled", False)
+            and _detect_remember_cue(user_text)
+        ):
+            tier3_parts.append(_LTM_REMEMBER_NUDGE)
+            self._ltm_remember_promote_pending = True
+            self._emit("memory.remember_cue", "memory", {"turn": self._turn_index_for_emit})
         # v1.5 Stage 3: LLM-2 memory-consistency anchor. Code-first contradiction
         # check of the new message vs pinned facts; surfaced same-turn so LLM-1 can
         # reconcile rather than silently override. Cue is OFF by default →
@@ -5942,16 +6091,30 @@ class Sherlock:
         # Memory tool — uses the local memory store, never a search engine.
         if kind == "memory":
             try:
-                from sherlock.tools.memory_tool import dispatch_memory
+                from sherlock.tools.memory_tool import LTMToolContext, dispatch_memory
 
                 conv = self._conversation
-                return dispatch_memory(
+                # v1.12 A3: hand the (feature-gated) long-term MANAGEMENT context
+                # in. It carries the enable/incognito gates, this turn's index, and
+                # a reference to the agent-owned confirm-token store — so the
+                # stateless tool module can mint/validate single-use delete tokens.
+                _lt = getattr(self.config.memory, "long_term", None)
+                ltm_ctx = LTMToolContext(
+                    enabled=bool(_lt and getattr(_lt, "enabled", False)),
+                    incognito=bool(_lt and getattr(_lt, "incognito", False)),
+                    turn_index=self._turn_index,
+                    pending=self._ltm_pending,
+                )
+                result = dispatch_memory(
                     payload,
                     store=self._memory,
                     hybrid=self._hybrid,
                     storage=self._storage,
                     conversation_id=conv.id if conv else None,
+                    ltm_ctx=ltm_ctx,
                 )
+                self._emit_ltm_management_event(result)
+                return result
             except Exception as exc:
                 return {
                     "tool": "memory",
@@ -6078,6 +6241,31 @@ class Sherlock:
                 lines.append(f"--- ({i}) memory {memkind}: {key} ---")
                 if "error" in item:
                     lines.append(f"ERROR: {item['error']}")
+                elif memkind in ("forget", "wipe") and "confirm_token" in item:
+                    # v1.12 A3: destructive PREVIEW — surface the instruction, the
+                    # confirm token, and exactly what would be deleted so LLM-1 can
+                    # ask the user before emitting the matching `-confirm`.
+                    if item.get("instruction"):
+                        lines.append(item["instruction"])
+                    lines.append(f"CONFIRM TOKEN: {item['confirm_token']}")
+                    if memkind == "wipe":
+                        lines.append(f"(would erase ALL {item.get('count', 0)} long-term fact(s))")
+                    for r in (item.get("pending") or [])[:8]:
+                        cat = r.get("category", "")
+                        lines.append(f"• [{cat}] {(r.get('content') or '')[:300]}")
+                elif memkind in ("forget", "wipe"):
+                    # Preview with no matches (no token minted).
+                    lines.append(item.get("message", "(nothing to delete)"))
+                elif memkind == "forget-confirm":
+                    lines.append(f"deleted {item.get('deleted', 0)} long-term fact(s).")
+                elif memkind == "wipe-confirm":
+                    lines.append(f"wiped {item.get('wiped', 0)} long-term fact(s).")
+                elif memkind == "save" and item.get("saved"):
+                    lines.append(f"saved (long-term): {(item.get('content') or '')[:300]}")
+                elif memkind == "update" and item.get("updated"):
+                    lines.append(
+                        f"updated {item.get('old_id')} → {(item.get('content') or '')[:280]}"
+                    )
                 else:
                     results = item.get("results") or []
                     if not results:
@@ -6092,6 +6280,11 @@ class Sherlock:
                             if "role" in r and "source" not in r:
                                 # timeline entry: show speaker
                                 lines.append(f"• {r.get('role','?')}: {content[:300]}")
+                            elif memkind == "profile":
+                                # v1.12 A3: long-term profile rows carry id+category.
+                                cat = r.get("category", "")
+                                rid = r.get("id", "")
+                                lines.append(f"• [{rid} · {cat}] {content[:300]}")
                             else:
                                 tag = r.get("source", "")
                                 conf = r.get("confidence")
@@ -6703,6 +6896,13 @@ class Sherlock:
         summary_result = None
         if "compact" in requested and self._summarizer is not None:
             try:
+                # v1.12 A3 (F1): mirror the sync _run_post_response latch handling so
+                # the remember-cue promotion is NOT silently lost on the async path —
+                # and the latch is consumed on THIS compaction attempt so it can't
+                # leak forward and force-promote an UNRELATED window's facts on a
+                # later (e.g. sync) compaction. No-op when long-term is off/incognito.
+                _promote_ud = bool(getattr(self, "_ltm_remember_promote_pending", False))
+                self._ltm_remember_promote_pending = False
                 summary_result = await asyncio.to_thread(
                     self._summarizer.run,
                     conversation_id=conv.id,
@@ -6710,6 +6910,7 @@ class Sherlock:
                         conv.id, max(5, turn_index - self._last_compact_turn)
                     ),
                     turn_index=turn_index,
+                    promote_user_directive=_promote_ud,
                 )
                 summary_run = True
                 self._last_compact_turn = turn_index
