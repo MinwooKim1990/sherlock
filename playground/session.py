@@ -38,6 +38,37 @@ def _ltm_profile_dir(profile: str | None) -> str:
     return str(d)
 
 
+class _BoundedIdSet:
+    """v1.12 F5: an insertion-ordered, bounded id registry with a set-like API
+    (``.add`` / ``in`` / ``len`` / iteration).
+
+    A plain ``set`` is hash-ordered, so trimming it with ``list(s)[-N:]`` keeps an
+    ARBITRARY N ids — a still-live viz_id could be evicted and its repair wrongly
+    rejected. Backed by a ``dict`` (insertion-ordered since 3.7) so eviction drops
+    the OLDEST ids first and recent ids always survive."""
+
+    __slots__ = ("_d", "_cap")
+
+    def __init__(self, cap: int = 512):
+        self._d: dict = {}
+        self._cap = int(cap)
+
+    def add(self, item) -> None:
+        self._d[item] = True
+        if len(self._d) > self._cap:
+            for old in list(self._d)[: -self._cap]:
+                del self._d[old]
+
+    def __contains__(self, item) -> bool:
+        return item in self._d
+
+    def __iter__(self):
+        return iter(self._d)
+
+    def __len__(self) -> int:
+        return len(self._d)
+
+
 @dataclass
 class Session:
     sid: str
@@ -56,6 +87,13 @@ class Session:
     baseline_tokens: dict = field(default_factory=lambda: {"in": 0, "out": 0})
     events_log: list = field(default_factory=list)  # every emitted event, for /api/export
     _baseline_engine: Any = None  # lazy search engine for the fair A/B baseline
+    # v1.12 Stage B3: LLM-4 VISUALIZER runtime-repair bookkeeping. ``viz_ids`` is
+    # the set of viz_ids this session has emitted a ``viz.*`` event for — the
+    # registry the /api/viz/repair endpoint checks so it rejects an unknown id.
+    # ``viz_repair_rounds`` bounds runtime-repair attempts PER viz_id ACROSS the
+    # (browser-driven) repair calls. Both are populated automatically in ``emit``.
+    viz_ids: "_BoundedIdSet" = field(default_factory=_BoundedIdSet)
+    viz_repair_rounds: dict = field(default_factory=dict)
 
     EVENTS_LOG_CAP = 20_000
 
@@ -72,6 +110,19 @@ class Session:
             self.events_log.append(event)
             if len(self.events_log) > self.EVENTS_LOG_CAP:
                 del self.events_log[: -self.EVENTS_LOG_CAP]
+        except Exception:
+            pass
+        # v1.12 Stage B3: register every viz_id the core surfaces (chat OR the
+        # deep-research report path) so the repair endpoint knows which ids are
+        # legitimately renderable. Bounded so a long session can't grow it forever.
+        try:
+            etype = event.get("type", "")
+            if isinstance(etype, str) and etype.startswith("viz."):
+                vid = (event.get("data") or {}).get("viz_id")
+                if vid:
+                    # v1.12 F5: _BoundedIdSet evicts OLDEST-first internally, so a
+                    # live id is never dropped (a plain set's trim was arbitrary).
+                    self.viz_ids.add(vid)
         except Exception:
             pass
         try:

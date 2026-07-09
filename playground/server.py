@@ -379,6 +379,157 @@ async def api_verify(req: VerifyReq):
     return {"ok": True, "tier": req.tier}
 
 
+# ============== v1.12 Stage B3: LLM-4 visualizer runtime repair ==============
+# The browser sandbox (B4) renders each ``viz.rendered`` artifact inside a
+# locked-down iframe. If it throws a REAL runtime error (a JS exception, a blank
+# frame), the host posts it here with the current HTML + the exact error; the
+# server runs ONE LLM-4 repair with that error, re-lints the result, and returns
+# the fixed HTML marked runtime-validated. Rounds are bounded PER viz_id ACROSS
+# calls (session.viz_repair_rounds) so a stuck visual can't loop the model
+# forever. Same localhost-trust posture as every other route in this file.
+
+
+class VizRepairReq(BaseModel):
+    session_id: str
+    viz_id: str
+    html: str
+    error: str = ""
+
+
+@app.post("/api/viz/repair")
+async def api_viz_repair(req: VizRepairReq):
+    """Run ONE LLM-4 repair round on a viz artifact that failed at RUNTIME in the
+    browser sandbox. Returns ``{ok, html, validated:"runtime"}`` on a repair that
+    passes the static lint; ``{ok:false, error, exhausted}`` on a lint failure or
+    once the per-viz round cap is hit. Rejects an unknown session / unknown
+    viz_id / a viz_id already past ``visualization.max_repair_rounds``."""
+    sess = SESSIONS.get(req.session_id)
+    if sess is None:
+        return {"ok": False, "error": "no such session"}
+    if not req.viz_id or req.viz_id not in sess.viz_ids:
+        return {"ok": False, "error": "unknown viz_id"}
+    if not (req.html or "").strip():
+        return {"ok": False, "error": "empty html"}
+
+    agent = sess.agent
+    cfg = agent.config.visualization
+    # v1.12 F3: bound the INPUT before we consume a round or hit the LLM. The 64KB
+    # lint only caps the render OUTPUT; without this a 100MB POST would be received
+    # in full and fed straight into the repair prompt (cost / DoS). 4× the output
+    # cap leaves comfortable headroom for a legitimately large broken artifact.
+    if len(req.html.encode("utf-8")) > 4 * int(agent.config.visualization.max_html_bytes):
+        return {"ok": False, "error": "html too large", "exhausted": False}
+    max_rounds = max(0, int(cfg.max_repair_rounds))
+    used = int(sess.viz_repair_rounds.get(req.viz_id, 0))
+    if used >= max_rounds:
+        return {"ok": False, "error": "repair rounds exhausted", "exhausted": True}
+    round_no = used + 1
+    sess.viz_repair_rounds[req.viz_id] = round_no
+    exhausted = round_no >= max_rounds
+
+    anchor = f"⟦viz:{req.viz_id}⟧"
+    err = (req.error or "").strip()
+    errors_in = [err] if err else ["runtime error (unspecified)"]
+
+    from sherlock import viz as _viz
+
+    agent._emit(
+        "viz.repairing",
+        "llm4",
+        {
+            "viz_id": req.viz_id,
+            "anchor": anchor,
+            "round": round_no,
+            "errors": errors_in,
+            "runtime": True,
+        },
+    )
+
+    loop = asyncio.get_running_loop()
+
+    def _repair() -> str:
+        provider = agent._viz_llm()
+        raw = agent._viz_chat(
+            provider, _viz.VIZ_GENERATION_SYSTEM, _viz.build_repair_user(req.html, errors_in)
+        )
+        return _viz.strip_code_fences(raw)
+
+    try:
+        # v1.12 F2: bound the provider call. The round is already consumed, so a
+        # hung provider would otherwise make this HTTP request wait forever. Give
+        # the render its own timeout + a small margin over the provider budget.
+        fixed = await asyncio.wait_for(
+            loop.run_in_executor(None, _repair), timeout=float(cfg.timeout_s) + 5.0
+        )
+    except asyncio.TimeoutError:
+        return {"ok": False, "error": "repair timeout", "exhausted": exhausted}
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}", "exhausted": exhausted}
+
+    # Re-lint the repaired HTML. The prior (browser) HTML is the fidelity anchor:
+    # the repair may not introduce numbers the failing artifact never contained.
+    ok, lint_errors = _viz._viz_static_lint(fixed, req.html, cfg)
+    if not ok:
+        return {
+            "ok": False,
+            "error": "; ".join(lint_errors)[:500] or "validation failed",
+            "exhausted": exhausted,
+        }
+
+    validated = _viz.inject_validated_meta(fixed)
+    if cfg.save_artifacts:
+        try:
+            agent._write_viz_artifact(req.viz_id, validated)
+        except Exception:
+            pass
+    agent._emit(
+        "viz.rendered",
+        "llm4",
+        {
+            "viz_id": req.viz_id,
+            "anchor": anchor,
+            "html": validated,
+            "validated": "runtime",
+            "bytes": len(validated.encode("utf-8")),
+        },
+    )
+    return {"ok": True, "html": validated, "validated": "runtime"}
+
+
+@app.get("/api/viz/{viz_id}")
+async def api_viz_artifact(viz_id: str, session_id: str):
+    """Serve a saved LLM-4 artifact (``<storage>/viz/<viz_id>.html``) as
+    text/html for a reopened session to re-hydrate. The client still renders it
+    inside the sandboxed iframe (B4); this endpoint just returns the bytes.
+    Path-safe: the id is sanitized to one filename component and the resolved
+    path is confined to the session's viz dir."""
+    sess = SESSIONS.get(session_id)
+    if sess is None:
+        return {"error": "no such session"}
+    # v1.12 F6: only serve ids this session has actually registered (rejects
+    # ids from other sessions / never-emitted ids with a 404-style error).
+    if viz_id not in sess.viz_ids:
+        return {"error": "no such artifact"}
+    import re as _re
+
+    safe = _re.sub(r"[^A-Za-z0-9._-]", "_", str(viz_id))
+    base = (Path(sess.agent.config.storage.sqlite_path).resolve().parent / "viz").resolve()
+    path = (base / f"{safe}.html").resolve()
+    if not (str(path) == str(base) or str(path).startswith(str(base) + os.sep)):
+        return {"error": "no such artifact"}
+    if not path.is_file():
+        return {"error": "no such artifact"}
+    # v1.12 F6: this endpoint is for B4's sandboxed iframe; a direct visit would
+    # otherwise run the artifact as first-party HTML in the playground origin. Add
+    # a response-level CSP sandbox (defense-in-depth; the artifact's own meta CSP
+    # already blocks exfiltration).
+    return FileResponse(
+        str(path),
+        media_type="text/html",
+        headers={"Content-Security-Policy": "sandbox allow-scripts"},
+    )
+
+
 # ==================== v1.12 Stage A5: long-term memory ====================
 # Live toggles + a small management surface over the A1–A4 library API. The
 # chat-level confirm-token flow (A3) still governs CONVERSATIONAL deletion; the

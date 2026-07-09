@@ -462,6 +462,25 @@ _PRESENTATION_GUIDE = (
 )
 
 
+# v1.12 Stage B3: the gated INLINE-VISUALIZER one-liner appended to the shared DR
+# presentation guide (above) ONLY when config.visualization.enabled. It teaches
+# the deep-research SYNTHESIS + EDITOR to drop <<sherlock-viz: ...>> markers in
+# the report where a chart/diagram would clarify a finding; the post-final hook
+# (_apply_deep_research_viz) then swaps each for a ⟦viz:…⟧ placeholder and renders
+# it on the SAME LLM-4 pool as chat. OFF (default) it is never appended, so every
+# DR prompt stays byte-identical. English-internal (only the marker SYNTAX); the
+# report's own language rule already lives in _PRESENTATION_GUIDE above.
+_DR_VIZ_GUIDANCE_TEMPLATE = (
+    "\n• VISUALS (optional): when a chart or diagram would make a finding clearer "
+    "(a trend, comparison, distribution, or step-by-step flow), insert an inline "
+    "marker EXACTLY where the visual belongs, on its own line:\n"
+    "  <<sherlock-viz: one-line description | the exact figures from the report>>\n"
+    "Use at most {N} such marker(s), and reference ONLY data already present in the "
+    "report — never invent figures just to draw them. If a visual would not "
+    "genuinely help the reader, emit none."
+)
+
+
 # v0.8 A4: lightweight source-type classification for fragment triangulation —
 # a fact corroborated across distinct domains / source-types / languages is more
 # trustworthy than one from a single source.
@@ -1434,12 +1453,17 @@ class Sherlock:
         return getattr(resp, "text", "") or ""
 
     def _emit_viz_failed(self, job: dict, reason: str) -> None:
-        """Emit ``viz.failed`` for a job that could not be rendered/validated."""
-        self._emit(
-            "viz.failed",
-            "llm4",
-            {"viz_id": job.get("viz_id"), "anchor": job.get("anchor"), "reason": reason},
-        )
+        """Emit ``viz.failed`` for a job that could not be rendered/validated.
+
+        Echoes ``turn``/``research_id`` when the job carries them (mirrors
+        ``_finalize_viz_render``), so a deep-research viz failure is attributable
+        to its run; both keys are omitted for jobs that lack them."""
+        data = {"viz_id": job.get("viz_id"), "anchor": job.get("anchor"), "reason": reason}
+        if job.get("turn") is not None:
+            data["turn"] = job["turn"]
+        if job.get("research_id") is not None:
+            data["research_id"] = job["research_id"]
+        self._emit("viz.failed", "llm4", data)
 
     def _write_viz_artifact(self, viz_id: str, html: str) -> str:
         """Persist a validated artifact to ``<storage_dir>/viz/<viz_id>.html`` and
@@ -1571,6 +1595,83 @@ class Sherlock:
                 self._emit_viz_failed(job, f"{type(exc).__name__}: {exc}"[:200])
             except Exception:
                 pass
+
+    # ---- v1.12 Stage B3: LLM-4 VISUALIZER in the deep-research report ----
+
+    def _presentation_guide(self) -> str:
+        """The shared deep-research SYNTHESIS/EDITOR presentation instruction.
+
+        Returns ``_PRESENTATION_GUIDE`` verbatim UNLESS the LLM-4 visualizer is
+        enabled, in which case the gated inline-marker one-liner is appended so the
+        synthesis/editor may place ``<<sherlock-viz: ...>>`` markers in the report.
+        OFF (default) → byte-identical to the raw guide, so every DR prompt (and
+        thus every DR report) is unchanged when visualization is off."""
+        viz = getattr(self.config, "visualization", None)
+        if viz is not None and getattr(viz, "enabled", False):
+            return _PRESENTATION_GUIDE + _DR_VIZ_GUIDANCE_TEMPLATE.format(
+                N=int(viz.max_markers_report)
+            )
+        return _PRESENTATION_GUIDE
+
+    def _apply_deep_research_viz(
+        self, answer: str, research_id: str, turn_index: int | None
+    ) -> str:
+        """Post-final DR VISUALIZER hook. When visualization is enabled, parse the
+        inline ``<<sherlock-viz: ...>>`` markers the synthesis/editor placed in the
+        FINAL report, swap each (up to ``max_markers_report``) for a ⟦viz:…⟧
+        placeholder, stash the jobs (keyed with ``research_id`` + ``turn``) and
+        dispatch them to the SAME LLM-4 render pool as chat. Returns the
+        placeholdered answer.
+
+        Runs AFTER the whole verify chain, right BEFORE the ``deep_research.done``
+        emit, in BOTH the inline path (``_execute_deep_research``) and the
+        background runner (``_run_deep_research_bg``) — so the two paths stay at
+        parity and the persisted report + the ``deep_research.done`` answer both
+        carry placeholders.
+
+        OFF (default) → returns the answer BYTE-IDENTICAL, emits nothing, submits
+        nothing. The id_prefix is the research_id itself (e.g. ``dr1``), so DR
+        viz_ids (``dr1-1``) can never collide with chat viz_ids (``t{turn}-n``)."""
+        if not self.config.visualization.enabled:
+            return answer
+        # v1.12 F1: this hook is the ONLY step between the DR answer computation and
+        # the persist + deep_research.done emit. A raise here (e.g. a pool.submit
+        # RuntimeError during interpreter shutdown) is swallowed by _bg_wrapper, so
+        # BOTH add_message AND deep_research.done would silently never fire — the
+        # "stuck at 'Starting deep research…' + lost report" regression class. Make
+        # the whole body best-effort: on ANY failure return the original answer so
+        # the caller still persists the report and emits deep_research.done.
+        try:
+            cap = int(self.config.visualization.max_markers_report)
+            new_text, jobs = _parse_viz_tags(answer, cap=cap, id_prefix=str(research_id))
+            if not jobs:
+                return new_text
+            for job in jobs:
+                job["research_id"] = research_id
+                if turn_index is not None:
+                    job["turn"] = turn_index
+                data = {
+                    "research_id": research_id,
+                    "viz_id": job["viz_id"],
+                    "anchor": job["anchor"],
+                    "description": job["description"],
+                }
+                if turn_index is not None:
+                    data["turn"] = turn_index
+                self._emit("viz.pending", "llm4", data)
+                self._pending_viz_jobs.append(job)
+            # Same bound as the chat stash: keep the 32 most recent, drop the oldest.
+            if len(self._pending_viz_jobs) > 32:
+                del self._pending_viz_jobs[:-32]
+            # Fire-and-forget dispatch onto the dedicated viz pool (different pool
+            # from the single-worker bg executor this DR runner may itself be on —
+            # no _bg_future misuse). SUBMIT-ONLY, so the deep_research.done emit
+            # isn't delayed; renders surface later via viz.rendered/viz.failed (each
+            # carrying research_id).
+            self._submit_viz_jobs()
+            return new_text
+        except Exception:
+            return answer
 
     @property
     def provider(self) -> BaseProvider:
@@ -2775,6 +2876,11 @@ class Sherlock:
             answer = self._run_deep_research(conv_id, topic, turn_index, research_id, user_text)
         except Exception as exc:
             answer = self._deep_research_failure_text(topic, exc, research_id)
+        # v1.12 Stage B3: post-final VISUALIZER hook — after the whole verify chain,
+        # right before persistence + the done emit. Off (default) → answer
+        # unchanged. On → report markers become ⟦viz:…⟧ placeholders + async renders
+        # (so both the persisted message and the done answer carry placeholders).
+        answer = self._apply_deep_research_viz(answer, research_id, turn_index)
         try:
             self._storage.add_message(
                 conv_id, role="assistant", content=answer, turn_index=turn_index
@@ -2809,6 +2915,11 @@ class Sherlock:
             answer = self._deep_research_failure_text(topic, exc, research_id)
         finally:
             self._deep_researching = False
+        # v1.12 Stage B3: post-final VISUALIZER hook (parity with the inline path
+        # above) — after the verify chain, before persistence + the done emit. This
+        # bg runner is on the single-worker bg executor; _submit_viz_jobs dispatches
+        # onto the SEPARATE dedicated viz pool, so no _bg_future is touched.
+        answer = self._apply_deep_research_viz(answer, research_id, turn_index)
         try:
             self._storage.add_message(
                 conv_id, role="assistant", content=answer, turn_index=turn_index
@@ -4134,7 +4245,7 @@ class Sherlock:
                     "section in whatever form reads best for its content (see PRESENTATION). "
                     "Cite source URLs inline where they back a claim; disputed facts get BOTH "
                     "sides. If this section genuinely has nothing, OMIT it — never pad with a "
-                    "'consult official sources' placeholder.\n\n" + _PRESENTATION_GUIDE
+                    "'consult official sources' placeholder.\n\n" + self._presentation_guide()
                 )
                 resp = self._provider.chat([ChatMessage(role="user", content=prompt)])
                 self._dr_account(
@@ -4232,7 +4343,7 @@ class Sherlock:
                     "reads best for its content (see PRESENTATION). Cite source URLs inline "
                     "where they back a claim; facts marked disputed get BOTH sides. If this "
                     "section genuinely has nothing, OMIT it — never pad with a placeholder."
-                    "\n\n" + _PRESENTATION_GUIDE
+                    "\n\n" + self._presentation_guide()
                 )
                 resp = self._provider.chat([ChatMessage(role="user", content=prompt)])
                 self._dr_account(
@@ -4648,7 +4759,7 @@ class Sherlock:
                 "or URLs; the only mandatory edits are the consistency/grounding fixes (1-6). "
                 "Formatting, images, a verdict lead, and length are YOUR call (item 7, "
                 "optional) — improve them where it helps, leave them where it doesn't. Return "
-                "ONLY the report text.\n\n" + _PRESENTATION_GUIDE
+                "ONLY the report text.\n\n" + self._presentation_guide()
             )
             prompt = (
                 f"You are fact-checking a research report on: {topic}\n\n"
@@ -4831,7 +4942,7 @@ class Sherlock:
             "confirmed by multiple sources — state those with higher confidence. For facts "
             "marked [disputed — sources conflict], present BOTH sides.\n"
             "• End with a short “Sources” list of the URLs you actually used.\n\n"
-            + _PRESENTATION_GUIDE
+            + self._presentation_guide()
         )
         try:
             resp = self._provider.chat([ChatMessage(role="user", content=prompt)])
