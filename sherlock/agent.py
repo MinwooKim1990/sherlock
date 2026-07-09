@@ -252,11 +252,13 @@ def _parse_viz_tags(text: str, cap: int, id_prefix: str) -> tuple[str, list[dict
     (no placeholder, no job), and a marker whose payload is empty
     (``<<sherlock-viz: >>``) is likewise stripped without minting a placeholder
     or job (and without consuming cap budget). Each job is
-    ``{"viz_id", "description", "data_hint", "anchor"}`` where description/
-    data_hint are the two halves of the FIRST '|' (both stripped; ``data_hint``
-    is ``""`` when the payload has no pipe) and ``anchor`` is the placeholder
-    token. Doubled blank lines left where a marker was removed WITHOUT a
-    placeholder are collapsed so the reply still reads cleanly.
+    ``{"viz_id", "description", "data_hint", "anchor", "context"}`` where
+    description/data_hint are the two halves of the FIRST '|' (both stripped;
+    ``data_hint`` is ``""`` when the payload has no pipe), ``anchor`` is the
+    placeholder token, and ``context`` is the ±1500 chars of the ORIGINAL reply
+    text around the marker (Stage B2 render source). Doubled blank lines left
+    where a marker was removed WITHOUT a placeholder are collapsed so the reply
+    still reads cleanly.
     """
     if not text:
         return text, []
@@ -279,12 +281,19 @@ def _parse_viz_tags(text: str, cap: int, id_prefix: str) -> tuple[str, list[dict
         desc, sep, hint = payload.partition("|")
         viz_id = f"{id_prefix}-{seen}"
         anchor = f"⟦viz:{viz_id}⟧"
+        # v1.12 Stage B2: capture the ±1500 chars of ORIGINAL reply text around
+        # this marker as the render CONTEXT (source material for the data-fidelity
+        # lint + the generation prompt). Positions are into the pre-substitution
+        # ``text`` (re.sub matches the original), so slices are stable regardless
+        # of earlier placeholder swaps. Additive: B1 job consumers ignore it.
+        context = text[max(0, m.start() - 1500) : m.end() + 1500]
         jobs.append(
             {
                 "viz_id": viz_id,
                 "description": desc.strip(),
                 "data_hint": hint.strip() if sep else "",
                 "anchor": anchor,
+                "context": context,
             }
         )
         return anchor
@@ -1221,6 +1230,13 @@ class Sherlock:
         # degrade such orphaned placeholders — remove or replace them in the
         # rendered text — rather than assuming every ⟦viz:…⟧ has a job to render.
         self._pending_viz_jobs: list[dict] = []
+        # v1.12 Stage B2: LLM-4 render dispatch. Dedicated 2-worker pool (lazy),
+        # a fire-and-forget futures list (pruned of done), and the set of viz_ids
+        # already dispatched (so re-submitting the un-emptied stash each turn can't
+        # double-render). All independent of the single-worker bg executor.
+        self._viz_executor = None
+        self._viz_futures: list = []
+        self._viz_submitted_ids: set[str] = set()
 
         # v0.5.0 Phase 3: true background execution. Default ON (v1.8): chat()
         # returns the LLM-1 reply immediately and runs companions (LLM-2/LLM-3) +
@@ -1318,6 +1334,7 @@ class Sherlock:
         if not jobs:
             return new_text
         for job in jobs:
+            job["turn"] = turn_index  # so viz.rendered/failed can echo the turn
             self._emit(
                 "viz.pending",
                 "llm4",
@@ -1334,6 +1351,226 @@ class Sherlock:
         if len(self._pending_viz_jobs) > 32:
             del self._pending_viz_jobs[:-32]
         return new_text
+
+    # ---- v1.12 Stage B2: LLM-4 VISUALIZER render pipeline ----
+
+    def _ensure_viz_pool(self):
+        """Lazy DEDICATED pool for LLM-4 renders. NEVER the single-worker bg
+        executor (``_executor``/``_bg_future``) — those serialise memory writes
+        and draining them must stay deterministic; viz renders are independent,
+        fire-and-forget, and may run 2-up."""
+        pool = getattr(self, "_viz_executor", None)
+        if pool is None:
+            import concurrent.futures
+
+            pool = concurrent.futures.ThreadPoolExecutor(
+                max_workers=2, thread_name_prefix="sherlock-viz"
+            )
+            self._viz_executor = pool
+        return pool
+
+    def _submit_viz_jobs(self) -> None:
+        """Fire-and-forget dispatch of not-yet-submitted stashed viz jobs onto the
+        viz pool. SUBMIT-ONLY — pool.submit() just enqueues, so this never delays
+        the chat()/achat() return. Called right after the marker strip seam.
+
+        ORPHAN CONTRACT (B1 → B2): the ⟦viz:…⟧ placeholder was already written into
+        the persisted reply TEXT at parse time. A job that FAILS or never runs is
+        NOT healed by rewriting that text — instead it degrades at RENDER time
+        (playground B4) via the ``viz.failed`` event (which drops the chip). The
+        stored token stays by design.
+
+        The observable ``_pending_viz_jobs`` stash is NOT emptied here (a
+        session-scoped, bounded-32 record other code + B1 tests inspect); instead
+        ``_viz_submitted_ids`` dedupes so each job dispatches exactly once across
+        turns. viz_ids reset per session, so the id set is cleared on every
+        session boundary alongside the stash."""
+        if not self.config.visualization.enabled:
+            return
+        jobs = getattr(self, "_pending_viz_jobs", None)
+        if not jobs:
+            return
+        submitted = getattr(self, "_viz_submitted_ids", None)
+        if submitted is None:
+            submitted = set()
+            self._viz_submitted_ids = submitted
+        futures = getattr(self, "_viz_futures", None)
+        if futures is None:
+            futures = []
+            self._viz_futures = futures
+        # Prune completed futures so the tracking list can't grow without bound.
+        futures[:] = [f for f in futures if not f.done()]
+        pool = self._ensure_viz_pool()
+        for job in list(jobs):
+            vid = job.get("viz_id")
+            if vid in submitted:
+                continue
+            submitted.add(vid)
+            futures.append(pool.submit(self._render_viz_job, dict(job)))
+        # Keep the id set bounded to ids still live in the (bounded-32) stash.
+        live = {j.get("viz_id") for j in jobs}
+        self._viz_submitted_ids = {v for v in submitted if v in live}
+        if len(futures) > 64:
+            del futures[:-64]
+
+    def wait_for_viz(self, timeout: float | None = None) -> bool:
+        """Block until outstanding LLM-4 renders finish (or timeout). Returns True
+        if all done / none outstanding, False on timeout. Mirrors
+        ``wait_for_background`` for tests + the CLI; INDEPENDENT of the bg future,
+        so waiting on viz never touches companion draining."""
+        import concurrent.futures
+
+        futures = [f for f in list(getattr(self, "_viz_futures", []) or []) if not f.done()]
+        if not futures:
+            return True
+        _done, not_done = concurrent.futures.wait(futures, timeout=timeout)
+        return not not_done
+
+    def _viz_chat(self, provider, system: str, user: str) -> str:
+        """One LLM-4 turn: system + user → reply text ("" on empty)."""
+        resp = provider.chat(
+            [ChatMessage(role="system", content=system), ChatMessage(role="user", content=user)]
+        )
+        return getattr(resp, "text", "") or ""
+
+    def _emit_viz_failed(self, job: dict, reason: str) -> None:
+        """Emit ``viz.failed`` for a job that could not be rendered/validated."""
+        self._emit(
+            "viz.failed",
+            "llm4",
+            {"viz_id": job.get("viz_id"), "anchor": job.get("anchor"), "reason": reason},
+        )
+
+    def _write_viz_artifact(self, viz_id: str, html: str) -> str:
+        """Persist a validated artifact to ``<storage_dir>/viz/<viz_id>.html`` and
+        return the path. viz_id is sanitised for the filename."""
+        from pathlib import Path as _Path
+
+        base = _Path(self.config.storage.sqlite_path).resolve().parent / "viz"
+        base.mkdir(parents=True, exist_ok=True)
+        safe = re.sub(r"[^A-Za-z0-9._-]", "_", str(viz_id))
+        path = base / f"{safe}.html"
+        path.write_text(html, encoding="utf-8")
+        return str(path)
+
+    def _finalize_viz_render(self, job: dict, html: str) -> None:
+        """A render passed the lint: stamp the validated meta, best-effort persist
+        the artifact, and emit ``viz.rendered`` (html INCLUDED — capped at
+        max_html_bytes, so the playground renders straight from the event)."""
+        from sherlock import viz as _viz
+
+        cfg = self.config.visualization
+        validated = _viz.inject_validated_meta(html)
+        path = None
+        if cfg.save_artifacts:
+            try:
+                path = self._write_viz_artifact(job.get("viz_id"), validated)
+            except Exception:
+                path = None  # best-effort: a write failure never drops the render
+        data = {
+            "viz_id": job.get("viz_id"),
+            "anchor": job.get("anchor"),
+            "html": validated,
+            "validated": "static",
+            "bytes": len(validated.encode("utf-8")),
+        }
+        if job.get("turn") is not None:
+            data["turn"] = job["turn"]
+        if job.get("research_id") is not None:
+            data["research_id"] = job["research_id"]
+        if path is not None:
+            data["path"] = path
+        self._emit("viz.rendered", "llm4", data)
+
+    def _render_viz_job(self, job: dict) -> None:
+        """Render ONE stashed viz job on the pool: generate → strip fences → lint →
+        (self-review rounds) → (repair rounds) → persist + ``viz.rendered``, else
+        ``viz.failed``. EVERYTHING is best-effort — any exception becomes
+        ``viz.failed`` and never propagates off the pool thread.
+
+        TIMEOUT ACCOUNTING (deliberate, documented): the job already runs ON the
+        pool, so we do NOT nest a second pool for per-call timeouts (that would
+        deadlock a 2-worker pool under load). Instead each provider.chat is issued
+        directly and an OUTER wall-clock deadline is checked BETWEEN steps. The
+        budget is ``timeout_s * (1 + self_review_rounds + max_repair_rounds)`` —
+        one slot per possible LLM call. A single hung provider.chat can overrun
+        (no mid-call interrupt), but the deadline guarantees the job can't loop
+        forever; overrun → ``viz.failed`` "timeout"."""
+        import time as _time
+
+        from sherlock import viz as _viz
+
+        cfg = self.config.visualization
+        self_reviews = max(0, int(cfg.self_review_rounds))
+        max_repairs = max(0, int(cfg.max_repair_rounds))
+        per_call = float(cfg.timeout_s)
+        deadline = _time.monotonic() + per_call * (1 + self_reviews + max_repairs)
+        # Source material for the fidelity lint + a legible prompt: the marker
+        # description + data hint + the surrounding reply slice.
+        source = " ".join(
+            s
+            for s in (
+                job.get("context") or "",
+                job.get("description") or "",
+                job.get("data_hint") or "",
+            )
+            if s
+        )
+
+        def _expired() -> bool:
+            return _time.monotonic() > deadline
+
+        try:
+            provider = self._viz_llm()
+            if _expired():
+                return self._emit_viz_failed(job, "timeout")
+            html = _viz.strip_code_fences(
+                self._viz_chat(
+                    provider, _viz.VIZ_GENERATION_SYSTEM, _viz.build_generation_user(job)
+                )
+            )
+            ok, errors = _viz._viz_static_lint(html, source, cfg)
+
+            # Self-review rounds (checklist self-critique) — only while failing.
+            for _ in range(self_reviews):
+                if ok:
+                    break
+                if _expired():
+                    return self._emit_viz_failed(job, "timeout")
+                html = _viz.strip_code_fences(
+                    self._viz_chat(
+                        provider, _viz.VIZ_GENERATION_SYSTEM, _viz.build_self_review_user(html)
+                    )
+                )
+                ok, errors = _viz._viz_static_lint(html, source, cfg)
+
+            # Repair rounds (explicit lint errors fed back) — only while failing.
+            rounds = 0
+            while not ok and rounds < max_repairs:
+                rounds += 1
+                if _expired():
+                    return self._emit_viz_failed(job, "timeout")
+                self._emit(
+                    "viz.repairing",
+                    "llm4",
+                    {"viz_id": job.get("viz_id"), "round": rounds, "errors": errors},
+                )
+                html = _viz.strip_code_fences(
+                    self._viz_chat(
+                        provider, _viz.VIZ_GENERATION_SYSTEM, _viz.build_repair_user(html, errors)
+                    )
+                )
+                ok, errors = _viz._viz_static_lint(html, source, cfg)
+
+            if not ok:
+                reason = "; ".join(errors)[:500] or "validation failed"
+                return self._emit_viz_failed(job, reason)
+            self._finalize_viz_render(job, html)
+        except Exception as exc:  # best-effort: never propagate off the pool
+            try:
+                self._emit_viz_failed(job, f"{type(exc).__name__}: {exc}"[:200])
+            except Exception:
+                pass
 
     @property
     def provider(self) -> BaseProvider:
@@ -1673,6 +1910,13 @@ class Sherlock:
         # turn index, which resets to 0 here — clear the stash so next session's
         # ``t1-1`` can't collide with a stale one from this session.
         self._pending_viz_jobs = []
+        # v1.12 B2: also drop the submitted-id dedupe — viz_ids restart at t1-1,
+        # so a stale id would otherwise mark the new session's job as done.
+        # NOTE (auditor E): clearing the stash/ids does NOT cancel in-flight render
+        # futures from the previous session — a late completion may still emit into
+        # the new session's sink carrying a stale data["turn"]. Self-corrects (the
+        # playground keys events by turn) and is acceptable.
+        self._viz_submitted_ids = set()
         self._reset_companion_pressure()
         self._last_compact_turn = 0
         # v1.12 A3: confirm tokens + the remember-cue latch are session-local.
@@ -1707,6 +1951,7 @@ class Sherlock:
         # v1.12 B1: drop viz jobs from the previous session — the incoming turn
         # index (restored below) keys viz_ids, so a stale stash risks collisions.
         self._pending_viz_jobs = []
+        self._viz_submitted_ids = set()  # v1.12 B2: reset the dispatch dedupe too
         # v1.6: zero the gating state, then re-seed intent pressure from the last
         # user message so a long sustained-need conversation doesn't silently drop
         # to single-model after a reload (one free stdlib perception pass).
@@ -1743,6 +1988,7 @@ class Sherlock:
             # v1.12 B1: clear the viz stash — turn index resets to 0 below, so a
             # stale ``t1-1`` would otherwise collide with the next session's.
             self._pending_viz_jobs = []
+            self._viz_submitted_ids = set()  # v1.12 B2: reset the dispatch dedupe
             self._reset_companion_pressure()
             self._last_compact_turn = 0
             # v1.12 A3: drop confirm tokens + the remember-cue latch.
@@ -6793,6 +7039,10 @@ class Sherlock:
         # in the reply exactly as it does today (byte-identical off-state).
         if self.config.visualization.enabled:
             cleaned_text = self._extract_viz_jobs(cleaned_text, turn_index)
+            # Stage B2: dispatch each new job to the dedicated viz pool. SUBMIT-ONLY
+            # (fire-and-forget) — this never delays the reply; renders complete
+            # asynchronously and surface via viz.rendered/viz.failed events.
+            self._submit_viz_jobs()
         # Replace the response text with the cleaned version so downstream
         # storage + return value don't show the tag to the user.
         response = ChatResponse(
@@ -7118,6 +7368,10 @@ class Sherlock:
         # (default) → the parse never runs → marker stays verbatim (byte-identical).
         if self.config.visualization.enabled:
             cleaned_text = self._extract_viz_jobs(cleaned_text, turn_index)
+            # Stage B2: fire-and-forget dispatch (parity with sync). achat runs
+            # companions INLINE, but viz renders go to the dedicated pool — never
+            # the single bg worker — so this stays submit-only and non-blocking.
+            self._submit_viz_jobs()
         if requested:
             self._companion_request_count += 1
         # P0 (achat tag leak): rebuild the response with cleaned text so the
