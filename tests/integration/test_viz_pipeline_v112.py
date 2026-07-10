@@ -320,3 +320,84 @@ def test_job_dispatched_once_across_turns(tmp_path):
     rendered = _events_of(events, "viz.rendered")
     ids = sorted(e["data"]["viz_id"] for e in rendered)
     assert ids == ["t1-1", "t2-1"]  # each turn's job rendered exactly once
+
+
+# --------------------------------- Stage V2: question is emphasis, NOT data
+
+
+def test_question_reaches_prompt_but_never_the_lint_source(tmp_path):
+    # A clean artifact renders fine AND the generation prompt carries the
+    # reader's question (emphasis channel works)…
+    viz = _ScriptViz(VALID)
+    events: list[dict] = []
+    agent = _agent(tmp_path, "qok", main=lambda m: MARKER_REPLY, viz_chat=viz)
+    agent.set_event_sink(events.append)
+
+    agent.chat("how did sales trend across the quarters?")
+    assert agent.wait_for_viz(timeout=5) is True
+    assert len(_events_of(events, "viz.rendered")) == 1
+    gen_prompt = viz.prompts[0]
+    assert "THE READER'S QUESTION" in gen_prompt
+    assert "how did sales trend across the quarters?" in gen_prompt
+    assert "untrusted" in gen_prompt
+
+
+def test_question_only_number_is_still_invented(tmp_path):
+    # …but a number present ONLY in the question (a wrong premise / an
+    # unverified DR topic) must NOT legitimise artifact numbers: the lint
+    # rejects "77" across every self-review + repair round (audit fix — the
+    # question is deliberately excluded from the fidelity source).
+    valid_with_77 = VALID.replace(
+        "<span>Q1 12</span>", "<span>baseline 77</span><span>Q1 12</span>"
+    )
+    viz = _ScriptViz(valid_with_77, valid_with_77, valid_with_77, valid_with_77)
+    events: list[dict] = []
+    agent = _agent(tmp_path, "q77", main=lambda m: MARKER_REPLY, viz_chat=viz)
+    agent.set_event_sink(events.append)
+
+    agent.chat("sales vs the baseline of 77 — how did we do?")
+    assert agent.wait_for_viz(timeout=10) is True
+
+    assert _events_of(events, "viz.rendered") == []
+    failed = _events_of(events, "viz.failed")
+    assert len(failed) == 1
+    assert "invented number: 77" in failed[0]["data"]["reason"]
+    # every round saw the question in the PROMPT (emphasis) — 4 calls total
+    assert len(viz.prompts) == 4
+    assert "THE READER'S QUESTION" in viz.prompts[0]
+
+
+async def test_achat_threads_question_like_chat(tmp_path):
+    # async/sync parity: achat() must thread the user turn into the job and
+    # the generation prompt exactly like chat() (audit: this edge had no test).
+    viz = _ScriptViz(VALID)
+    events: list[dict] = []
+    agent = _agent(tmp_path, "aq", main=lambda m: MARKER_REPLY, viz_chat=viz)
+    agent.set_event_sink(events.append)
+
+    reply = await agent.achat("compare the quarters for me")
+    assert "⟦viz:t1-1⟧" in reply
+    assert agent._pending_viz_jobs[-1]["question"] == "compare the quarters for me"
+    assert agent.wait_for_viz(timeout=5) is True
+    assert len(_events_of(events, "viz.rendered")) == 1
+    assert "compare the quarters for me" in viz.prompts[0]
+
+
+def test_context_table_flag_survives_stash_to_render(tmp_path):
+    # end-to-end: a reply that SHOWS a markdown table next to the marker must
+    # reach LLM-4 with the don't-duplicate-the-table note (audit: the two
+    # unit-tested halves were never joined).
+    reply = (
+        "| Q | Rev |\n|---|---|\n| Q1 | 12 |\n| Q2 | 19 |\n\n"
+        "<<sherlock-viz: bar chart of revenue | Q1 12, Q2 19>>\ndone"
+    )
+    viz = _ScriptViz(VALID)
+    events: list[dict] = []
+    agent = _agent(tmp_path, "tf", main=lambda m: reply, viz_chat=viz)
+    agent.set_event_sink(events.append)
+
+    agent.chat("revenue?")
+    assert agent.wait_for_viz(timeout=5) is True
+    assert len(_events_of(events, "viz.rendered")) == 1
+    assert "ALREADY shows a table" in viz.prompts[0]
+    assert "Do NOT render another table" in viz.prompts[0]

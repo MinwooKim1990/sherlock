@@ -336,3 +336,41 @@ def test_dr_viz_hook_failure_still_persists_and_emits_done(tmp_path):
     msgs = agent._storage.list_messages(cid)
     assert msgs[-1].role == "assistant"
     assert msgs[-1].content == REPORT_2
+
+
+# ================================= (8) Stage V2: topic-as-question call edges
+
+
+def test_dr_inline_and_bg_thread_topic_as_question(tmp_path):
+    """BOTH DR call edges (inline _execute_deep_research and the bg runner) pass
+    question=topic into every viz job — emphasis-only: it reaches the LLM-4
+    generation prompt but NOT the fidelity-lint source (audit: these two edges
+    were previously untested; a dropped kwarg would have shipped green)."""
+    for name, drive in (
+        ("inl", lambda a, cid: a._execute_deep_research(cid, "widget demand", 3, background=False)),
+        ("bgr", lambda a, cid: a._run_deep_research_bg(cid, "widget demand", 5, "dr7")),
+    ):
+        viz = _ScriptViz(VALID, VALID)
+        agent = _agent(
+            tmp_path,
+            name,
+            main=lambda m: "ok",
+            viz_chat=viz,
+            viz={"enabled": True, "self_review_rounds": 0, "max_repair_rounds": 0},
+        )
+        events: list[dict] = []
+        agent.set_event_sink(events.append)
+        agent._run_deep_research = lambda *a, **k: REPORT_2
+
+        cid = agent._storage.create_conversation("test").id
+        drive(agent, cid)
+
+        jobs = [j for j in agent._pending_viz_jobs if j.get("research_id")]
+        assert len(jobs) == 2
+        assert all(j["question"] == "widget demand" for j in jobs)
+
+        assert agent.wait_for_viz(timeout=5) is True
+        assert len(_events_of(events, "viz.rendered")) == 2
+        # the topic rode the generation prompt (emphasis channel)
+        assert all("widget demand" in p for p in viz.prompts)
+        assert all("THE READER'S QUESTION" in p for p in viz.prompts)

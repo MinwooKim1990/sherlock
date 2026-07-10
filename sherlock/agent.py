@@ -252,16 +252,20 @@ def _parse_viz_tags(text: str, cap: int, id_prefix: str) -> tuple[str, list[dict
     (no placeholder, no job), and a marker whose payload is empty
     (``<<sherlock-viz: >>``) is likewise stripped without minting a placeholder
     or job (and without consuming cap budget). Each job is
-    ``{"viz_id", "description", "data_hint", "anchor", "context"}`` where
-    description/data_hint are the two halves of the FIRST '|' (both stripped;
-    ``data_hint`` is ``""`` when the payload has no pipe), ``anchor`` is the
-    placeholder token, and ``context`` is the ±1500 chars of the ORIGINAL reply
-    text around the marker (Stage B2 render source). Doubled blank lines left
-    where a marker was removed WITHOUT a placeholder are collapsed so the reply
-    still reads cleanly.
+    ``{"viz_id", "description", "data_hint", "anchor", "context", "context_flags"}``
+    where description/data_hint are the two halves of the FIRST '|' (both
+    stripped; ``data_hint`` is ``""`` when the payload has no pipe), ``anchor``
+    is the placeholder token, ``context`` is the ±1500 chars of the ORIGINAL
+    reply text around the marker (Stage B2 render source), and ``context_flags``
+    (Stage V2) is ``detect_context_flags(context)`` — ``("table",)`` when that
+    slice already shows a table, so the render prompt forbids duplicating it.
+    Doubled blank lines left where a marker was removed WITHOUT a placeholder
+    are collapsed so the reply still reads cleanly.
     """
     if not text:
         return text, []
+    from sherlock.viz import detect_context_flags
+
     jobs: list[dict] = []
     seen = 0
     stripped = False  # a marker was removed WITHOUT leaving a placeholder
@@ -294,6 +298,7 @@ def _parse_viz_tags(text: str, cap: int, id_prefix: str) -> tuple[str, list[dict
                 "data_hint": hint.strip() if sep else "",
                 "anchor": anchor,
                 "context": context,
+                "context_flags": detect_context_flags(context),
             }
         )
         return anchor
@@ -476,8 +481,9 @@ _DR_VIZ_GUIDANCE_TEMPLATE = (
     "marker EXACTLY where the visual belongs, on its own line:\n"
     "  <<sherlock-viz: one-line description | the exact figures from the report>>\n"
     "Use at most {N} such marker(s), and reference ONLY data already present in the "
-    "report — never invent figures just to draw them. If a visual would not "
-    "genuinely help the reader, emit none."
+    "report — never invent figures just to draw them. Markers are for GRAPHICAL "
+    "visuals only — if a table serves better, write a markdown table in the report "
+    "instead. If a visual would not genuinely help the reader, emit none."
 )
 
 
@@ -939,10 +945,11 @@ Deletion rule: on any "forget X" / "wipe my memory" request, FIRST run `memory f
 # render prompt, not here. {N} = the per-reply marker cap from config; the string
 # is constant per config, so it rides the stable cached TIER-1 prefix.
 _VIZ_MARKER_GUIDANCE_TEMPLATE = """\
-Inline visualizations: when a chart / diagram / small table would genuinely help the reader grasp your answer (a trend, a comparison, a distribution, a step-by-step flow), insert a marker EXACTLY where the visual belongs, on its own line:
+Inline visualizations: when a chart or diagram would genuinely help the reader grasp your answer (a trend, a comparison, a distribution, a step-by-step flow), insert a marker EXACTLY where the visual belongs, on its own line:
   <<sherlock-viz: one-line description of the visual | the exact numbers/labels from your answer>>
 - Only reference data ALREADY present in your reply — never invent figures just to draw them.
 - The part after `|` is an optional data hint (the concrete series/labels); omit it (and the `|`) when there is nothing numeric to pass.
+- Markers are for GRAPHICAL visuals only: if the insight is naturally a table, write a normal markdown table in your reply instead of a marker.
 - At most {N} marker(s) per reply. If a visual would not genuinely add understanding, do NOT emit one — plain prose is the right answer."""
 
 
@@ -1341,13 +1348,19 @@ class Sherlock:
         be enabled with no extra model key."""
         return self._viz_provider or self._provider
 
-    def _extract_viz_jobs(self, text: str, turn_index: int) -> str:
+    def _extract_viz_jobs(self, text: str, turn_index: int, question: str = "") -> str:
         """Parse inline ``<<sherlock-viz: ...>>`` markers out of an LLM-1 reply:
         replace each (up to the chat cap) with a placeholder token, emit a
         ``viz.pending`` event per job, and stash the jobs for LLM-4 (Stage B2) to
         consume. Returns the reply with markers → placeholders. Called ONLY when
         ``config.visualization.enabled`` — off (default) → never invoked, so a
-        stray marker stays verbatim (byte-identical)."""
+        stray marker stays verbatim (byte-identical).
+
+        ``question`` (Stage V2) is the USER TURN this reply answers; it rides
+        every job (trimmed) into the LLM-4 generation prompt as EMPHASIS-ONLY,
+        untrusted context — deliberately NOT into the fidelity-lint source, so
+        a number appearing only in the question (e.g. a wrong premise) still
+        fails the invented-number check."""
         from sherlock.viz import sanitize_image_allowlist
 
         cap = int(self.config.visualization.max_markers_chat)
@@ -1356,8 +1369,10 @@ class Sherlock:
             return new_text
         for job in jobs:
             job["turn"] = turn_index  # so viz.rendered/failed can echo the turn
+            job["question"] = (question or "").strip()[:600]
             # v1.12 Stage V1: per-job img-src allowlist, sanitised at CONSTRUCTION
-            # (never from model output). V2 fills it; today it is always ().
+            # (never from model output). The image-modality stage (V3) fills it;
+            # today it is always ().
             job["image_urls"] = sanitize_image_allowlist(job.get("image_urls", ()))
             self._emit(
                 "viz.pending",
@@ -1595,7 +1610,14 @@ class Sherlock:
         per_call = float(cfg.timeout_s)
         deadline = _time.monotonic() + per_call * (1 + self_reviews + max_repairs)
         # Source material for the fidelity lint + a legible prompt: the marker
-        # description + data hint + the surrounding reply slice.
+        # description + data hint + the surrounding reply slice. DELIBERATELY NOT
+        # included (Stage V2 audit): the reader's question — it is unverified
+        # user/model-authored text shown to the model for EMPHASIS only, so a
+        # number appearing only there (a wrong premise, an unverified DR topic)
+        # must still fail the invented-number check; a number the reply genuinely
+        # engages appears in the context slice anyway. The system prompt is
+        # likewise not data (it is worded digit-free and tells the model styling
+        # values belong only in CSS, which the lint's text scan already skips).
         source = " ".join(
             s
             for s in (
@@ -1678,7 +1700,7 @@ class Sherlock:
         return _PRESENTATION_GUIDE
 
     def _apply_deep_research_viz(
-        self, answer: str, research_id: str, turn_index: int | None
+        self, answer: str, research_id: str, turn_index: int | None, question: str = ""
     ) -> str:
         """Post-final DR VISUALIZER hook. When visualization is enabled, parse the
         inline ``<<sherlock-viz: ...>>`` markers the synthesis/editor placed in the
@@ -1695,7 +1717,13 @@ class Sherlock:
 
         OFF (default) → returns the answer BYTE-IDENTICAL, emits nothing, submits
         nothing. The id_prefix is the research_id itself (e.g. ``dr1``), so DR
-        viz_ids (``dr1-1``) can never collide with chat viz_ids (``t{turn}-n``)."""
+        viz_ids (``dr1-1``) can never collide with chat viz_ids (``t{turn}-n``).
+
+        ``question`` (Stage V2) is the RESEARCH TOPIC; it rides every job into
+        the LLM-4 generation prompt as EMPHASIS-ONLY untrusted context (parity
+        with chat's user turn) — NOT into the fidelity-lint source: the topic is
+        model-authored and never passed the DR accuracy layer, so its numbers
+        must not legitimise artifact numbers."""
         if not self.config.visualization.enabled:
             return answer
         # v1.12 F1: this hook is the ONLY step between the DR answer computation and
@@ -1716,8 +1744,10 @@ class Sherlock:
                 job["research_id"] = research_id
                 if turn_index is not None:
                     job["turn"] = turn_index
+                job["question"] = (question or "").strip()[:600]
                 # v1.12 Stage V1: per-job img-src allowlist, sanitised at
-                # CONSTRUCTION (never from model output). V2 fills it; today ().
+                # CONSTRUCTION (never from model output). The image-modality
+                # stage (V3) fills it; today ().
                 job["image_urls"] = sanitize_image_allowlist(job.get("image_urls", ()))
                 data = {
                     "research_id": research_id,
@@ -2960,7 +2990,7 @@ class Sherlock:
         # right before persistence + the done emit. Off (default) → answer
         # unchanged. On → report markers become ⟦viz:…⟧ placeholders + async renders
         # (so both the persisted message and the done answer carry placeholders).
-        answer = self._apply_deep_research_viz(answer, research_id, turn_index)
+        answer = self._apply_deep_research_viz(answer, research_id, turn_index, question=topic)
         try:
             self._storage.add_message(
                 conv_id, role="assistant", content=answer, turn_index=turn_index
@@ -2999,7 +3029,7 @@ class Sherlock:
         # above) — after the verify chain, before persistence + the done emit. This
         # bg runner is on the single-worker bg executor; _submit_viz_jobs dispatches
         # onto the SEPARATE dedicated viz pool, so no _bg_future is touched.
-        answer = self._apply_deep_research_viz(answer, research_id, turn_index)
+        answer = self._apply_deep_research_viz(answer, research_id, turn_index, question=topic)
         try:
             self._storage.add_message(
                 conv_id, role="assistant", content=answer, turn_index=turn_index
@@ -7231,7 +7261,7 @@ class Sherlock:
         # (default) → the parse never runs, so a stray marker survives verbatim
         # in the reply exactly as it does today (byte-identical off-state).
         if self.config.visualization.enabled:
-            cleaned_text = self._extract_viz_jobs(cleaned_text, turn_index)
+            cleaned_text = self._extract_viz_jobs(cleaned_text, turn_index, question=user_input)
             # Stage B2: dispatch each new job to the dedicated viz pool. SUBMIT-ONLY
             # (fire-and-forget) — this never delays the reply; renders complete
             # asynchronously and surface via viz.rendered/viz.failed events.
@@ -7560,7 +7590,7 @@ class Sherlock:
         # v1.12 Stage B1: LLM-4 VISUALIZER (parity with sync chat()) — GATED; off
         # (default) → the parse never runs → marker stays verbatim (byte-identical).
         if self.config.visualization.enabled:
-            cleaned_text = self._extract_viz_jobs(cleaned_text, turn_index)
+            cleaned_text = self._extract_viz_jobs(cleaned_text, turn_index, question=user_input)
             # Stage B2: fire-and-forget dispatch (parity with sync). achat runs
             # companions INLINE, but viz renders go to the dedicated pool — never
             # the single bg worker — so this stays submit-only and non-blocking.

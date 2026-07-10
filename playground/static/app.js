@@ -615,6 +615,7 @@ function applyDark(on) {
   document.documentElement.classList.toggle("dark", on);
   try { localStorage.setItem("sherlock_dark", on ? "1" : "0"); } catch (e) {}
   document.querySelectorAll("#darkToggle, #darkToggle2").forEach((b) => (b.textContent = on ? "☀️" : "🌙"));
+  syncVizFrameTheme(); // hoisted from the viz section below
 }
 (function initDark() {
   let on = false;
@@ -1453,6 +1454,22 @@ function applyVizEvent(slot, buf) {
 }
 
 /* ---- sandboxed iframe mount + runtime validation harness ---- */
+// v1.12 Stage V2 (audit fix): the artifact card themes itself via
+// prefers-color-scheme, but a sandbox="allow-scripts" srcdoc frame (opaque
+// origin) cannot see the page's manual .dark class — the ONLY web mechanism
+// that drives the frame's preferred scheme is the embedder's color-scheme on
+// the <iframe> element itself. Stamp it at mount and reveal, and re-stamp every
+// mounted frame when the toggle flips; the reveal background follows the same
+// theme so a dark card never sits in a white box (and vice versa).
+function vizFrameScheme() { return document.documentElement.classList.contains("dark") ? "dark" : "light"; }
+function vizFrameBg() { return vizFrameScheme() === "dark" ? "#111827" : "#fff"; }
+function syncVizFrameTheme() {
+  const scheme = vizFrameScheme(), bg = vizFrameBg();
+  document.querySelectorAll('iframe[title^="visualization"]').forEach((f) => {
+    f.style.colorScheme = scheme;
+    if (f.style.background) f.style.background = bg; // only revealed frames carry a bg
+  });
+}
 let _vizMsgWired = false;
 function ensureVizMessageListener() {
   if (_vizMsgWired) return;
@@ -1482,6 +1499,7 @@ function startVizHarness(slot, d, html, attempt) {
   // position:relative) so the artifact measures its real width; revealed only
   // once it posts {sherlockViz:'ready'}.
   iframe.style.cssText = "position:absolute;top:0;left:0;width:100%;height:" + VIZ_DEF_H + "px;border:0;visibility:hidden";
+  iframe.style.colorScheme = vizFrameScheme(); // theme the frame from first paint
   iframe.srcdoc = html; // NEVER innerHTML — the artifact only runs inside the sandbox
 
   let settled = false;
@@ -1518,7 +1536,10 @@ function revealVizIframe(slot, iframe, height) {
   slot.className = "viz-slot viz-slot-ready";
   [].slice.call(slot.childNodes).forEach((n) => { if (n !== iframe) slot.removeChild(n); });
   const hgt = height || VIZ_DEF_H;
-  iframe.style.cssText = "position:static;display:block;width:100%;height:" + hgt + "px;max-height:" + VIZ_MAX_H + "px;border:0;border-radius:10px;background:#fff;overflow:auto";
+  // background + color-scheme track the app's dark toggle (cssText wipes the
+  // mount-time colorScheme, so re-stamp it after).
+  iframe.style.cssText = "position:static;display:block;width:100%;height:" + hgt + "px;max-height:" + VIZ_MAX_H + "px;border:0;border-radius:10px;background:" + vizFrameBg() + ";overflow:auto";
+  iframe.style.colorScheme = vizFrameScheme();
   autoScroll();
 }
 function repairViz(slot, d, html, attempt, errorMsg) {
