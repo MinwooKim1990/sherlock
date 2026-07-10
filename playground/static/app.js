@@ -1625,6 +1625,18 @@ function ensureVizMessageListener() {
     const data = e.data;
     if (!data || typeof data !== "object" || !data.sherlockViz) return;
     for (const hh of S.vizHarnesses) { if (hh.iframe.contentWindow === e.source) { hh.onMessage(data); return; } }
+    // sizing fix: a revealed artifact may post {sherlockViz:'resize', height}
+    // when its content height settles (image load, interaction) — fit the
+    // frame to the content instead of leaving dead space / a scrollbar.
+    if (data.sherlockViz === "resize" && S.vizLiveFrames) {
+      for (const f of S.vizLiveFrames) {
+        if (f.contentWindow === e.source) {
+          const hh = Number(data.height);
+          if (hh > 0) f.style.height = Math.max(40, Math.min(hh + 8, VIZ_MAX_H)) + "px";
+          return;
+        }
+      }
+    }
   });
 }
 function mountVizIframe(slot, d) {
@@ -1665,7 +1677,7 @@ function startVizHarness(slot, d, html, attempt) {
   harness.onMessage = (data) => {
     if (data.sherlockViz === "ready") {
       const hgt = Number(data.height);
-      if (hgt > 0) harness.height = Math.max(120, Math.min(hgt + 8, VIZ_MAX_H));
+      if (hgt > 0) harness.height = Math.max(40, Math.min(hgt + 8, VIZ_MAX_H));
       settle("ready");
     } else if (data.sherlockViz === "error") {
       settle("error", String(data.message || "").slice(0, 300));
@@ -1684,6 +1696,9 @@ function revealVizIframe(slot, iframe, height) {
   // mount-time colorScheme, so re-stamp it after).
   iframe.style.cssText = "position:static;display:block;width:100%;height:" + hgt + "px;max-height:" + VIZ_MAX_H + "px;border:0;border-radius:10px;background:" + vizFrameBg() + ";overflow:auto";
   iframe.style.colorScheme = vizFrameScheme();
+  if (!S.vizLiveFrames) S.vizLiveFrames = new Set();
+  for (const f of [...S.vizLiveFrames]) { if (!f.isConnected) S.vizLiveFrames.delete(f); }
+  S.vizLiveFrames.add(iframe);
   autoScroll();
 }
 function repairViz(slot, d, html, attempt, errorMsg) {

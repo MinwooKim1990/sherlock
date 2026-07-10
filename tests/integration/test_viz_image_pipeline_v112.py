@@ -160,8 +160,10 @@ def test_unconfigured_image_job_degrades_to_llm_render(tmp_path):
     assert agent.wait_for_viz(timeout=5) is True
     assert len(_events_of(events, "viz.rendered")) == 1
     assert len(viz.prompts) == 1
-    assert "a lighthouse in a storm" in viz.prompts[0]
-    assert "image:" not in viz.prompts[0].split("SURROUNDING MATERIAL")[0]
+    # the DESCRIPTION reaching the LLM is the BARE text (prefix stripped) —
+    # the system prompt itself may legitimately mention `image:` (FORM palette).
+    assert "DESCRIPTION: a lighthouse in a storm, watercolor" in viz.prompts[0]
+    assert "DESCRIPTION: image:" not in viz.prompts[0]
 
 
 def test_tier1_guidance_gated_on_image_modality(tmp_path):

@@ -291,6 +291,12 @@ _POSTMESSAGE_READY = re.compile(
 _POSTMESSAGE_ERROR = re.compile(
     r"parent\.postMessage\s*\(\s*\{\s*sherlockViz\s*:\s*['\"]error['\"]", re.IGNORECASE
 )
+# v1.12 sizing fix: a third allowed signal — {sherlockViz:'resize', height} —
+# posted after ready when the content's real height changes (image loaded,
+# fonts settled), so the host can fit the frame to the content dynamically.
+_POSTMESSAGE_RESIZE = re.compile(
+    r"parent\.postMessage\s*\(\s*\{\s*sherlockViz\s*:\s*['\"]resize['\"]", re.IGNORECASE
+)
 
 # Numeric tokens in TEXT content: integers/decimals with optional thousands
 # commas and an optional trailing percent. Bare single digits and years are
@@ -541,7 +547,11 @@ def _viz_static_lint(
             errors.append(f"forbidden: {message}")
     # parent.postMessage only as a sherlockViz ready/error signal.
     n_calls = len(_POSTMESSAGE_CALL.findall(html))
-    n_ok = len(_POSTMESSAGE_READY.findall(html)) + len(_POSTMESSAGE_ERROR.findall(html))
+    n_ok = (
+        len(_POSTMESSAGE_READY.findall(html))
+        + len(_POSTMESSAGE_ERROR.findall(html))
+        + len(_POSTMESSAGE_RESIZE.findall(html))
+    )
     if n_calls > n_ok:
         errors.append(
             "forbidden: parent.postMessage call other than the sherlockViz ready/error signal"
@@ -599,7 +609,7 @@ def build_image_artifact(title: str, src: str, allowed: tuple[str, ...] = ()) ->
         "message:String(e)}, '*');\n"
         "var img = document.querySelector('img');\n"
         "function vizReady(){ parent.postMessage({sherlockViz:'ready', "
-        "height: document.documentElement.scrollHeight}, '*'); }\n"
+        "height: document.body.scrollHeight}, '*'); }\n"
         "if (img.complete) { vizReady(); } else {\n"
         "  img.onload = vizReady;\n"
         "  img.onerror = function(){ parent.postMessage({sherlockViz:'error', "
@@ -759,9 +769,13 @@ def build_generation_system(allowed: tuple[str, ...] = ()) -> str:
         "  window.onerror = (e) => parent.postMessage({sherlockViz:'error', "
         "message:String(e)}, '*');\n"
         "- After the visual has painted, signal readiness as the LAST thing your script "
-        "does (optionally carry the content height):\n"
-        "  parent.postMessage({sherlockViz:'ready', height: document.documentElement."
-        "scrollHeight}, '*');\n"
+        "does, carrying the content's REAL height:\n"
+        "  parent.postMessage({sherlockViz:'ready', height: document.body.scrollHeight}, "
+        "'*');\n"
+        "- If the content's height changes later (an image finished loading, an "
+        "interaction expanded it), post the new height the same way:\n"
+        "  parent.postMessage({sherlockViz:'resize', height: document.body.scrollHeight}, "
+        "'*');\n"
         "\n"
         "TECHNIQUE: use inline SVG, <canvas>, or plain styled DOM — your choice. "
         "Interactivity (hover, click, tooltips) is allowed as long as it stays "
@@ -776,6 +790,10 @@ def build_generation_system(allowed: tuple[str, ...] = ()) -> str:
         "- events in order -> timeline\n"
         "- relationships or architecture -> labelled node-link diagram\n"
         "- relation between two variables -> scatter plot\n"
+        "NARRATIVE material (a story scene, characters, a mood) has NO data: NEVER "
+        "fabricate stats or charts for it — illustrate it (an `image:` job renders a "
+        "generated picture; otherwise draw an evocative SVG scene/diagram in the "
+        "story's mood).\n"
         "A plain HTML table that merely restates the material's text is NOT a "
         "visualization — never output one. Only when the content is truly a small "
         "items-by-attributes matrix may you render a comparison table, and then the "
@@ -794,6 +812,9 @@ def build_generation_system(allowed: tuple[str, ...] = ()) -> str:
         "caption/legend note.\n"
         "- system-ui font stack; the visual scales to the container width (SVG: "
         "viewBox + width:100%) — no fixed page width, no horizontal scrolling.\n"
+        "- SIZE TO CONTENT: body{margin:0}; NEVER use fixed pixel heights, "
+        "min-height, or viewport units (100vh) on html/body/the card — the card "
+        "ends where its content ends, so the reported height fits exactly.\n"
         "\n"
         "DATA FIDELITY: visualize ONLY the numbers and labels present in the material "
         "below — invent nothing. Do NOT introduce axis ticks, totals, percentages, or "

@@ -958,7 +958,7 @@ Deletion rule: on any "forget X" / "wipe my memory" request, FIRST run `memory f
 _VIZ_MARKER_GUIDANCE_TEMPLATE = """\
 Inline visualizations: when a chart or diagram would genuinely help the reader grasp your answer (a trend, a comparison, a distribution, a step-by-step flow), insert a marker EXACTLY where the visual belongs, on its own line:
   <<sherlock-viz: one-line description of the visual | the exact numbers/labels from your answer>>
-- Only reference data ALREADY present in your reply — never invent figures just to draw them.
+- Only reference data ALREADY present in your reply — never invent figures just to draw them. NARRATIVE content (a story, a scene, characters) has no data: never chart made-up stats for it — request an illustrative scene/diagram instead, or emit no marker.
 - The part after `|` is an optional data hint (the concrete series/labels); omit it (and the `|`) when there is nothing numeric to pass.
 - Markers are for GRAPHICAL visuals only: if the insight is naturally a table, write a normal markdown table in your reply instead of a marker.
 - At most {N} marker(s) per reply. If a visual would not genuinely add understanding, do NOT emit one — plain prose is the right answer."""
