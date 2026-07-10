@@ -314,43 +314,38 @@ def _viz_flatten_system(messages: list[dict]) -> list[dict]:
     return [{"role": "user", "content": sys_txt}] + rest
 
 
-_OMNI_400_MARKERS = (
-    "developer instruction",
-    "system instruction",
-    "system_instruction",
-    "response modalities",
-    "response_modalities",
-    "modalities",
-)
-
-
 def _call_litellm_viz(model_id: str, send_messages: list[dict], **extra):
-    """LLM-4 call with OMNI adaptation (v1.12 fix): an omni/image-capable model
-    must still work as the VISUALIZER. Normal shape first; on the specific 400s
-    those models emit, retry with the system merged into the user turn, then
-    once more requesting [image, text] modalities. Any other error re-raises."""
+    """LLM-4 call with OMNI adaptation (v1.12 fix, rev2): some image-capable
+    models reject the standard shape with a 400. We do NOT guess error wording —
+    ANY 400 gets the progressive ladder: ① normal shape → ② system merged into
+    the user turn → ③ merged + [image, text] modalities. Non-400 errors
+    (429/5xx/auth) re-raise immediately at every step, so a rate limit is never
+    retried into a bigger burn and the original error is never masked."""
 
-    def _omni_400(exc: Exception, markers) -> bool:
-        # audit: only a 400-class error whose text carries an omni marker may
-        # trigger a retry — a 5xx/timeout merely MENTIONING modalities must not
-        # burn extra paid calls or mask the original error.
+    def _is_400(exc: Exception) -> bool:
         status = getattr(exc, "status_code", None)
-        if status is not None and int(status) != 400:
+        try:
+            return status is not None and int(status) == 400
+        except Exception:
             return False
-        return any(k in str(exc).lower() for k in markers)
 
     try:
         return _call_litellm(model_id, send_messages, **extra)
     except Exception as exc:
-        if not _omni_400(exc, _OMNI_400_MARKERS):
+        if not _is_400(exc):
             raise
+        first_err = exc
     flat = _viz_flatten_system(send_messages)
     try:
         return _call_litellm(model_id, flat, **extra)
     except Exception as exc:
-        if not _omni_400(exc, ("response modalities", "response_modalities", "modalities")):
+        if not _is_400(exc):
             raise
-    return _call_litellm(model_id, flat, modalities=["image", "text"], **extra)
+    try:
+        return _call_litellm(model_id, flat, modalities=["image", "text"], **extra)
+    except Exception as exc:
+        # every rung 400'd — surface the ORIGINAL shape error (most diagnostic)
+        raise first_err if _is_400(exc) else exc
 
 
 def _image_from_completion_response(resp):
@@ -804,6 +799,14 @@ def make_role_callable(role: str, session, emit):
                 },
             }
         )
+        if err and role == "viz":
+            # v1.12 omni fix rev2: a viz error must FAIL FAST — returning the
+            # wrapper-error string would go through the static lint as if it
+            # were HTML, burning self-review + repair rounds on garbage. The
+            # llm.call event above already carries the full error; also print
+            # it so the uvicorn log keeps a self-serve diagnosis trail.
+            print(f"[viz-error] {model_id}: {err}", flush=True)
+            raise RuntimeError(err)
         return ChatResponse(
             text=returned_text,
             model=model_id,
