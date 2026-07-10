@@ -261,7 +261,7 @@ def test_cap_image_bearing_uses_larger_limit():
 
 def test_cap_image_bearing_up_to_600kb_passes_size():
     doc = _pad_doc(590_000, image=True)
-    assert 64_000 < len(doc.encode()) < 600_000
+    assert 64_000 < len(doc.encode()) < 4_000_000
     ok, errs = _lint(doc, allow=(), src="")
     assert not any("too large" in e for e in errs), [e for e in errs if "large" in e]
 

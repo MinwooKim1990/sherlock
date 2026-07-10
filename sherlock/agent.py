@@ -283,6 +283,16 @@ def _parse_viz_tags(text: str, cap: int, id_prefix: str) -> tuple[str, list[dict
             stripped = True
             return ""  # over the cap → strip entirely, no placeholder/job
         desc, sep, hint = payload.partition("|")
+        # v1.12 Stage V3: an ``image:`` description prefix marks a text→image job.
+        # The prefix is stripped from the stored description; the render pipeline
+        # honours the kind ONLY when an image model/callable is configured,
+        # otherwise the job degrades to a normal LLM-4 render of the bare
+        # description (a stray prefix never breaks anything).
+        desc = desc.strip()
+        kind = "html"
+        if desc[:6].lower() == "image:":
+            kind = "image"
+            desc = desc[6:].strip()
         viz_id = f"{id_prefix}-{seen}"
         anchor = f"⟦viz:{viz_id}⟧"
         # v1.12 Stage B2: capture the ±1500 chars of ORIGINAL reply text around
@@ -294,11 +304,12 @@ def _parse_viz_tags(text: str, cap: int, id_prefix: str) -> tuple[str, list[dict
         jobs.append(
             {
                 "viz_id": viz_id,
-                "description": desc.strip(),
+                "description": desc,
                 "data_hint": hint.strip() if sep else "",
                 "anchor": anchor,
                 "context": context,
                 "context_flags": detect_context_flags(context),
+                "kind": kind,
             }
         )
         return anchor
@@ -953,9 +964,23 @@ Inline visualizations: when a chart or diagram would genuinely help the reader g
 - At most {N} marker(s) per reply. If a visual would not genuinely add understanding, do NOT emit one — plain prose is the right answer."""
 
 
-def _viz_marker_guidance(cap: int) -> str:
+# v1.12 Stage V3: the image-modality one-liner, appended to the marker guidance
+# ONLY when an image model/callable is configured — absent, the guidance stays
+# byte-identical to pre-V3 (and LLM-1 never learns the ``image:`` prefix).
+_VIZ_IMAGE_GUIDANCE = (
+    "\n- For an illustrative PICTURE (a scene, an object, a mascot — NOT a data "
+    "chart), start the description with `image:` — e.g. <<sherlock-viz: image: a "
+    "lighthouse in a storm, watercolor>>. Keep data in charts; use image: only "
+    "when a picture genuinely helps."
+)
+
+
+def _viz_marker_guidance(cap: int, image: bool = False) -> str:
     """Render the (constant-per-config) visualizer marker guidance block."""
-    return _VIZ_MARKER_GUIDANCE_TEMPLATE.format(N=cap)
+    out = _VIZ_MARKER_GUIDANCE_TEMPLATE.format(N=cap)
+    if image:
+        out += _VIZ_IMAGE_GUIDANCE
+    return out
 
 
 # The one-line TIER-3 nudge injected the SAME turn a deterministic "remember
@@ -1370,6 +1395,10 @@ class Sherlock:
         for job in jobs:
             job["turn"] = turn_index  # so viz.rendered/failed can echo the turn
             job["question"] = (question or "").strip()[:600]
+            # H1 audit: pin the SOURCE conversation at job creation — a render
+            # finishing after switch_session/new_session must persist under the
+            # conversation that produced it, not whichever is active by then.
+            job["conv"] = self._viz_conv_component()
             # v1.12 Stage V1: per-job img-src allowlist, sanitised at CONSTRUCTION
             # (never from model output). The image-modality stage (V3) fills it;
             # today it is always ().
@@ -1495,7 +1524,9 @@ class Sherlock:
         cid = self.conversation_id or "_"
         return re.sub(r"[^A-Za-z0-9._-]", "_", str(cid)) or "_"
 
-    def _write_viz_artifact(self, viz_id: str, html: str, image_urls=()) -> str:  # noqa: ANN001
+    def _write_viz_artifact(
+        self, viz_id: str, html: str, image_urls=(), conv=None
+    ) -> str:  # noqa: ANN001
         """Persist a validated artifact to ``<storage_dir>/viz/<conv_id>/<viz_id>.html``
         and return the path. Both the conversation component and viz_id are
         sanitised for the filesystem, and the resolved path is confined under the
@@ -1512,7 +1543,12 @@ class Sherlock:
         from sherlock.viz import sanitize_image_allowlist
 
         base = (_Path(self.config.storage.sqlite_path).resolve().parent / "viz").resolve()
-        conv = self._viz_conv_component()
+        # H1 audit: prefer the job's pinned source conversation (re-sanitised
+        # defensively); fall back to the ACTIVE one for callers without a job
+        # (e.g. the playground repair endpoint, which runs while its
+        # conversation is open).
+        conv = re.sub(r"[^A-Za-z0-9._-]", "_", str(conv)) if conv else self._viz_conv_component()
+        conv = conv or "_"
         safe = re.sub(r"[^A-Za-z0-9._-]", "_", str(viz_id))
         path = (base / conv / f"{safe}.html").resolve()
         if not str(path).startswith(str(base) + os.sep):
@@ -1537,7 +1573,14 @@ class Sherlock:
 
         for job in reversed(getattr(self, "_pending_viz_jobs", None) or []):
             if job.get("viz_id") == viz_id:
-                return sanitize_image_allowlist(job.get("image_urls", ()))
+                urls = sanitize_image_allowlist(job.get("image_urls", ()))
+                if urls:
+                    return urls
+                # V3 audit: an image job sets image_urls on the POOL COPY
+                # (dict(job)), so the stash entry can be stale-empty even
+                # though a hosted-URL artifact wrote a sidecar — fall through
+                # to the sidecar instead of shadowing it with ().
+                break
         try:
             base = (_Path(self.config.storage.sqlite_path).resolve().parent / "viz").resolve()
             safe = re.sub(r"[^A-Za-z0-9._-]", "_", str(viz_id))
@@ -1564,7 +1607,7 @@ class Sherlock:
         if cfg.save_artifacts:
             try:
                 path = self._write_viz_artifact(
-                    job.get("viz_id"), validated, job.get("image_urls", ())
+                    job.get("viz_id"), validated, job.get("image_urls", ()), job.get("conv")
                 )
             except Exception:
                 path = None  # best-effort: a write failure never drops the render
@@ -1576,7 +1619,8 @@ class Sherlock:
             "bytes": len(validated.encode("utf-8")),
             # v1.12 F2: the conversation component the artifact is filed under, so
             # the export's relative link (viz/<conv>/<viz_id>.html) resolves.
-            "conv": self._viz_conv_component(),
+            # H1 audit: the job's pinned source conversation wins (see above).
+            "conv": job.get("conv") or self._viz_conv_component(),
         }
         if job.get("turn") is not None:
             data["turn"] = job["turn"]
@@ -1586,11 +1630,108 @@ class Sherlock:
             data["path"] = path
         self._emit("viz.rendered", "llm4", data)
 
+    # ---- v1.12 Stage V3: text→image modality ----
+
+    def _viz_image_available(self) -> bool:
+        """True when the text→image modality is configured: an injected callable
+        (``with_callable(viz_image_gen=…)``) or ``visualization.image_model``.
+        False (default) keeps every V3 seam dormant — guidance, prompts and the
+        render pipeline are byte-identical to pre-V3."""
+        return getattr(self, "_viz_image_gen", None) is not None or bool(
+            getattr(getattr(self.config, "visualization", None), "image_model", None)
+        )
+
+    def _viz_image_generate(self, prompt: str) -> tuple[str | None, str | None]:
+        """One text→image call → ``(data_uri, url)`` with EXACTLY one non-None.
+
+        Uses the injected callable when present, else litellm.image_generation
+        with ``visualization.image_model``. Accepted callable returns: a dict
+        with ``b64``/``b64_json`` or ``url``; a raw base64 string; a
+        ``data:image/…`` URI; or an http(s) URL. Raises on anything else —
+        the caller (``_render_viz_job``) converts every raise to ``viz.failed``."""
+        fn = getattr(self, "_viz_image_gen", None)
+        if fn is not None:
+            res = fn(prompt)
+        else:
+            import litellm
+
+            resp = litellm.image_generation(
+                prompt=prompt, model=str(self.config.visualization.image_model)
+            )
+            data = getattr(resp, "data", None) or []
+            first = data[0] if data else None
+            res = {
+                "b64": getattr(first, "b64_json", None)
+                or (first.get("b64_json") if isinstance(first, dict) else None),
+                "url": getattr(first, "url", None)
+                or (first.get("url") if isinstance(first, dict) else None),
+            }
+        b64 = url = None
+        if isinstance(res, dict):
+            b64 = res.get("b64") or res.get("b64_json")
+            url = res.get("url")
+        elif isinstance(res, str):
+            s = res.strip()
+            if s.startswith("data:image"):
+                return s, None
+            if s.startswith("http://") or s.startswith("https://"):
+                url = s
+            else:
+                b64 = s
+        if b64:
+            b64_s = str(b64).strip()
+            # V3 audit: bound the materialised payload BEFORE it becomes a
+            # document (a hostile/buggy provider could return hundreds of MB).
+            if len(b64_s) > 32_000_000:
+                raise ValueError(
+                    f"image generation returned an oversized payload ({len(b64_s)} b64 chars)"
+                )
+            return "data:image/png;base64," + b64_s, None
+        if url:
+            return None, str(url).strip()
+        raise ValueError("image generation returned neither image bytes nor a URL")
+
+    def _render_viz_image_job(self, job: dict, source: str, cfg) -> None:  # noqa: ANN001
+        """Render ONE ``image:`` job: text→image call → deterministic wrapper →
+        static lint → persist + ``viz.rendered``. No LLM writes the document and
+        there are no self-review/repair rounds — a failure (unsafe URL, oversized
+        payload, provider error) is terminal ``viz.failed``. A hosted-URL result
+        populates the job's img-src allowlist (the V1 mechanism), so the CSP pins
+        that EXACT URL and the ``.allow`` sidecar persists it for repairs."""
+        from sherlock import viz as _viz
+
+        prompt = " — ".join(
+            s for s in (job.get("description") or "", job.get("data_hint") or "") if s
+        )
+        data_uri, url = self._viz_image_generate(prompt or "an illustrative image")
+        # V3 audit: fail fast BEFORE building/linting a document around an
+        # over-cap image — the lint would reject it anyway, after scanning MBs.
+        cap = int(getattr(cfg, "max_image_html_bytes", 4_000_000))
+        if data_uri and len(data_uri) > cap - 2048:
+            return self._emit_viz_failed(
+                job, f"generated image too large ({len(data_uri)} bytes > {cap - 2048} budget)"
+            )
+        allowlist = _viz.sanitize_image_allowlist((url,) if url else ())
+        if url and not allowlist:
+            return self._emit_viz_failed(job, "generated image URL failed sanitisation")
+        job["image_urls"] = allowlist
+        html = _viz.build_image_artifact(
+            job.get("description") or "", data_uri or allowlist[0], allowlist
+        )
+        ok, errors = _viz._viz_static_lint(html, source, cfg, allowlist)
+        if not ok:
+            return self._emit_viz_failed(job, "; ".join(errors)[:500] or "validation failed")
+        self._finalize_viz_render(job, html)
+
     def _render_viz_job(self, job: dict) -> None:
         """Render ONE stashed viz job on the pool: generate → strip fences → lint →
         (self-review rounds) → (repair rounds) → persist + ``viz.rendered``, else
         ``viz.failed``. EVERYTHING is best-effort — any exception becomes
         ``viz.failed`` and never propagates off the pool thread.
+
+        v1.12 Stage V3: an ``image:`` job takes the text→image path instead
+        (deterministic wrapper, no LLM rounds) WHEN the modality is configured;
+        otherwise it degrades to a normal render of the bare description.
 
         TIMEOUT ACCOUNTING (deliberate, documented): the job already runs ON the
         pool, so we do NOT nest a second pool for per-call timeouts (that would
@@ -1637,6 +1778,11 @@ class Sherlock:
             return _time.monotonic() > deadline
 
         try:
+            # v1.12 Stage V3: image jobs branch to the deterministic image path
+            # (one provider call, no LLM rounds). Unconfigured → fall through to
+            # the normal LLM-4 render of the bare description.
+            if job.get("kind") == "image" and self._viz_image_available():
+                return self._render_viz_image_job(job, source, cfg)
             provider = self._viz_llm()
             if _expired():
                 return self._emit_viz_failed(job, "timeout")
@@ -1694,9 +1840,14 @@ class Sherlock:
         thus every DR report) is unchanged when visualization is off."""
         viz = getattr(self.config, "visualization", None)
         if viz is not None and getattr(viz, "enabled", False):
-            return _PRESENTATION_GUIDE + _DR_VIZ_GUIDANCE_TEMPLATE.format(
+            guide = _PRESENTATION_GUIDE + _DR_VIZ_GUIDANCE_TEMPLATE.format(
                 N=int(viz.max_markers_report)
             )
+            # v1.12 Stage V3: the image-modality one-liner, only when configured
+            # (parity with the chat marker guidance).
+            if self._viz_image_available():
+                guide += _VIZ_IMAGE_GUIDANCE
+            return guide
         return _PRESENTATION_GUIDE
 
     def _apply_deep_research_viz(
@@ -1745,6 +1896,8 @@ class Sherlock:
                 if turn_index is not None:
                     job["turn"] = turn_index
                 job["question"] = (question or "").strip()[:600]
+                # H1 audit: pin the SOURCE conversation (parity with chat jobs).
+                job["conv"] = self._viz_conv_component()
                 # v1.12 Stage V1: per-job img-src allowlist, sanitised at
                 # CONSTRUCTION (never from model output). The image-modality
                 # stage (V3) fills it; today ().
@@ -6456,7 +6609,11 @@ class Sherlock:
         # (the default) → nothing added → TIER 1 byte-identical to a no-viz build.
         _viz_cfg = getattr(self.config, "visualization", None)
         if _viz_cfg is not None and getattr(_viz_cfg, "enabled", False):
-            tier1_parts.append(_viz_marker_guidance(int(_viz_cfg.max_markers_chat)))
+            tier1_parts.append(
+                _viz_marker_guidance(
+                    int(_viz_cfg.max_markers_chat), image=self._viz_image_available()
+                )
+            )
         # P0-1: do NOT inject the timestamp here. A fresh microsecond
         # timestamp at the head of TIER 1 mutates the stable prefix every
         # turn and destroys prompt-cache hits across the whole TIER 1+2
@@ -7907,6 +8064,10 @@ class Sherlock:
         # visualizer falls back to main_chat (see _viz_llm), so `visualization`
         # can be turned on with no dedicated viz callable.
         viz_chat=None,
+        # v1.12 Stage V3: optional text→image callable for ``image:`` markers
+        # (prompt → dict with b64/url, raw base64, data: URI, or http(s) URL).
+        # Unset AND no visualization.image_model → the modality stays dormant.
+        viz_image_gen=None,
         project: str = "sherlock_app",
         domain_hints: list[str] | None = None,
         storage_dir: str | Path | None = None,
@@ -8277,6 +8438,10 @@ class Sherlock:
         # Record the split so consumers / tests can inspect both halves.
         agent._user_system_prompt = user_prompt_text
         agent._sherlock_extension = ext_text
+        # v1.12 Stage V3: optional text→image callable (prompt → dict/b64/url/
+        # data-URI, see _viz_image_generate). None (default) → the image modality
+        # stays dormant unless visualization.image_model is set.
+        agent._viz_image_gen = viz_image_gen
 
         agent.install_companion_prompts(DEFAULT_LLM2_PROMPT, DEFAULT_LLM3_PROMPT, version=0)
 

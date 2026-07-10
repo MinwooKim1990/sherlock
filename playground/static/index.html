@@ -58,6 +58,12 @@
   @keyframes vizspin { to { transform:rotate(360deg); } }
   html.dark .viz-slot-loading, html.dark .viz-slot-failed { background:#0f172a; border-color:#334155; color:#94a3b8; }
   html.dark .viz-slot-ready { border-color:#293548; background:#111827; }
+  /* v1.12 H2: history sidebar */
+  .hist-item { border-radius:8px; padding:5px 8px; cursor:pointer; }
+  .hist-item:hover { background:#f1f5f9; }
+  .hist-item.active { background:#e0e7ff; }
+  html.dark .hist-item:hover { background:#1e293b; }
+  html.dark .hist-item.active { background:#312e81; }
   /* ---------- dark mode ---------- */
   html.dark body { background:#0b1220 !important; color:#e2e8f0; }
   html.dark .bg-white { background:#111827 !important; }
@@ -218,6 +224,23 @@
         <select id="modelViz" class="border rounded-lg px-2 py-1 text-xs mono" disabled></select>
       </label>
     </div>
+    <!-- v1.12 P1: optional text→image model for `image:` viz markers (shown only with viz on) -->
+    <div id="vizImageRow" class="hidden flex-wrap gap-2 text-sm items-center">
+      <label class="flex items-center gap-1 text-xs text-slate-500">
+        <span class="text-orange-700 font-semibold" data-i18n="viz_image_model">image model</span>
+        <select id="vizImageProvider" class="border rounded-lg px-2 py-1 text-xs mono">
+          <option value="gemini">Gemini</option>
+          <option value="openai" selected>OpenAI</option>
+          <option value="anthropic">Anthropic</option>
+          <option value="deepinfra">DeepInfra</option>
+          <option value="together">Together</option>
+          <option value="openrouter">OpenRouter</option>
+          <option value="local">Local</option>
+        </select>
+        <input id="vizImageModel" type="text" placeholder="dall-e-3" class="border rounded-lg px-2 py-1 text-xs mono w-36" />
+      </label>
+      <span class="text-[11px] text-slate-400" data-i18n="viz_image_help"><code>image:</code> markers render a generated picture — needs an image-capable model + that provider's key</span>
+    </div>
     <p class="text-xs text-slate-500 -mt-2" data-i18n="viz_help">📊 When on, LLM-1 (and deep research) may drop an inline chart where a visual genuinely helps; LLM-4 renders it into a self-contained, sandboxed artifact. Off by default.</p>
 
     <div class="flex items-center gap-2 text-sm">
@@ -243,6 +266,7 @@
 <div id="main" class="h-full hidden flex-col">
   <!-- top bar -->
   <div class="bg-slate-900 text-white px-4 py-2 flex items-center gap-4 text-xs">
+    <button id="histToggle" class="bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded" data-i18n-title="hist_title" title="history">🗂</button>
     <span class="font-bold">🔍 Sherlock Live Inspector</span>
     <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-blue-400"></span>L1 <select id="liveMain" class="bg-slate-800 rounded px-1 py-0.5 mono"></select></span>
     <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-green-400"></span>L2 <select id="liveSummary" class="bg-slate-800 rounded px-1 py-0.5 mono"></select></span>
@@ -270,11 +294,27 @@
     <span id="tokBar" class="ml-auto mono text-slate-300" title="cumulative tokens this session (in+out per role)"></span>
     <span id="wsStatus" class="text-slate-400">ws: …</span>
     <button id="darkToggle2" class="bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded" title="toggle dark mode" aria-label="toggle dark mode">🌙</button>
+    <button id="modelsBtn" class="bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded" data-i18n-title="models_title" title="Per-role models (applies next turn)">⚙ <span data-i18n="models_btn">models</span></button>
     <button id="exportBtn" class="bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded" title="download this session as a markdown debugging doc" data-i18n="export">⬇ export</button>
     <button id="newSession" class="bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded" data-i18n="new_session">new session</button>
   </div>
 
+  <!-- v1.12 P1: mid-session per-role model panel (⚙ models) -->
+  <div id="modelsPanel" class="hidden fixed right-3 top-10 z-50 bg-white border rounded-xl shadow-xl p-3 text-xs w-[400px] space-y-2 text-slate-700">
+    <div class="font-semibold" data-i18n="models_title">Per-role models (applies next turn)</div>
+    <div id="modelsPanelRows" class="space-y-1.5"></div>
+  </div>
+
   <div id="cols" class="flex-1 flex min-h-0">
+    <!-- v1.12 H2: collapsible history sidebar (🗂) -->
+    <div id="histSidebar" class="hidden w-56 shrink-0 border-r bg-white flex-col min-h-0">
+      <div class="px-3 py-2 border-b flex items-center justify-between shrink-0">
+        <span class="text-[10px] font-bold text-slate-500 uppercase tracking-wide" data-i18n="hist_title">history</span>
+        <button id="histNew" class="text-[11px] border rounded px-2 py-0.5 hover:bg-slate-100" data-i18n="hist_new">+ new</button>
+      </div>
+      <div id="histList" class="flex-1 overflow-y-auto scroll p-1.5 space-y-0.5"></div>
+    </div>
+
     <!-- LEFT: Sherlock chat -->
     <div id="colSherlock" class="min-w-[240px] flex flex-col border-r bg-white" style="flex:0 0 40%">
       <div id="chat" class="flex-1 overflow-y-auto scroll p-4 space-y-3"></div>

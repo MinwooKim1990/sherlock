@@ -185,6 +185,21 @@ def build_agent(session: Session, system_prompt: str, settings: dict):
     # spend as L1. (Off-state stays byte-identical: with visualization disabled the
     # marker protocol is dormant and _viz_llm is never called.)
     viz_cb = make_role_callable("viz", session, session.emit)
+    # v1.12 Stage V3: optional text→image callable for ``image:`` viz markers.
+    # settings["image_model"] is {"provider","model"} (a bare string is treated
+    # as a GEMINI model id — resolve_model_spec's legacy shape).
+    # Absent/empty → None → the modality stays dormant (guidance byte-identical).
+    _img_spec = settings.get("image_model") if settings else None
+    _img_named = bool(
+        (_img_spec or {}).get("model")
+        if isinstance(_img_spec, dict)
+        else str(_img_spec or "").strip()
+    )
+    viz_image_cb = None
+    if _img_named:
+        from playground.providers import make_image_callable
+
+        viz_image_cb = make_image_callable(session, _img_spec)
 
     # Search engine: DuckDuckGo (free, no key) by default; brave/tavily/valyu
     # use the api key the user typed in the UI. "off" disables search. The same
@@ -197,6 +212,7 @@ def build_agent(session: Session, system_prompt: str, settings: dict):
         summary_chat=summary_cb,
         inference_chat=inference_cb,
         viz_chat=viz_cb,
+        viz_image_gen=viz_image_cb,
         system_prompt=system_prompt or "You are a helpful assistant.",
         storage_dir=storage,
         embedding=settings.get("embedding", "local"),

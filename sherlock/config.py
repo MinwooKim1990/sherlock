@@ -467,8 +467,17 @@ class VisualizationConfig(BaseModel):
     # v1.12 Stage V1: a HIGHER cap that applies ONLY to an image-bearing artifact
     # (one that embeds a data:image or an allowlisted web image) — an embedded
     # image legitimately needs far more room than a pure-vector chart. A non-image
-    # artifact still uses max_html_bytes.
-    max_image_html_bytes: int = 600_000
+    # artifact still uses max_html_bytes. v1.12 V3 audit: raised 600KB -> 4MB —
+    # b64-only image providers (gpt-image-1 class) return 1-4MB of base64 for a
+    # 1024px PNG, so the old cap hard-failed the modality's main path.
+    max_image_html_bytes: int = 4_000_000
+    # v1.12 Stage V3: text→image modality. None (default) = OFF — marker guidance,
+    # prompts and rendering stay byte-identical to pre-V3. Set to a litellm image
+    # model id (e.g. "dall-e-3", "gemini/imagen-3.0-generate-002") to let markers
+    # prefixed ``image:`` render a GENERATED picture, embedded as a data: URI (or
+    # pinned as an exact-URL img-src allowlist entry when the provider returns a
+    # hosted URL instead of bytes).
+    image_model: str | None = None
     # Persist rendered artifacts to storage so a reopened session can re-hydrate
     # them (Stage B3+). Best-effort; off = render-and-forget.
     save_artifacts: bool = True

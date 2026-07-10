@@ -180,6 +180,20 @@ async def api_chat(req: ChatReq):
     def _timed_chat() -> tuple:
         t0 = time.time()
         text = sess.agent.chat(req.message)
+        # v1.12 H1 (audit): deterministic auto-title — runs HERE, on the worker
+        # thread (the 30s SQLite busy-wait must never sit on the event loop),
+        # and uses the conversation's FIRST user message so a reopened legacy
+        # conversation is never titled with its latest turn. Best-effort; a
+        # stored title is never overwritten.
+        try:
+            cid = sess.agent.conversation_id
+            if cid:
+                conv = sess.agent._storage.get_conversation(cid)
+                if conv is not None and not (getattr(conv, "title", None) or "").strip():
+                    first = sess.agent._storage.first_user_message(cid) or req.message
+                    sess.agent._storage.set_conversation_title(cid, " ".join(first.split())[:60])
+        except Exception:
+            pass
         return text, int((time.time() - t0) * 1000)
 
     baseline = None
@@ -239,6 +253,172 @@ async def api_chat(req: ChatReq):
     if baseline is not None:
         out["baseline"] = baseline
     return out
+
+
+# ==================== v1.12 Stage H1: persistent history ====================
+# The agent's per-profile SQLite already persists every conversation + message
+# (and, with save_artifacts, every rendered viz artifact). These endpoints give
+# the browser a read/open surface over that store so a session on a persistent
+# profile can list old conversations, reopen one (agent.switch_session), and
+# re-hydrate its viz placeholders. Same localhost-trust posture as every route.
+
+_VIZ_PLACEHOLDER_RE = None  # compiled lazily (module import order)
+
+
+def _viz_ids_in(text: str) -> list[str]:
+    """Every ⟦viz:<id>⟧ placeholder id in a persisted message text."""
+    global _VIZ_PLACEHOLDER_RE
+    import re as _re
+
+    if _VIZ_PLACEHOLDER_RE is None:
+        _VIZ_PLACEHOLDER_RE = _re.compile(r"⟦viz:([A-Za-z0-9._-]+)⟧")
+    return _VIZ_PLACEHOLDER_RE.findall(text or "")
+
+
+def _hist_iso(dt) -> str | None:
+    """isoformat with an EXPLICIT UTC marker: SQLite round-trips drop tzinfo, and
+    a naive isoformat string is parsed as LOCAL time by JS Date — off by the
+    user's UTC offset in the sidebar (audit)."""
+    if dt is None:
+        return None
+    s = dt.isoformat()
+    return s if dt.tzinfo is not None else s + "Z"
+
+
+def _conv_title(sess: Session, conv) -> str:  # noqa: ANN001
+    """A display title: the stored title, else the first user message, else id."""
+    title = (getattr(conv, "title", None) or "").strip()
+    if title:
+        return title
+    try:
+        first = sess.agent._storage.first_user_message(conv.id)
+        if first and first.strip():
+            return " ".join(first.split())[:60]
+    except Exception:
+        pass
+    return str(conv.id)[:8]
+
+
+@app.get("/api/history")
+async def api_history(session_id: str):
+    """Every conversation in this session's (profile) store, newest first."""
+    sess = SESSIONS.get(session_id)
+    if sess is None:
+        return {"error": "no such session"}
+    loop = asyncio.get_running_loop()
+
+    def _list() -> list[dict]:
+        storage = sess.agent._storage
+        out = []
+        for c in storage.list_conversations():
+            out.append(
+                {
+                    "id": c.id,
+                    "title": _conv_title(sess, c),
+                    "created_at": _hist_iso(c.created_at),
+                    "messages": storage.count_messages(c.id),
+                    "active": c.id == sess.agent.conversation_id,
+                }
+            )
+        out.reverse()  # list_conversations is oldest-first
+        return out
+
+    try:
+        return {"conversations": await loop.run_in_executor(None, _list)}
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+class HistoryOpenReq(BaseModel):
+    session_id: str
+    conversation_id: str
+
+
+@app.post("/api/history/open")
+async def api_history_open(req: HistoryOpenReq):
+    """Reopen a persisted conversation as the ACTIVE one (agent.switch_session)
+    and return its messages. Every ⟦viz:…⟧ placeholder id found in the returned
+    messages is registered in the session's viz_ids so /api/viz/{viz_id} can
+    serve the persisted artifacts for re-hydration — ONLY ids that actually
+    appear in this profile's own persisted text ever get registered."""
+    sess = SESSIONS.get(req.session_id)
+    if sess is None:
+        return {"error": "no such session"}
+    loop = asyncio.get_running_loop()
+
+    # audit: a background deep-research run writes its report into the ACTIVE
+    # conversation when it finishes — switching mid-run would misfile it (and
+    # the client's busy flag is deliberately false during background DR).
+    if getattr(sess.agent, "is_deep_researching", False):
+        return {"error": "deep research in progress — wait for it to finish"}
+
+    def _open() -> dict:
+        agent = sess.agent
+        agent.switch_session(req.conversation_id)  # raises on unknown id
+        msgs = []
+        for m in agent._storage.list_messages(req.conversation_id):
+            if m.role not in ("user", "assistant"):
+                continue
+            for vid in _viz_ids_in(m.content):
+                sess.viz_ids.add(vid)
+            msgs.append(
+                {
+                    "role": m.role,
+                    "content": m.content,
+                    "turn": m.turn_index,
+                    "created_at": _hist_iso(m.created_at),
+                }
+            )
+        return {"ok": True, "conversation_id": req.conversation_id, "messages": msgs}
+
+    try:
+        return await loop.run_in_executor(None, _open)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+class HistoryNewReq(BaseModel):
+    session_id: str
+
+
+@app.post("/api/history/new")
+async def api_history_new(req: HistoryNewReq):
+    """Start a fresh conversation on the same agent/profile (agent.new_session)."""
+    sess = SESSIONS.get(req.session_id)
+    if sess is None:
+        return {"error": "no such session"}
+    if getattr(sess.agent, "is_deep_researching", False):
+        return {"error": "deep research in progress — wait for it to finish"}
+    loop = asyncio.get_running_loop()
+    try:
+        cid = await loop.run_in_executor(None, sess.agent.new_session)
+        return {"ok": True, "conversation_id": cid}
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+class HistoryTitleReq(BaseModel):
+    session_id: str
+    conversation_id: str
+    title: str
+
+
+@app.post("/api/history/title")
+async def api_history_title(req: HistoryTitleReq):
+    """Rename a conversation in the history sidebar."""
+    sess = SESSIONS.get(req.session_id)
+    if sess is None:
+        return {"error": "no such session"}
+    loop = asyncio.get_running_loop()
+    try:
+        ok = await loop.run_in_executor(
+            None, sess.agent._storage.set_conversation_title, req.conversation_id, req.title
+        )
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
+    return {"ok": bool(ok)} if ok else {"error": "no such conversation"}
 
 
 class DeepResearchReq(BaseModel):
@@ -528,7 +708,7 @@ async def api_viz_repair(req: VizRepairReq):
 
 
 @app.get("/api/viz/{viz_id}")
-async def api_viz_artifact(viz_id: str, session_id: str):
+async def api_viz_artifact(viz_id: str, session_id: str, conv: str = ""):
     """Serve a saved LLM-4 artifact (``<storage>/viz/<conv_id>/<viz_id>.html``) as
     text/html for a reopened session to re-hydrate. The client still renders it
     inside the sandboxed iframe (B4); this endpoint just returns the bytes.
@@ -550,11 +730,22 @@ async def api_viz_artifact(viz_id: str, session_id: str):
 
     safe = _re.sub(r"[^A-Za-z0-9._-]", "_", str(viz_id))
     base = (Path(sess.agent.config.storage.sqlite_path).resolve().parent / "viz").resolve()
-    # Locate <base>/<conv>/<safe>.html across conversation subdirs (F2), keeping
-    # the legacy flat <base>/<safe>.html working. rglob confines matches under
-    # base; the explicit prefix check is defense-in-depth against symlinks.
+    # v1.12 H1 audit (P1): chat viz ids (t1-1) COLLIDE across conversations, so
+    # never search OTHER conversations' subdirs (the old rglob served whichever
+    # conversation os.walk visited first — wrong data on restore). Resolution is
+    # scoped: the explicitly requested conversation (H2 restore passes the one
+    # it opened) -> the session's ACTIVE conversation -> the legacy flat file.
+    candidates = []
+    if conv:
+        comp = _re.sub(r"[^A-Za-z0-9._-]", "_", str(conv)) or "_"
+        candidates.append(base / comp / f"{safe}.html")
+    try:
+        candidates.append(base / sess.agent._viz_conv_component() / f"{safe}.html")
+    except Exception:
+        pass
+    candidates.append(base / f"{safe}.html")
     path = None
-    for cand in base.rglob(f"{safe}.html"):
+    for cand in candidates:
         rp = cand.resolve()
         if str(rp).startswith(str(base) + os.sep) and rp.is_file():
             path = rp

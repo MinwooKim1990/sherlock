@@ -291,6 +291,52 @@ def _call_litellm(model: str, messages: list[dict], **extra):
     return litellm.completion(model=model, messages=messages, **extra)
 
 
+def _call_litellm_image(model: str, prompt: str, **extra):
+    """litellm image-generation entry point (v1.12 Stage V3). Module-level so
+    tests can monkeypatch it like _call_litellm."""
+    import litellm
+
+    litellm.suppress_debug_info = True
+    return litellm.image_generation(prompt=prompt, model=model, **extra)
+
+
+def make_image_callable(session, spec):  # noqa: ANN001
+    """v1.12 Stage V3: a text→image callable for ``image:`` viz markers.
+
+    ``spec`` is the same ``{"provider", "model"}`` shape as the role model specs
+    (or a bare litellm model-id string, treated per resolve_model_spec).
+    Credentials resolve from the session's SERVER-SIDE provider creds at CALL
+    time — a key edited later still applies, and nothing key-shaped ever reaches
+    the browser. Returns ``{"b64": ..., "url": ...}`` for the library adapter
+    (sherlock.agent._viz_image_generate) to normalise."""
+
+    def _generate(prompt: str) -> dict:
+        model, extra = resolve_model_spec(spec, session.providers)
+        t0 = time.time()
+        resp = _call_litellm_image(model, prompt, **extra)
+        data = getattr(resp, "data", None) or []
+        first = data[0] if data else None
+        b64 = getattr(first, "b64_json", None) or (
+            first.get("b64_json") if isinstance(first, dict) else None
+        )
+        url = getattr(first, "url", None) or (first.get("url") if isinstance(first, dict) else None)
+        session.emit(
+            {
+                "type": "llm.call",
+                "actor": "llm4",
+                "turn": session.turn,
+                "data": {
+                    "role": "viz_image",
+                    "model": model,
+                    "latency_ms": int((time.time() - t0) * 1000),
+                },
+            }
+        )
+        return {"b64": b64, "url": url}
+
+    return _generate
+
+
 def _stopped(session) -> bool:
     """True when the user pressed Stop for this session's current turn. Safe if
     the agent / stop event isn't wired yet (returns False)."""

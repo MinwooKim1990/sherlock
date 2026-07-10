@@ -426,7 +426,7 @@ def _viz_static_lint(
     # ``bytes=len(validated)``; capping the pre-injection HTML at cap - 128
     # guarantees the emitted payload stays under the cap.
     if image_bearing:
-        cap = int(getattr(cfg, "max_image_html_bytes", 600_000))
+        cap = int(getattr(cfg, "max_image_html_bytes", 4_000_000))
     else:
         cap = int(getattr(cfg, "max_html_bytes", 64_000))
     max_bytes = cap - 128
@@ -560,6 +560,53 @@ def _viz_static_lint(
             errors.append(f"invented number: {token} (not present in the source material)")
 
     return (not errors), errors
+
+
+# --------------------------------------------------------------------------- #
+# Image artifact wrapper (Stage V3)                                            #
+# --------------------------------------------------------------------------- #
+
+
+def build_image_artifact(title: str, src: str, allowed: tuple[str, ...] = ()) -> str:
+    """v1.12 Stage V3: the DETERMINISTIC artifact wrapper for a text→image render.
+
+    No LLM writes this document — it is assembled in code around the generated
+    image (``src`` is a ``data:image/...`` URI, or an EXACT allowlisted URL when
+    the provider returned a hosted image), so the only untrusted bytes are the
+    image payload itself, which the sandbox CSP confines. The wrapper still goes
+    through ``_viz_static_lint`` like every artifact (defense-in-depth), and is
+    built to satisfy it: the required CSP meta (with ``allowed`` threaded), the
+    ready/error signalling protocol (ready fires after the image actually
+    loads), the V2 FRAME card (title + visual, light/dark via
+    prefers-color-scheme), and no visible text beyond the title (which is the
+    marker description — already part of the lint's source material)."""
+    safe_title = html.escape((title or "").strip() or "image", quote=True)
+    safe_src = html.escape(src or "", quote=True)
+    return (
+        "<!DOCTYPE html><html><head>\n"
+        f"{build_csp_meta(allowed)}\n"
+        "<style>\n"
+        "body{margin:0;background:transparent;font-family:system-ui,sans-serif}\n"
+        ".card{padding:14px;border-radius:10px;background:#fff;color:#1f2328}\n"
+        "@media (prefers-color-scheme: dark){.card{background:#1b1f24;color:#e6e6e6}}\n"
+        ".card h1{font-size:14px;margin:0 0 8px 0;font-weight:600}\n"
+        ".card img{display:block;width:100%;height:auto;border-radius:6px}\n"
+        "</style></head><body>\n"
+        f'<div class="card"><h1>{safe_title}</h1>'
+        f'<img src="{safe_src}" alt="{safe_title}"></div>\n'
+        "<script>\n"
+        "window.onerror = (e) => parent.postMessage({sherlockViz:'error', "
+        "message:String(e)}, '*');\n"
+        "var img = document.querySelector('img');\n"
+        "function vizReady(){ parent.postMessage({sherlockViz:'ready', "
+        "height: document.documentElement.scrollHeight}, '*'); }\n"
+        "if (img.complete) { vizReady(); } else {\n"
+        "  img.onload = vizReady;\n"
+        "  img.onerror = function(){ parent.postMessage({sherlockViz:'error', "
+        "message:'image failed to load'}, '*'); };\n"
+        "}\n"
+        "</script></body></html>"
+    )
 
 
 # --------------------------------------------------------------------------- #
