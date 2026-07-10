@@ -200,6 +200,15 @@ def build_agent(session: Session, system_prompt: str, settings: dict):
         from playground.providers import make_image_callable
 
         viz_image_cb = make_image_callable(session, _img_spec)
+    elif settings and settings.get("visualization"):
+        # v1.12 omni: no dedicated image model → `image:` markers try the viz
+        # (else main) model itself via completion+[image,text] modalities. A
+        # text-only model raises there and the library falls back to drawing
+        # the visual as HTML/SVG — never a dead slot just because no image
+        # model was configured.
+        from playground.providers import make_omni_image_callable
+
+        viz_image_cb = make_omni_image_callable(session)
 
     # Search engine: DuckDuckGo (free, no key) by default; brave/tavily/valyu
     # use the api key the user typed in the UI. "off" disables search. The same

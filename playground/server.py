@@ -180,21 +180,26 @@ async def api_chat(req: ChatReq):
     def _timed_chat() -> tuple:
         t0 = time.time()
         text = sess.agent.chat(req.message)
-        # v1.12 H1 (audit): deterministic auto-title — runs HERE, on the worker
-        # thread (the 30s SQLite busy-wait must never sit on the event loop),
-        # and uses the conversation's FIRST user message so a reopened legacy
-        # conversation is never titled with its latest turn. Best-effort; a
-        # stored title is never overwritten.
+        # audit: measure the user-facing latency BEFORE the title work — the
+        # title LLM call must not inflate sherlock.latency / the A/B wall-clock.
+        elapsed_ms = int((time.time() - t0) * 1000)
+        # v1.12 H1: auto-title on the worker thread. LLM-generated (user spec)
+        # with a deterministic first-user-message fallback; a stored title is
+        # never overwritten — re-checked AFTER the slow call, so a manual
+        # rename that landed meanwhile wins (TOCTOU).
         try:
             cid = sess.agent.conversation_id
             if cid:
                 conv = sess.agent._storage.get_conversation(cid)
                 if conv is not None and not (getattr(conv, "title", None) or "").strip():
                     first = sess.agent._storage.first_user_message(cid) or req.message
-                    sess.agent._storage.set_conversation_title(cid, " ".join(first.split())[:60])
+                    title = _llm_title(sess, first, text) or " ".join(first.split())[:60]
+                    conv2 = sess.agent._storage.get_conversation(cid)
+                    if conv2 is not None and not (getattr(conv2, "title", None) or "").strip():
+                        sess.agent._storage.set_conversation_title(cid, title)
         except Exception:
             pass
-        return text, int((time.time() - t0) * 1000)
+        return text, elapsed_ms
 
     baseline = None
     if req.mode == "both":
@@ -419,6 +424,108 @@ async def api_history_title(req: HistoryTitleReq):
     except Exception as exc:
         return {"error": f"{type(exc).__name__}: {exc}"}
     return {"ok": bool(ok)} if ok else {"error": "no such conversation"}
+
+
+def _llm_title(sess: Session, first: str, reply: str) -> str:
+    """v1.12 H1 (user spec): the conversation title is LLM-GENERATED on the
+    first turn — one tiny call on the SUMMARY (else main) model. Guarded so
+    hermetic tests/keyless sessions never hit the network (short/absent key →
+    caller falls back to the deterministic first-message truncation)."""
+    try:
+        spec = sess.models.get("summary") or sess.models.get("main")
+        prov_name = spec.get("provider", "gemini") if isinstance(spec, dict) else "gemini"
+        creds = (getattr(sess, "providers", {}) or {}).get(prov_name, {})
+        if prov_name != "local" and len(creds.get("api_key", "") or "") < 12:
+            return ""
+        mid, extra = prov.resolve_model_spec(spec, sess.providers)
+        t0 = time.time()
+        r = prov._call_litellm(
+            mid,
+            [
+                {
+                    "role": "user",
+                    "content": (
+                        "Write a very short conversation title (3-6 words, no quotes, "
+                        "no trailing punctuation) in the SAME language as the text "
+                        "below. Reply with the title only.\n\n"
+                        + first[:400]
+                        + "\n\n"
+                        + (reply or "")[:400]
+                    ),
+                }
+            ],
+            timeout=15,
+            **extra,
+        )
+        # audit: silent spend violates the observability rule — book the call.
+        usage = getattr(r, "usage", None)
+        sess.emit(
+            {
+                "type": "llm.call",
+                "actor": "llm2",
+                "turn": sess.turn,
+                "data": {
+                    "role": "title",
+                    "model": mid,
+                    "latency_ms": int((time.time() - t0) * 1000),
+                    "prompt_tokens": getattr(usage, "prompt_tokens", 0) or 0,
+                    "completion_tokens": getattr(usage, "completion_tokens", 0) or 0,
+                },
+            }
+        )
+        t = ((r.choices[0].message.content or "") if getattr(r, "choices", None) else "").strip()
+        return " ".join(t.strip("'\"").split())[:60]
+    except Exception:
+        return ""
+
+
+class HistoryDeleteReq(BaseModel):
+    session_id: str
+    conversation_id: str
+
+
+@app.post("/api/history/delete")
+async def api_history_delete(req: HistoryDeleteReq):
+    """Delete a conversation (messages + its viz artifacts). Deleting the ACTIVE
+    conversation first switches the agent to a fresh one so chat never points at
+    a dead id — the response carries ``switched`` so the UI can clear the pane."""
+    sess = SESSIONS.get(req.session_id)
+    if sess is None:
+        return {"error": "no such session"}
+    if getattr(sess.agent, "is_deep_researching", False):
+        return {"error": "deep research in progress — wait for it to finish"}
+    loop = asyncio.get_running_loop()
+
+    def _delete() -> dict:
+        import re as _re
+
+        agent = sess.agent
+        if agent._storage.get_conversation(req.conversation_id) is None:
+            return {"error": "no such conversation"}
+        switched = False
+        if agent.conversation_id == req.conversation_id:
+            agent.new_session()
+            switched = True
+        # audit: delete_session removes raw turns AND the conversation's memory
+        # entries (delete_conversation alone leaves orphaned facts in a
+        # persistent profile — a retention bug, per the storage docstring).
+        counts = agent.delete_session(req.conversation_id)
+        removed = int((counts or {}).get("messages_removed", 0)) if isinstance(counts, dict) else 0
+        # best-effort: reclaim the conversation's persisted viz artifacts
+        try:
+            base = (Path(agent.config.storage.sqlite_path).resolve().parent / "viz").resolve()
+            comp = _re.sub(r"[^A-Za-z0-9._-]", "_", str(req.conversation_id)) or "_"
+            d = (base / comp).resolve()
+            if str(d).startswith(str(base) + os.sep) and d.is_dir():
+                shutil.rmtree(d, ignore_errors=True)
+        except Exception:
+            pass
+        return {"ok": True, "removed": removed, "switched": switched}
+
+    try:
+        return await loop.run_in_executor(None, _delete)
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
 
 
 class DeepResearchReq(BaseModel):

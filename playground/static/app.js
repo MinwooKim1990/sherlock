@@ -91,8 +91,14 @@ const LANG = {
     hist_title: "history", hist_new: "+ new",
     hist_empty: "no conversations yet", hist_rename: "rename",
     hist_open_fail: "couldn't open the conversation",
+    hist_delete: "delete", hist_delete_confirm: "Delete this conversation and its messages?",
+    // v1.12 P2: one-row provider connect + role-model grid
+    connect_provider: "provider", connect_key_ph: "API key",
+    connect_replace: "click to re-enter / replace this key",
+    all_roles: "all roles", role_image: "image (optional)",
+    image_auto: "— auto (try LLM-4/omni) —",
   },
-  ko: {"subtitle":"아무 LLM이나 연결하세요 — Gemini, OpenAI, Anthropic, 오픈소스 모델 호스트(DeepInfra · Together · OpenRouter), 또는 로컬 OpenAI 호환 서버까지 — 그리고 Sherlock이 그 컨텍스트를 실시간으로 정리하는 모습을 지켜보세요.","providers":"제공자","providers_hint":"— 최소 하나는 연결하세요. 역할별로 자유롭게 조합 가능","role_main":"메인","role_summary":"요약기","role_infer":"추론기","sysprompt_label":"시스템 프롬프트 (LLM-1 페르소나)","companions":"컴패니언","companions_turbo":"turbo — 매 턴마다 LLM-2 + LLM-3","companions_cold":"cold_start — 신호가 필요할 때만","companions_off":"off — 단일 모델 (레거시)","companions_help":"💡 <b>turbo</b>는 매 턴마다 LLM-3 추론 + LLM-2 압축을 실행합니다(🧠 추론 / 🗜 압축 패널이 항상 채워짐). <b>cold_start</b>는 실제 신호로 컴패니언이 필요해질 때까지 단일 모델을 유지하고, <b>off</b>는 레거시 게이트입니다.","background":"백그라운드","redact":"비밀정보 가리기","verify":"검증","websearch":"🌐 웹 검색","engine_ddg":"DuckDuckGo (무료, 키 불필요)","engine_brave":"Brave (키 필요)","engine_tavily":"Tavily (키 필요)","engine_valyu":"Valyu (키 필요)","engine_off":"끔","searchkey_ph":"검색 API 키","websearch_help":"LLM-1(검색 + 가져오기)과 LLM-3(최신성)이 모두 이 엔진을 사용합니다. DuckDuckGo는 무료지만 뉴스에는 약하고, Brave/Tavily/Valyu는 키만 있으면 훨씬 나은 결과를 줍니다.","start_session":"세션 시작","export":"⬇ 내보내기","new_session":"새 세션","thinking":"Sherlock이 생각 중…","stop":"중지","try":"예시:","ex1":"우리 딸 유진이가 땅콩 알레르기가 있어요","ex2":"회사를 그만둘지 말지 고민이에요","ex3":"다음 주에 부산 가는데 호텔 추천해줘","ex4":"오늘 서울 날씨 검색해줘","ex5":"내가 아까 한 말 기억해?","dr_proposed":"🔬 심층 리서치 제안됨","approve":"승인","skip":"건너뛰기","dr_or_yes":"…또는 그냥 “네”라고 답하세요.","chatmode_title":"누가 답하는지: Sherlock, 순수 모델, 또는 둘을 나란히","mode_single":"단일 LLM","mode_both":"비교 (A/B)","baseline_search_title":"공정한 비교: 단일 LLM도 동일한 엔진으로 한 번 검색을 수행합니다","single_search":"🔎단일","msg_ph":"메시지를 입력하세요…","send":"전송","single_baseline":"⚖ 단일 LLM (기준)","tab_flow":"⚡ 흐름","tab_slot":"🧱 슬롯","tab_llmio":"💬 LLM 입출력","tab_infer":"🧠 추론","tab_compact":"🗜 압축","tab_memory":"🗃 메모리","tab_carry":"↪ 이월","tab_research":"🔬 리서치","thinking_single":"단일 LLM이 생각 중…","stopping":"중지하는 중…","building_agent":"에이전트 구성 중 (첫 실행 시 임베더를 다운로드합니다)…","need_provider":"✗ 먼저 제공자를 연결하고 모델을 선택하세요","dr_running":"🔬 심층 리서치 실행 중…","dr_synth":"🔬 최종 답변 종합 중…","dr_starting":"🔬 심층 리서치 시작 중…","bg_running":"🧩 백그라운드에서 메모리 갱신 중…","bg_on":"비동기","bg_off":"동기","async_title":"비동기 — LLM-2/LLM-3가 백그라운드에서 돌아 답변이 기다리지 않습니다 (실시간 변경 가능)","longterm":"장기 기억","ltm_profile":"프로필","ltm_profile_ph":"default","ltm_incognito":"시크릿 — 읽되 저장 안 함","longterm_help":"🧠 장기 기억은 이름·알레르기·“기억해 둬” 같은 지속적 사실을 지정한 <b>프로필</b>에 저장해 세션과 재시작을 넘어 유지합니다. 기본값은 꺼짐. <b>시크릿</b>은 저장된 내용은 계속 불러오되 새 쓰기는 멈춥니다.","tab_ltm":"🧠 장기기억","tab_ltm_full":"장기 기억","ltm_on":"장기 켬","ltm_off":"장기 끔","incog_off":"기록","incog_on":"시크릿","ltm_title":"장기(세션 간) 기억 — 실시간 변경","incog_title":"시크릿 — 회상은 하되 새 쓰기는 멈춤","ltm_refresh":"새로고침","ltm_export":"내보내기","ltm_import":"가져오기","ltm_wipe":"전체삭제","ltm_empty":"아직 장기 기억이 없습니다. 장기 기억이 켜지면 LLM-2가 지속적 사실(정체성·알레르기·명시적 “기억해 둬”·안정적 선호/프로젝트)을 여기로 승격하며, 모든 세션에서 공유됩니다.","ltm_col_cat":"분류","ltm_col_content":"사실","ltm_col_conf":"신뢰","ltm_col_created":"기록시점","ltm_delete":"삭제","ltm_delete_confirm":"이 장기 기억을 영구 삭제할까요?","ltm_wipe_confirm1":"모든 장기 기억을 삭제할까요? 먼저 마크다운 백업이 기록됩니다.","ltm_wipe_confirm2":"정말요? 이 프로필의 모든 지속적 사실이 지워집니다.","ltm_remembered":"기억됨","ltm_forgot":"잊음","ltm_wiped":"장기 기억 삭제됨","ltm_imported":"장기 기억으로 가져옴","ltm_import_fail":"가져오기 실패","ltm_temp_note":"🧠 참고: 이 세션은 임시 디렉터리에 저장됩니다 — 프로필에 영구 저장하려면 새 세션을 시작하세요","viz":"📊 시각화","viz_on":"시각화 켬","viz_off":"시각화 끔","viz_title":"인라인 데이터 시각화 (LLM-4) — 모델이 제안하는 차트를 렌더링합니다. 실시간 변경 가능","viz_role":"시각화기","viz_same_as_main":"— 메인과 동일 —","viz_help":"📊 켜면 LLM-1(및 심층 리서치)이 시각화가 정말 도움이 되는 자리에 인라인 차트를 넣고, LLM-4가 이를 독립적인 샌드박스 아티팩트로 렌더링합니다. 기본값은 꺼짐.","viz_loading":"📊 시각화 렌더링 중…","viz_repairing":"📊 시각화 복구 중… (라운드 {0})","viz_repairing_runtime":"📊 시각화 복구 중…","viz_unavailable":"📊 (시각화를 사용할 수 없음)","viz_image_model":"이미지 모델","viz_image_help":"<code>image:</code> 마커가 생성 이미지를 렌더링합니다. 이미지 지원 모델과 해당 제공자 키가 필요합니다","models_btn":"모델","models_title":"역할별 모델 (다음 턴부터 적용)","hist_title":"기록","hist_new":"+ 새 대화","hist_empty":"아직 대화가 없습니다","hist_rename":"이름 바꾸기","hist_open_fail":"대화를 열 수 없습니다"},
+  ko: {"subtitle":"아무 LLM이나 연결하세요 — Gemini, OpenAI, Anthropic, 오픈소스 모델 호스트(DeepInfra · Together · OpenRouter), 또는 로컬 OpenAI 호환 서버까지 — 그리고 Sherlock이 그 컨텍스트를 실시간으로 정리하는 모습을 지켜보세요.","providers":"제공자","providers_hint":"— 최소 하나는 연결하세요. 역할별로 자유롭게 조합 가능","role_main":"메인","role_summary":"요약기","role_infer":"추론기","sysprompt_label":"시스템 프롬프트 (LLM-1 페르소나)","companions":"컴패니언","companions_turbo":"turbo — 매 턴마다 LLM-2 + LLM-3","companions_cold":"cold_start — 신호가 필요할 때만","companions_off":"off — 단일 모델 (레거시)","companions_help":"💡 <b>turbo</b>는 매 턴마다 LLM-3 추론 + LLM-2 압축을 실행합니다(🧠 추론 / 🗜 압축 패널이 항상 채워짐). <b>cold_start</b>는 실제 신호로 컴패니언이 필요해질 때까지 단일 모델을 유지하고, <b>off</b>는 레거시 게이트입니다.","background":"백그라운드","redact":"비밀정보 가리기","verify":"검증","websearch":"🌐 웹 검색","engine_ddg":"DuckDuckGo (무료, 키 불필요)","engine_brave":"Brave (키 필요)","engine_tavily":"Tavily (키 필요)","engine_valyu":"Valyu (키 필요)","engine_off":"끔","searchkey_ph":"검색 API 키","websearch_help":"LLM-1(검색 + 가져오기)과 LLM-3(최신성)이 모두 이 엔진을 사용합니다. DuckDuckGo는 무료지만 뉴스에는 약하고, Brave/Tavily/Valyu는 키만 있으면 훨씬 나은 결과를 줍니다.","start_session":"세션 시작","export":"⬇ 내보내기","new_session":"새 세션","thinking":"Sherlock이 생각 중…","stop":"중지","try":"예시:","ex1":"우리 딸 유진이가 땅콩 알레르기가 있어요","ex2":"회사를 그만둘지 말지 고민이에요","ex3":"다음 주에 부산 가는데 호텔 추천해줘","ex4":"오늘 서울 날씨 검색해줘","ex5":"내가 아까 한 말 기억해?","dr_proposed":"🔬 심층 리서치 제안됨","approve":"승인","skip":"건너뛰기","dr_or_yes":"…또는 그냥 “네”라고 답하세요.","chatmode_title":"누가 답하는지: Sherlock, 순수 모델, 또는 둘을 나란히","mode_single":"단일 LLM","mode_both":"비교 (A/B)","baseline_search_title":"공정한 비교: 단일 LLM도 동일한 엔진으로 한 번 검색을 수행합니다","single_search":"🔎단일","msg_ph":"메시지를 입력하세요…","send":"전송","single_baseline":"⚖ 단일 LLM (기준)","tab_flow":"⚡ 흐름","tab_slot":"🧱 슬롯","tab_llmio":"💬 LLM 입출력","tab_infer":"🧠 추론","tab_compact":"🗜 압축","tab_memory":"🗃 메모리","tab_carry":"↪ 이월","tab_research":"🔬 리서치","thinking_single":"단일 LLM이 생각 중…","stopping":"중지하는 중…","building_agent":"에이전트 구성 중 (첫 실행 시 임베더를 다운로드합니다)…","need_provider":"✗ 먼저 제공자를 연결하고 모델을 선택하세요","dr_running":"🔬 심층 리서치 실행 중…","dr_synth":"🔬 최종 답변 종합 중…","dr_starting":"🔬 심층 리서치 시작 중…","bg_running":"🧩 백그라운드에서 메모리 갱신 중…","bg_on":"비동기","bg_off":"동기","async_title":"비동기 — LLM-2/LLM-3가 백그라운드에서 돌아 답변이 기다리지 않습니다 (실시간 변경 가능)","longterm":"장기 기억","ltm_profile":"프로필","ltm_profile_ph":"default","ltm_incognito":"시크릿 — 읽되 저장 안 함","longterm_help":"🧠 장기 기억은 이름·알레르기·“기억해 둬” 같은 지속적 사실을 지정한 <b>프로필</b>에 저장해 세션과 재시작을 넘어 유지합니다. 기본값은 꺼짐. <b>시크릿</b>은 저장된 내용은 계속 불러오되 새 쓰기는 멈춥니다.","tab_ltm":"🧠 장기기억","tab_ltm_full":"장기 기억","ltm_on":"장기 켬","ltm_off":"장기 끔","incog_off":"기록","incog_on":"시크릿","ltm_title":"장기(세션 간) 기억 — 실시간 변경","incog_title":"시크릿 — 회상은 하되 새 쓰기는 멈춤","ltm_refresh":"새로고침","ltm_export":"내보내기","ltm_import":"가져오기","ltm_wipe":"전체삭제","ltm_empty":"아직 장기 기억이 없습니다. 장기 기억이 켜지면 LLM-2가 지속적 사실(정체성·알레르기·명시적 “기억해 둬”·안정적 선호/프로젝트)을 여기로 승격하며, 모든 세션에서 공유됩니다.","ltm_col_cat":"분류","ltm_col_content":"사실","ltm_col_conf":"신뢰","ltm_col_created":"기록시점","ltm_delete":"삭제","ltm_delete_confirm":"이 장기 기억을 영구 삭제할까요?","ltm_wipe_confirm1":"모든 장기 기억을 삭제할까요? 먼저 마크다운 백업이 기록됩니다.","ltm_wipe_confirm2":"정말요? 이 프로필의 모든 지속적 사실이 지워집니다.","ltm_remembered":"기억됨","ltm_forgot":"잊음","ltm_wiped":"장기 기억 삭제됨","ltm_imported":"장기 기억으로 가져옴","ltm_import_fail":"가져오기 실패","ltm_temp_note":"🧠 참고: 이 세션은 임시 디렉터리에 저장됩니다 — 프로필에 영구 저장하려면 새 세션을 시작하세요","viz":"📊 시각화","viz_on":"시각화 켬","viz_off":"시각화 끔","viz_title":"인라인 데이터 시각화 (LLM-4) — 모델이 제안하는 차트를 렌더링합니다. 실시간 변경 가능","viz_role":"시각화기","viz_same_as_main":"— 메인과 동일 —","viz_help":"📊 켜면 LLM-1(및 심층 리서치)이 시각화가 정말 도움이 되는 자리에 인라인 차트를 넣고, LLM-4가 이를 독립적인 샌드박스 아티팩트로 렌더링합니다. 기본값은 꺼짐.","viz_loading":"📊 시각화 렌더링 중…","viz_repairing":"📊 시각화 복구 중… (라운드 {0})","viz_repairing_runtime":"📊 시각화 복구 중…","viz_unavailable":"📊 (시각화를 사용할 수 없음)","viz_image_model":"이미지 모델","viz_image_help":"<code>image:</code> 마커가 생성 이미지를 렌더링합니다. 이미지 지원 모델과 해당 제공자 키가 필요합니다","models_btn":"모델","models_title":"역할별 모델 (다음 턴부터 적용)","hist_title":"기록","hist_new":"+ 새 대화","hist_empty":"아직 대화가 없습니다","hist_rename":"이름 바꾸기","hist_open_fail":"대화를 열 수 없습니다","hist_delete":"삭제","hist_delete_confirm":"이 대화와 메시지를 삭제할까요?","connect_provider":"제공자","connect_key_ph":"API 키","connect_replace":"클릭하면 이 키를 다시 입력/교체합니다","all_roles":"모두 동일","role_image":"이미지 (선택)","image_auto":"— 자동 (LLM-4/omni로 시도) —"},
   zh: {"subtitle":"接入任意 LLM —— Gemini、OpenAI、Anthropic、开源模型托管服务（DeepInfra · Together · OpenRouter），或本地的 OpenAI 兼容服务器 —— 实时观看 Sherlock 整理它的上下文。","providers":"提供方","providers_hint":"—— 至少连接一个；每个角色可自由搭配","role_main":"主模型","role_summary":"摘要器","role_infer":"推断器","sysprompt_label":"系统提示词（LLM-1 人设）","companions":"协同模型","companions_turbo":"turbo —— 每轮都运行 LLM-2 + LLM-3","companions_cold":"cold_start —— 仅在出现信号时才启用","companions_off":"off —— 单模型（旧版）","companions_help":"💡 <b>turbo</b> 每轮都运行 LLM-3 推断 + LLM-2 压缩（🧠 推断 / 🗜 压缩 面板始终有内容）。<b>cold_start</b> 在出现真实信号需要协同模型之前一直保持单模型；<b>off</b> 是旧版门控。","background":"后台运行","redact":"隐去敏感信息","websearch":"🌐 联网搜索","engine_ddg":"DuckDuckGo（免费，无需密钥）","engine_brave":"Brave（需密钥）","engine_tavily":"Tavily（需密钥）","engine_valyu":"Valyu（需密钥）","engine_off":"关闭","searchkey_ph":"搜索 API 密钥","websearch_help":"LLM-1（搜索 + 抓取）和 LLM-3（时效性）都使用此引擎。DuckDuckGo 免费但新闻检索能力较弱；配上密钥后，Brave/Tavily/Valyu 的结果要好得多。","start_session":"开始会话","export":"⬇ 导出","new_session":"新建会话","thinking":"Sherlock 正在思考…","stop":"停止","try":"试试：","ex1":"我女儿雨欣对花生过敏","ex2":"我在纠结要不要辞职","ex3":"我下周要去东京——推荐一家酒店吧","ex4":"查一下今天上海的天气","ex5":"你还记得我之前说过什么吗？","dr_proposed":"🔬 已建议深度研究","approve":"同意","skip":"跳过","dr_or_yes":"…或者直接回复\"好\"。","chatmode_title":"谁来回答：Sherlock、原始模型，还是两者并排对比","mode_single":"单个 LLM","mode_both":"对比（A/B）","baseline_search_title":"公平对比：单个 LLM 也会用同一引擎执行一次搜索","single_search":"🔎单次","msg_ph":"说点什么…","send":"发送","single_baseline":"⚖ 单个 LLM（基准）","tab_flow":"⚡ 流程","tab_slot":"🧱 槽位","tab_llmio":"💬 LLM 输入/输出","tab_infer":"🧠 推断","tab_compact":"🗜 压缩","tab_memory":"🗃 记忆","tab_carry":"↪ 携带","tab_research":"🔬 研究","thinking_single":"单个 LLM 正在思考…","stopping":"正在停止…","building_agent":"正在构建智能体（首次运行会下载嵌入模型）…","need_provider":"✗ 请先连接提供方并选择模型","dr_running":"🔬 深度研究进行中…","dr_synth":"🔬 正在综合最终答案…","dr_starting":"🔬 深度研究启动中…"},
   ja: {"subtitle":"お好きなLLM — Gemini、OpenAI、Anthropic、オープンソースモデルのホスト（DeepInfra · Together · OpenRouter）、またはローカルのOpenAI互換サーバー — を接続すれば、Sherlockがそのコンテキストをリアルタイムで整える様子を見られます。","providers":"プロバイダー","providers_hint":"— 最低1つ接続してください。役割ごとに自由に組み合わせOK","role_main":"メイン","role_summary":"要約担当","role_infer":"推論担当","sysprompt_label":"システムプロンプト（LLM-1のペルソナ）","companions":"コンパニオン","companions_turbo":"turbo — 毎ターン LLM-2 + LLM-3 を実行","companions_cold":"cold_start — 必要な兆候があるときだけ起動","companions_off":"off — 単一モデル（レガシー）","companions_help":"💡 <b>turbo</b> は毎ターン LLM-3 の推論と LLM-2 の圧縮を実行します（🧠 推論 / 🗜 圧縮 パネルが常に埋まります）。<b>cold_start</b> は本物の兆候がコンパニオンを必要とするまで単一モデルのまま動作します。<b>off</b> はレガシーのゲートです。","background":"バックグラウンド","redact":"秘密情報を伏せる","websearch":"🌐 ウェブ検索","engine_ddg":"DuckDuckGo（無料・キー不要）","engine_brave":"Brave（キー要）","engine_tavily":"Tavily（キー要）","engine_valyu":"Valyu（キー要）","engine_off":"オフ","searchkey_ph":"検索APIキー","websearch_help":"LLM-1（検索＋取得）と LLM-3（鮮度チェック）はどちらもこのエンジンを使います。DuckDuckGo は無料ですがニュースには弱く、Brave / Tavily / Valyu はキーを使えばはるかに良い結果が得られます。","start_session":"セッション開始","export":"⬇ エクスポート","new_session":"新しいセッション","thinking":"Sherlock が考えています…","stop":"停止","try":"試してみる:","ex1":"娘の結衣がピーナッツアレルギーなんです","ex2":"仕事を辞めるべきか迷っています","ex3":"来週、京都に行くんだけどおすすめのホテルを教えて","ex4":"今日の東京の天気を調べて","ex5":"さっき私が言ったこと、覚えてる？","dr_proposed":"🔬 ディープリサーチを提案","approve":"承認","skip":"スキップ","dr_or_yes":"…または「はい」と返すだけでもOK。","chatmode_title":"誰が答えるか：Sherlock、素のモデル、または両方を並べて比較","mode_single":"単一LLM","mode_both":"比較（A/B）","baseline_search_title":"公平な比較：単一LLMも同じエンジンで1回検索を行います","single_search":"🔎単独","msg_ph":"メッセージを入力…","send":"送信","single_baseline":"⚖ 単一LLM（ベースライン）","tab_flow":"⚡ フロー","tab_slot":"🧱 スロット","tab_llmio":"💬 LLM入出力","tab_infer":"🧠 推論","tab_compact":"🗜 圧縮","tab_memory":"🗃 メモリ","tab_carry":"↪ 引き継ぎ","tab_research":"🔬 リサーチ","thinking_single":"単一LLM が考えています…","stopping":"停止中…","building_agent":"エージェントを構築中（初回はエンベッダーをダウンロードします）…","need_provider":"✗ まずプロバイダーを接続してモデルを選んでください","dr_running":"🔬 ディープリサーチを実行中…","dr_synth":"🔬 最終的な回答をまとめています…","dr_starting":"🔬 ディープリサーチを開始中…"},
   fr: {"subtitle":"Connectez n'importe quel LLM — Gemini, OpenAI, Anthropic, un hébergeur de modèles open source (DeepInfra · Together · OpenRouter) ou un serveur local compatible OpenAI — et regardez Sherlock organiser son contexte en temps réel.","providers":"Fournisseurs","providers_hint":"— connectez-en au moins un ; combinez-les librement selon le rôle","role_main":"Principal","role_summary":"Synthétiseur","role_infer":"Inférenceur","sysprompt_label":"Prompt système (persona LLM-1)","companions":"Compagnons","companions_turbo":"turbo — LLM-2 + LLM-3 à chaque tour","companions_cold":"cold_start — uniquement quand un signal les requiert","companions_off":"off — modèle unique (hérité)","companions_help":"💡 <b>turbo</b> exécute l'inférence LLM-3 + la compaction LLM-2 à chaque tour (les panneaux 🧠 Inférence / 🗜 Compaction se remplissent toujours). <b>cold_start</b> reste en modèle unique jusqu'à ce qu'un véritable signal requière les compagnons ; <b>off</b> est le mécanisme hérité.","background":"Arrière-plan","redact":"Masquer les secrets","websearch":"🌐 Recherche web","engine_ddg":"DuckDuckGo (gratuit, sans clé)","engine_brave":"Brave (clé)","engine_tavily":"Tavily (clé)","engine_valyu":"Valyu (clé)","engine_off":"Désactivé","searchkey_ph":"clé API de recherche","websearch_help":"LLM-1 (recherche + récupération) et LLM-3 (fraîcheur) utilisent tous deux ce moteur. DuckDuckGo est gratuit mais faible pour l'actualité ; Brave/Tavily/Valyu donnent de bien meilleurs résultats avec une clé.","start_session":"Démarrer la session","export":"⬇ exporter","new_session":"nouvelle session","thinking":"Sherlock réfléchit…","stop":"Arrêter","try":"essayez :","ex1":"Ma fille Camille est allergique aux arachides","ex2":"J'hésite à démissionner de mon poste","ex3":"Je pars à Lyon la semaine prochaine — conseille-moi un hôtel","ex4":"Cherche la météo d'aujourd'hui à Paris","ex5":"Tu te souviens de ce que je t'ai dit tout à l'heure ?","dr_proposed":"🔬 Recherche approfondie proposée","approve":"Approuver","skip":"Ignorer","dr_or_yes":"…ou répondez simplement « oui ».","chatmode_title":"qui répond : Sherlock, le modèle brut, ou les deux côte à côte","mode_single":"LLM unique","mode_both":"Comparer (A/B)","baseline_search_title":"Comparaison équitable : le LLM unique bénéficie aussi d'une passe de recherche avec le même moteur","single_search":"🔎unique","msg_ph":"Écrivez quelque chose…","send":"Envoyer","single_baseline":"⚖ LLM unique (référence)","tab_flow":"⚡ Flux","tab_slot":"🧱 Emplacement","tab_llmio":"💬 E/S LLM","tab_infer":"🧠 Inférence","tab_compact":"🗜 Compaction","tab_memory":"🗃 Mémoire","tab_carry":"↪ Report","tab_research":"🔬 Recherche","thinking_single":"Le LLM unique réfléchit…","stopping":"arrêt en cours…","building_agent":"construction de l'agent (le premier lancement télécharge l'encodeur)…","need_provider":"✗ connectez un fournisseur et choisissez d'abord les modèles","dr_running":"🔬 recherche approfondie en cours…","dr_synth":"🔬 synthèse de la réponse finale…","dr_starting":"🔬 démarrage de la recherche approfondie…"},
@@ -154,26 +160,52 @@ const S = { prov: {}, sid: null, ws: null, llmio: {}, research: {}, streamOpen: 
 // S.prov = { gemini: {creds:{api_key}, models:[...]}, openai: {...}, anthropic: {...}, local: {creds:{base_url,api_key}, models:[...]} }
 const PROV_LABEL = { gemini: "Gemini", openai: "OpenAI", anthropic: "Anthropic", deepinfra: "DeepInfra", together: "Together", openrouter: "OpenRouter", local: "Local" };
 
-document.querySelectorAll(".connectBtn").forEach((btn) => {
-  btn.onclick = async () => {
-    const p = btn.dataset.prov;
-    const creds = p === "local"
-      ? { base_url: $("url-local").value.trim(), api_key: $("key-local").value.trim() }
-      : { api_key: $("key-" + p).value.trim() };
-    if (p === "local" ? !creds.base_url : !creds.api_key) { $("st-" + p).textContent = p === "local" ? "URL?" : "key?"; return; }
-    $("st-" + p).textContent = "…";
-    try {
-      const r = await fetch("/api/models", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider: p, ...creds }) });
-      const j = await r.json();
-      if (j.error || !j.models.length) { $("st-" + p).textContent = "✗"; $("modelStatus").textContent = `✗ ${PROV_LABEL[p]}: ` + (j.error || "no models"); return; }
-      S.prov[p] = { creds, models: j.models };
-      $("st-" + p).textContent = `✓ ${j.models.length}`;
-      $("modelStatus").textContent = `✓ ${PROV_LABEL[p]} connected — ${j.models.length} models`;
-      rebuildRoleSelects();
-      $("startBtn").disabled = false;
-    } catch (e) { $("st-" + p).textContent = "✗"; $("modelStatus").textContent = "✗ " + e; }
-  };
-});
+// v1.12 P2: ONE connect row (provider dropdown + key [+ base-url for local]) — the
+// same per-provider connect flow as before (fills S.prov[p]); connected providers
+// show as chips (click a chip → re-select that provider to re-enter/replace its key).
+const CONN_KEY_PH = {
+  gemini: "AIza…", openai: "sk-…", anthropic: "sk-ant-…",
+  deepinfra: "open-source models (Llama · Qwen · DeepSeek…)",
+  together: "Together AI key", openrouter: "sk-or-v1-…", local: "key (optional)",
+};
+function syncConnRow() {
+  const p = $("connProvider").value;
+  $("connUrl").classList.toggle("hidden", p !== "local");
+  $("connKey").placeholder = CONN_KEY_PH[p] || t("connect_key_ph");
+}
+$("connProvider").onchange = syncConnRow;
+syncConnRow();
+function renderConnChips() {
+  const box = $("connChips"); if (!box) return;
+  box.innerHTML = "";
+  Object.keys(S.prov).forEach((p) => {
+    const chip = h("button", "conn-chip", `✓ ${esc(PROV_LABEL[p] || p)}`);
+    chip.type = "button";
+    chip.title = t("connect_replace");
+    chip.onclick = () => { $("connProvider").value = p; syncConnRow(); ($("connKey")).focus(); };
+    box.appendChild(chip);
+  });
+}
+$("connectBtn").onclick = async () => {
+  const p = $("connProvider").value;
+  const creds = p === "local"
+    ? { base_url: $("connUrl").value.trim(), api_key: $("connKey").value.trim() }
+    : { api_key: $("connKey").value.trim() };
+  if (p === "local" ? !creds.base_url : !creds.api_key) { $("connStatus").textContent = p === "local" ? "URL?" : "key?"; return; }
+  $("connStatus").textContent = "…";
+  try {
+    const r = await fetch("/api/models", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider: p, ...creds }) });
+    const j = await r.json();
+    if (j.error || !j.models.length) { $("connStatus").textContent = "✗"; $("modelStatus").textContent = `✗ ${PROV_LABEL[p]}: ` + (j.error || "no models"); return; }
+    S.prov[p] = { creds, models: j.models };
+    $("connStatus").textContent = "✓";
+    $("connKey").value = ""; // never leave a live key sitting in the field
+    $("modelStatus").textContent = `✓ ${PROV_LABEL[p]} connected — ${j.models.length} models`;
+    renderConnChips();
+    rebuildRoleSelects();
+    $("startBtn").disabled = false;
+  } catch (e) { $("connStatus").textContent = "✗"; $("modelStatus").textContent = "✗ " + e; }
+};
 
 // Sensible default per role: a mid-size model for LLM-1, small/cheap for companions.
 const ROLE_PREF = {
@@ -218,17 +250,91 @@ function fillVizSelect(el, current) {
   }
   el.value = current && [...el.options].some((o) => o.value === current) ? current : "";
 }
-function rebuildRoleSelects() {
-  for (const [sel, role] of [["modelMain", "main"], ["modelSummary", "summary"], ["modelInference", "inference"]]) {
-    const el = $(sel);
-    const keep = el.value && [...el.options].some((o) => o.value === el.value) ? el.value : null;
-    fillSelect(el, keep);
-    if (!keep) el.value = pickDefault(role);
-  }
-  const vz = $("modelViz");
-  if (vz) fillVizSelect(vz, vz.value || "");  // default: — same as Main —
-}
 const parseSpec = (v) => { const i = (v || "").indexOf("::"); return i < 0 ? null : { provider: v.slice(0, i), model: v.slice(i + 2) }; };
+/* v1.12 P2: setup role-model GRID — each row is [provider select][model select].
+   Row id prefixes: roleAll (master), roleMain, roleSummary, roleInference,
+   roleViz ("— same as Main —" first option), roleImage ("— auto —" first option,
+   plus the free-text #vizImageModel for models absent from the chat list). */
+const ROLE_FIRST_OPT = { roleViz: "viz_same_as_main", roleImage: "image_auto" };
+function fillProvSelect(el, keep) {
+  if (!el) return;
+  el.innerHTML = "";
+  const provs = Object.keys(S.prov);           // CONNECTED providers only
+  el.disabled = !provs.length;
+  provs.forEach((p) => { const o = h("option", "", esc(PROV_LABEL[p] || p)); o.value = p; el.appendChild(o); });
+  if (keep && provs.includes(keep)) el.value = keep;
+}
+function fillRoleModelSelect(el, prov, keep, firstOptKey) {
+  if (!el) return;
+  el.innerHTML = "";
+  if (firstOptKey) { const o = h("option", "", esc(t(firstOptKey))); o.value = ""; el.appendChild(o); }
+  ((S.prov[prov] && S.prov[prov].models) || []).forEach((m) => { const o = h("option", "", esc(m.id)); o.value = m.id; el.appendChild(o); });
+  el.disabled = !el.options.length;
+  if (keep != null && [...el.options].some((o) => o.value === keep)) el.value = keep;
+}
+// The row's current pick as a "provider::model" spec ("" = the empty first option).
+function roleValue(prefix) {
+  const ps = $(prefix + "Prov"), ms = $(prefix + "Model");
+  if (!ps || !ms || !ps.value || !ms.value) return "";
+  return `${ps.value}::${ms.value}`;
+}
+function setRoleValue(prefix, spec) {
+  const p = parseSpec(spec);
+  const ps = $(prefix + "Prov"), ms = $(prefix + "Model");
+  if (!ps || !ms || !p || !S.prov[p.provider]) return;
+  ps.value = p.provider;
+  fillRoleModelSelect(ms, p.provider, p.model, ROLE_FIRST_OPT[prefix]);
+}
+function specValid(v) {
+  const p = parseSpec(v);
+  return !!(p && S.prov[p.provider] && (S.prov[p.provider].models || []).some((m) => m.id === p.model));
+}
+function rebuildRoleRow(prefix, spec) {
+  const ps = $(prefix + "Prov"), ms = $(prefix + "Model");
+  if (!ps || !ms) return;
+  const p = parseSpec(spec);
+  fillProvSelect(ps, p && p.provider);
+  fillRoleModelSelect(ms, ps.value, p && p.provider === ps.value ? p.model : "", ROLE_FIRST_OPT[prefix]);
+}
+function rebuildRoleSelects() {
+  // required roles keep a still-valid pick, else fall back to pickDefault()
+  for (const [prefix, role] of [["roleAll", "main"], ["roleMain", "main"], ["roleSummary", "summary"], ["roleInference", "inference"]]) {
+    const keep = roleValue(prefix);
+    rebuildRoleRow(prefix, specValid(keep) ? keep : pickDefault(role));
+  }
+  // optional roles keep a still-valid pick, else the empty first option
+  for (const prefix of ["roleViz", "roleImage"]) {
+    const keep = roleValue(prefix);
+    rebuildRoleRow(prefix, specValid(keep) ? keep : "");
+  }
+}
+// Master row ("all roles"): any change applies its provider+model to the
+// LLM-1/2/3/4 rows immediately (image row untouched); individual rows can then
+// be overridden freely.
+function applyMasterRole() {
+  const spec = roleValue("roleAll");
+  if (!spec) return;
+  ["roleMain", "roleSummary", "roleInference", "roleViz"].forEach((pref) => setRoleValue(pref, spec));
+}
+if ($("roleAllProv")) $("roleAllProv").onchange = () => {
+  const ms = $("roleAllModel");
+  fillRoleModelSelect(ms, $("roleAllProv").value, null);
+  if (ms.options.length) ms.selectedIndex = 0;
+  applyMasterRole();
+};
+if ($("roleAllModel")) $("roleAllModel").onchange = applyMasterRole;
+// Individual rows: a provider hop refills that row's model list. roleViz defaults
+// to the first REAL model (a deliberate hop away from "same as Main"); roleImage
+// stays on "auto" — its provider mainly scopes the free-text image model.
+["roleMain", "roleSummary", "roleInference", "roleViz", "roleImage"].forEach((pref) => {
+  const ps = $(pref + "Prov");
+  if (!ps) return;
+  ps.onchange = () => {
+    const ms = $(pref + "Model");
+    fillRoleModelSelect(ms, ps.value, null, ROLE_FIRST_OPT[pref]);
+    if (ms.options.length) ms.selectedIndex = pref === "roleViz" && ms.options.length > 1 ? 1 : 0;
+  };
+});
 
 $("startBtn").onclick = async () => {
   if (!currentModels().main) { $("startStatus").textContent = t("need_provider"); return; }
@@ -243,9 +349,9 @@ $("startBtn").onclick = async () => {
 };
 
 function mirrorLive() {
-  for (const [sel, src, role] of [["liveMain", "modelMain", "main"], ["liveSummary", "modelSummary", "summary"], ["liveInference", "modelInference", "inference"]]) {
+  for (const [sel, prefix, role] of [["liveMain", "roleMain", "main"], ["liveSummary", "roleSummary", "summary"], ["liveInference", "roleInference", "inference"]]) {
     const el = $(sel);
-    fillSelect(el, el.value || $(src).value); // keep a mid-session choice on re-fill
+    fillSelect(el, el.value || roleValue(prefix)); // keep a mid-session choice on re-fill
     el.onchange = async () => {
       await fetch("/api/select_models", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: S.sid, models: { [role]: parseSpec(el.value) } }) });
     };
@@ -301,7 +407,7 @@ function mirrorLive() {
   // v1.12 B4: live visualizer MODEL select — mirrors the setup pick ("same as Main")
   const lvz = $("liveViz");
   if (lvz) {
-    fillVizSelect(lvz, lvz.value || ($("modelViz") ? $("modelViz").value : ""));
+    fillVizSelect(lvz, lvz.value || roleValue("roleViz"));
     lvz.onchange = async () => {
       await fetch("/api/select_models", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: S.sid, models: { viz: parseSpec(lvz.value) } }) });
     };
@@ -319,14 +425,14 @@ function mirrorLive() {
 
 // Build the session config from the CURRENT controls — live top-bar selects (if a
 // mid-session change was made) win over the setup-screen selects.
-function pickVal(liveId, setupId) { const lv = $(liveId) && $(liveId).value; return lv || $(setupId).value; }
+function pickVal(liveId, rolePrefix) { const lv = $(liveId) && $(liveId).value; return lv || roleValue(rolePrefix); }
 function currentModels() {
   return {
-    main: parseSpec(pickVal("liveMain", "modelMain")),
-    summary: parseSpec(pickVal("liveSummary", "modelSummary")),
-    inference: parseSpec(pickVal("liveInference", "modelInference")),
+    main: parseSpec(pickVal("liveMain", "roleMain")),
+    summary: parseSpec(pickVal("liveSummary", "roleSummary")),
+    inference: parseSpec(pickVal("liveInference", "roleInference")),
     // v1.12 B4: viz (LLM-4) — null when "— same as Main —" (falls back to main)
-    viz: parseSpec(pickVal("liveViz", "modelViz")),
+    viz: parseSpec(pickVal("liveViz", "roleViz")),
   };
 }
 function currentSettings() {
@@ -344,11 +450,14 @@ function currentSettings() {
     visualization: !!($("optViz") && $("optViz").checked),
   };
   // v1.12 P1: optional text→image model for `image:` viz markers — only sent
-  // when a model id was actually typed (absent → the modality stays dormant).
-  const imgModel = $("vizImageModel") && $("vizImageModel").value.trim();
+  // when a model was actually named (free-text wins over the roleImage select;
+  // both empty → the modality stays dormant).
+  const imgSel = parseSpec(roleValue("roleImage")); // null when "— auto —"
+  const imgModel = ($("vizImageModel") && $("vizImageModel").value.trim()) || (imgSel && imgSel.model) || "";
+  const imgProv = $("roleImageProv") && $("roleImageProv").value;
   // audit: the row is HIDDEN when viz is off, but the input keeps its value —
   // never ship image_model for a session that has visualization disabled.
-  if (imgModel && st.visualization) st.image_model = { provider: $("vizImageProvider").value, model: imgModel };
+  if (imgModel && imgProv && st.visualization) st.image_model = { provider: imgProv, model: imgModel };
   return st;
 }
 // POST /api/session with the current config, swap the WebSocket. Returns true on
@@ -1713,6 +1822,27 @@ function renderHistory(convs) {
     titleEl.title = `${c.title || ""} — ${t("hist_rename")}: 2×click`;
     const meta = h("div", "text-[10px] text-slate-400", esc(`${c.messages != null ? c.messages + " · " : ""}${histDate(c.created_at)}`));
     item.appendChild(titleEl); item.appendChild(meta);
+    // hover 🗑 → confirm → POST /api/history/delete. If the ACTIVE conversation
+    // was deleted, the server already switched to a fresh one — clear the pane.
+    const del = h("button", "hist-del", "🗑");
+    del.type = "button"; del.title = t("hist_delete");
+    del.onclick = async (e) => {
+      e.stopPropagation();
+      if (S.busy) return; // audit P1: deleting the ACTIVE conversation mid-turn
+      // would new_session+delete under the in-flight chat → FK IntegrityError
+      if (!confirm(t("hist_delete_confirm"))) return;
+      try {
+        const r = await fetch("/api/history/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: S.sid, conversation_id: c.id }) });
+        const j = await r.json().catch(() => ({}));
+        if (!j || j.error || !j.ok) { addBubble("system", "✗ " + ((j && j.error) || "?")); return; }
+        // audit: trust the SERVER's `switched` (the sidebar's c.active can be
+        // a stale snapshot), so a deleted-active conversation never leaves its
+        // dead transcript on screen.
+        if (j.switched || c.active) clearChatPane();
+        refreshHistory();
+      } catch (err) { addBubble("system", "✗ " + err); }
+    };
+    item.appendChild(del);
     // Delay the single-click open so a double-click (rename) on a non-active
     // item doesn't first switch to it and rebuild the list under the editor.
     let clickTimer = null;

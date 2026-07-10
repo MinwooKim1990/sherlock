@@ -256,3 +256,35 @@ def test_auto_title_uses_first_message_of_reopened_conversation(monkeypatch, tmp
     client.post("/api/chat", json={"session_id": sid, "message": "a much later follow-up"})
     conv = sess.agent._storage.get_conversation(cid)
     assert conv.title == "the original first question"
+
+
+def test_history_delete_conversation(monkeypatch, tmp_path):
+    client, server = _client(monkeypatch, tmp_path)
+    sid = _start(client)
+    sess = server.SESSIONS[sid]
+
+    client.post("/api/chat", json={"session_id": sid, "message": "first"})
+    first_cid = sess.agent.conversation_id
+    client.post("/api/history/new", json={"session_id": sid})
+    client.post("/api/chat", json={"session_id": sid, "message": "second"})
+
+    # delete the INACTIVE one
+    r = client.post(
+        "/api/history/delete", json={"session_id": sid, "conversation_id": first_cid}
+    ).json()
+    assert r["ok"] is True and r["switched"] is False and r["removed"] >= 2
+    assert sess.agent._storage.get_conversation(first_cid) is None
+    assert len(client.get("/api/history", params={"session_id": sid}).json()["conversations"]) == 1
+
+    # delete the ACTIVE one → server switches to a fresh conversation first
+    active = sess.agent.conversation_id
+    r = client.post(
+        "/api/history/delete", json={"session_id": sid, "conversation_id": active}
+    ).json()
+    assert r["ok"] is True and r["switched"] is True
+    assert sess.agent.conversation_id != active
+
+    r = client.post(
+        "/api/history/delete", json={"session_id": sid, "conversation_id": "nope"}
+    ).json()
+    assert r == {"error": "no such conversation"}

@@ -131,17 +131,21 @@ def test_unsafe_url_fails_closed(tmp_path):
     assert _events_of(events, "viz.rendered") == []
 
 
-def test_provider_error_becomes_viz_failed(tmp_path):
+def test_provider_error_falls_back_to_llm_render(tmp_path):
+    # omni fix: a model that can't produce an image (text-only viz model, api
+    # error) must NOT kill the slot — the job falls back to the HTML/SVG path.
     gen = _RecImageGen(RuntimeError("image api down"))
+    viz = _ScriptViz(VALID)
     events: list[dict] = []
-    agent = _agent(tmp_path, "err", main=lambda m: IMG_REPLY, image_gen=gen)
+    agent = _agent(tmp_path, "err", main=lambda m: IMG_REPLY, viz_chat=viz, image_gen=gen)
     agent.set_event_sink(events.append)
 
     agent.chat("draw it")
     assert agent.wait_for_viz(timeout=5) is True
-    failed = _events_of(events, "viz.failed")
-    assert len(failed) == 1
-    assert "image api down" in failed[0]["data"]["reason"]
+    assert _events_of(events, "viz.failed") == []
+    assert len(_events_of(events, "viz.rendered")) == 1
+    assert gen.prompts  # the image path WAS attempted first
+    assert len(viz.prompts) == 1  # then the LLM drew it
 
 
 def test_unconfigured_image_job_degrades_to_llm_render(tmp_path):

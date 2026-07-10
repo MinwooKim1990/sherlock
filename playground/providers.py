@@ -300,6 +300,118 @@ def _call_litellm_image(model: str, prompt: str, **extra):
     return litellm.image_generation(prompt=prompt, model=model, **extra)
 
 
+def _viz_flatten_system(messages: list[dict]) -> list[dict]:
+    """Merge system content into the first user turn — image-capable omni
+    models (Gemini omni previews) 400 on developer/system instructions."""
+    sys_txt = "\n\n".join(m.get("content", "") for m in messages if m.get("role") == "system")
+    rest = [m for m in messages if m.get("role") != "system"]
+    if not sys_txt:
+        return rest
+    if rest and rest[0].get("role") == "user":
+        return [{"role": "user", "content": sys_txt + "\n\n" + rest[0].get("content", "")}] + rest[
+            1:
+        ]
+    return [{"role": "user", "content": sys_txt}] + rest
+
+
+_OMNI_400_MARKERS = (
+    "developer instruction",
+    "system instruction",
+    "system_instruction",
+    "response modalities",
+    "response_modalities",
+    "modalities",
+)
+
+
+def _call_litellm_viz(model_id: str, send_messages: list[dict], **extra):
+    """LLM-4 call with OMNI adaptation (v1.12 fix): an omni/image-capable model
+    must still work as the VISUALIZER. Normal shape first; on the specific 400s
+    those models emit, retry with the system merged into the user turn, then
+    once more requesting [image, text] modalities. Any other error re-raises."""
+
+    def _omni_400(exc: Exception, markers) -> bool:
+        # audit: only a 400-class error whose text carries an omni marker may
+        # trigger a retry — a 5xx/timeout merely MENTIONING modalities must not
+        # burn extra paid calls or mask the original error.
+        status = getattr(exc, "status_code", None)
+        if status is not None and int(status) != 400:
+            return False
+        return any(k in str(exc).lower() for k in markers)
+
+    try:
+        return _call_litellm(model_id, send_messages, **extra)
+    except Exception as exc:
+        if not _omni_400(exc, _OMNI_400_MARKERS):
+            raise
+    flat = _viz_flatten_system(send_messages)
+    try:
+        return _call_litellm(model_id, flat, **extra)
+    except Exception as exc:
+        if not _omni_400(exc, ("response modalities", "response_modalities", "modalities")):
+            raise
+    return _call_litellm(model_id, flat, modalities=["image", "text"], **extra)
+
+
+def _image_from_completion_response(resp):
+    """Extract a data:/http image from a chat-completion response (litellm
+    normalises omni image output to message.images[{image_url:{url}}]; some
+    routes put a data URI straight into content). Returns the URI/URL string or
+    None."""
+    msg = resp.choices[0].message if getattr(resp, "choices", None) else None
+    if msg is None:
+        return None
+    imgs = getattr(msg, "images", None) or (msg.get("images") if isinstance(msg, dict) else None)
+    for first in imgs or []:
+        u = first.get("image_url") if isinstance(first, dict) else getattr(first, "image_url", None)
+        if isinstance(u, dict):
+            u = u.get("url")
+        elif u is not None and not isinstance(u, str):
+            u = getattr(u, "url", None)
+        if isinstance(u, str) and (u.startswith("data:image") or u.startswith("http")):
+            return u
+    content = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", None)
+    if isinstance(content, str) and content.strip().startswith("data:image"):
+        return content.strip()
+    return None
+
+
+def make_omni_image_callable(session, role: str = "viz"):  # noqa: ANN001
+    """v1.12 omni: text→image via the CHAT model itself (completion +
+    [image, text] modalities) — no dedicated image model needed. Used for
+    ``image:`` markers when settings.image_model is empty; a text-only model
+    raises here and the library falls back to drawing the visual as HTML/SVG."""
+
+    def _generate(prompt: str):
+        spec = session.models.get(role) or session.models.get("main")
+        model_id, extra = resolve_model_spec(spec, getattr(session, "providers", {}))
+        t0 = time.time()
+        resp = _call_litellm(
+            model_id,
+            [{"role": "user", "content": "Generate ONE image (no text reply): " + prompt}],
+            modalities=["image", "text"],
+            **extra,
+        )
+        session.emit(
+            {
+                "type": "llm.call",
+                "actor": "llm4",
+                "turn": session.turn,
+                "data": {
+                    "role": "viz_image_omni",
+                    "model": model_id,
+                    "latency_ms": int((time.time() - t0) * 1000),
+                },
+            }
+        )
+        out = _image_from_completion_response(resp)
+        if not out:
+            raise ValueError("model returned no image (text-only model?)")
+        return out
+
+    return _generate
+
+
 def make_image_callable(session, spec):  # noqa: ANN001
     """v1.12 Stage V3: a text→image callable for ``image:`` viz markers.
 
@@ -619,7 +731,12 @@ def make_role_callable(role: str, session, emit):
                 if not answer_streamed and not _txt and not _stopped(session):
                     resp = _call_litellm(model_id, send_messages, **extra)
             else:
-                resp = _call_litellm(model_id, send_messages, **extra)
+                # v1.12 omni fix: LLM-4 must work with image-capable omni models
+                # that reject system instructions / demand image modalities.
+                if role == "viz":
+                    resp = _call_litellm_viz(model_id, send_messages, **extra)
+                else:
+                    resp = _call_litellm(model_id, send_messages, **extra)
             text = (resp.choices[0].message.content or "") if resp.choices else ""
             # Reasoning models that expose thinking only on the final message (or
             # the non-streaming fallback) — emit it once if nothing streamed live.

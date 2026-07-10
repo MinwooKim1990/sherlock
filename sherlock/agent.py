@@ -1782,7 +1782,14 @@ class Sherlock:
             # (one provider call, no LLM rounds). Unconfigured → fall through to
             # the normal LLM-4 render of the bare description.
             if job.get("kind") == "image" and self._viz_image_available():
-                return self._render_viz_image_job(job, source, cfg)
+                try:
+                    return self._render_viz_image_job(job, source, cfg)
+                except Exception:
+                    # v1.12 omni fix: the configured path can't produce an image
+                    # (text-only model, provider hiccup) → draw the visual as
+                    # HTML/SVG below instead of killing the slot. Size/lint
+                    # failures inside the image job stay terminal (they return).
+                    pass
             provider = self._viz_llm()
             if _expired():
                 return self._emit_viz_failed(job, "timeout")

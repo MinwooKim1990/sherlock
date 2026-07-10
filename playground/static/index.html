@@ -59,11 +59,20 @@
   html.dark .viz-slot-loading, html.dark .viz-slot-failed { background:#0f172a; border-color:#334155; color:#94a3b8; }
   html.dark .viz-slot-ready { border-color:#293548; background:#111827; }
   /* v1.12 H2: history sidebar */
-  .hist-item { border-radius:8px; padding:5px 8px; cursor:pointer; }
+  .hist-item { border-radius:8px; padding:5px 8px; cursor:pointer; position:relative; }
   .hist-item:hover { background:#f1f5f9; }
   .hist-item.active { background:#e0e7ff; }
   html.dark .hist-item:hover { background:#1e293b; }
   html.dark .hist-item.active { background:#312e81; }
+  /* hover 🗑 delete button on history items */
+  .hist-del { position:absolute; top:4px; right:5px; opacity:0; transition:opacity .15s; font-size:12px; line-height:1; background:transparent; border:0; cursor:pointer; padding:1px 2px; }
+  .hist-item:hover .hist-del { opacity:.8; }
+  .hist-del:hover { opacity:1; }
+  /* setup: connected-provider chips */
+  .conn-chip { border:1px solid #86efac; background:#f0fdf4; color:#15803d; border-radius:9999px; padding:2px 10px; font-size:11px; cursor:pointer; }
+  .conn-chip:hover { background:#dcfce7; }
+  html.dark .conn-chip { background:#052e16; border-color:#166534; color:#4ade80; }
+  html.dark .conn-chip:hover { background:#14532d; }
   /* ---------- dark mode ---------- */
   html.dark body { background:#0b1220 !important; color:#e2e8f0; }
   html.dark .bg-white { background:#111827 !important; }
@@ -110,66 +119,58 @@
 
     <div class="space-y-2">
       <label class="text-sm font-semibold"><span data-i18n="providers">Providers</span> <span class="text-slate-400 font-normal" data-i18n="providers_hint">— connect at least one; mix freely per role</span></label>
-      <div class="grid gap-1.5">
-        <div class="flex gap-2 items-center">
-          <span class="w-[72px] text-xs font-semibold shrink-0">Gemini</span>
-          <input id="key-gemini" type="password" placeholder="AIza…" class="flex-1 border rounded-lg px-3 py-1.5 text-xs mono" />
-          <button data-prov="gemini" class="connectBtn bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg shrink-0">Connect</button>
-          <span id="st-gemini" class="text-[11px] text-slate-400 w-20 text-right shrink-0"></span>
-        </div>
-        <div class="flex gap-2 items-center">
-          <span class="w-[72px] text-xs font-semibold shrink-0">OpenAI</span>
-          <input id="key-openai" type="password" placeholder="sk-…" class="flex-1 border rounded-lg px-3 py-1.5 text-xs mono" />
-          <button data-prov="openai" class="connectBtn bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg shrink-0">Connect</button>
-          <span id="st-openai" class="text-[11px] text-slate-400 w-20 text-right shrink-0"></span>
-        </div>
-        <div class="flex gap-2 items-center">
-          <span class="w-[72px] text-xs font-semibold shrink-0">Anthropic</span>
-          <input id="key-anthropic" type="password" placeholder="sk-ant-…" class="flex-1 border rounded-lg px-3 py-1.5 text-xs mono" />
-          <button data-prov="anthropic" class="connectBtn bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg shrink-0">Connect</button>
-          <span id="st-anthropic" class="text-[11px] text-slate-400 w-20 text-right shrink-0"></span>
-        </div>
-        <div class="flex gap-2 items-center">
-          <span class="w-[72px] text-xs font-semibold shrink-0">DeepInfra</span>
-          <input id="key-deepinfra" type="password" placeholder="open-source models (Llama · Qwen · DeepSeek…)" class="flex-1 border rounded-lg px-3 py-1.5 text-xs mono" />
-          <button data-prov="deepinfra" class="connectBtn bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg shrink-0">Connect</button>
-          <span id="st-deepinfra" class="text-[11px] text-slate-400 w-20 text-right shrink-0"></span>
-        </div>
-        <div class="flex gap-2 items-center">
-          <span class="w-[72px] text-xs font-semibold shrink-0">Together</span>
-          <input id="key-together" type="password" placeholder="Together AI key" class="flex-1 border rounded-lg px-3 py-1.5 text-xs mono" />
-          <button data-prov="together" class="connectBtn bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg shrink-0">Connect</button>
-          <span id="st-together" class="text-[11px] text-slate-400 w-20 text-right shrink-0"></span>
-        </div>
-        <div class="flex gap-2 items-center">
-          <span class="w-[72px] text-xs font-semibold shrink-0">OpenRouter</span>
-          <input id="key-openrouter" type="password" placeholder="sk-or-v1-…" class="flex-1 border rounded-lg px-3 py-1.5 text-xs mono" />
-          <button data-prov="openrouter" class="connectBtn bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg shrink-0">Connect</button>
-          <span id="st-openrouter" class="text-[11px] text-slate-400 w-20 text-right shrink-0"></span>
-        </div>
-        <div class="flex gap-2 items-center">
-          <span class="w-[72px] text-xs font-semibold shrink-0">Local</span>
-          <input id="url-local" placeholder="http://localhost:11434  (Ollama · LM Studio · vLLM)" class="flex-1 border rounded-lg px-3 py-1.5 text-xs mono" />
-          <input id="key-local" type="password" placeholder="key (optional)" class="w-28 border rounded-lg px-2 py-1.5 text-xs mono" />
-          <button data-prov="local" class="connectBtn bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg shrink-0">Connect</button>
-          <span id="st-local" class="text-[11px] text-slate-400 w-20 text-right shrink-0"></span>
-        </div>
+      <div class="flex gap-2 items-center">
+        <select id="connProvider" class="w-28 border rounded-lg px-2 py-1.5 text-xs shrink-0" data-i18n-title="connect_provider" title="provider" aria-label="provider">
+          <option value="gemini">Gemini</option>
+          <option value="openai">OpenAI</option>
+          <option value="anthropic">Anthropic</option>
+          <option value="deepinfra">DeepInfra</option>
+          <option value="together">Together</option>
+          <option value="openrouter">OpenRouter</option>
+          <option value="local">Local</option>
+        </select>
+        <input id="connUrl" placeholder="http://localhost:11434  (Ollama · LM Studio · vLLM)" class="hidden flex-1 min-w-0 border rounded-lg px-3 py-1.5 text-xs mono" />
+        <input id="connKey" type="password" placeholder="API key" data-i18n-ph="connect_key_ph" class="flex-1 min-w-0 border rounded-lg px-3 py-1.5 text-xs mono" />
+        <button id="connectBtn" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg shrink-0">Connect</button>
+        <span id="connStatus" class="text-[11px] text-slate-400 w-10 text-right shrink-0"></span>
       </div>
+      <div id="connChips" class="flex flex-wrap gap-1.5"></div>
       <p id="modelStatus" class="text-xs text-slate-500"></p>
     </div>
 
-    <div class="grid grid-cols-3 gap-3">
-      <div>
-        <label class="text-xs font-semibold text-blue-700"><span data-i18n="role_main">Main</span> · LLM-1</label>
-        <select id="modelMain" class="w-full border rounded-lg px-2 py-2 text-xs mono mt-1" disabled></select>
+    <div class="space-y-1.5">
+      <div class="flex gap-2 items-center">
+        <span class="w-[118px] text-xs font-bold shrink-0" data-i18n="all_roles">all roles</span>
+        <select id="roleAllProv" class="w-28 border rounded-lg px-2 py-1.5 text-xs mono shrink-0" disabled></select>
+        <select id="roleAllModel" class="flex-1 min-w-0 border rounded-lg px-2 py-1.5 text-xs mono" disabled></select>
       </div>
-      <div>
-        <label class="text-xs font-semibold text-green-700"><span data-i18n="role_summary">Summarizer</span> · LLM-2</label>
-        <select id="modelSummary" class="w-full border rounded-lg px-2 py-2 text-xs mono mt-1" disabled></select>
+      <div class="flex gap-2 items-center">
+        <span class="w-[118px] text-xs font-semibold text-blue-700 shrink-0"><span data-i18n="role_main">Main</span> · LLM-1</span>
+        <select id="roleMainProv" class="w-28 border rounded-lg px-2 py-1.5 text-xs mono shrink-0" disabled></select>
+        <select id="roleMainModel" class="flex-1 min-w-0 border rounded-lg px-2 py-1.5 text-xs mono" disabled></select>
       </div>
-      <div>
-        <label class="text-xs font-semibold text-purple-700"><span data-i18n="role_infer">Inferencer</span> · LLM-3</label>
-        <select id="modelInference" class="w-full border rounded-lg px-2 py-2 text-xs mono mt-1" disabled></select>
+      <div class="flex gap-2 items-center">
+        <span class="w-[118px] text-xs font-semibold text-green-700 shrink-0"><span data-i18n="role_summary">Summarizer</span> · LLM-2</span>
+        <select id="roleSummaryProv" class="w-28 border rounded-lg px-2 py-1.5 text-xs mono shrink-0" disabled></select>
+        <select id="roleSummaryModel" class="flex-1 min-w-0 border rounded-lg px-2 py-1.5 text-xs mono" disabled></select>
+      </div>
+      <div class="flex gap-2 items-center">
+        <span class="w-[118px] text-xs font-semibold text-purple-700 shrink-0"><span data-i18n="role_infer">Inferencer</span> · LLM-3</span>
+        <select id="roleInferenceProv" class="w-28 border rounded-lg px-2 py-1.5 text-xs mono shrink-0" disabled></select>
+        <select id="roleInferenceModel" class="flex-1 min-w-0 border rounded-lg px-2 py-1.5 text-xs mono" disabled></select>
+      </div>
+      <div class="flex gap-2 items-center">
+        <span class="w-[118px] text-xs font-semibold text-orange-700 shrink-0"><span data-i18n="viz_role">Visualizer</span> · LLM-4</span>
+        <select id="roleVizProv" class="w-28 border rounded-lg px-2 py-1.5 text-xs mono shrink-0" disabled></select>
+        <select id="roleVizModel" class="flex-1 min-w-0 border rounded-lg px-2 py-1.5 text-xs mono" disabled></select>
+      </div>
+      <!-- v1.12 P1: optional text→image model for `image:` viz markers (shown only with viz on) -->
+      <div id="vizImageRow" class="hidden flex-wrap gap-2 items-center">
+        <span class="w-[118px] text-xs font-semibold text-orange-700 shrink-0" data-i18n="role_image">image (optional)</span>
+        <select id="roleImageProv" class="w-28 border rounded-lg px-2 py-1.5 text-xs mono shrink-0" disabled></select>
+        <select id="roleImageModel" class="flex-1 min-w-0 border rounded-lg px-2 py-1.5 text-xs mono" disabled></select>
+        <input id="vizImageModel" type="text" placeholder="dall-e-3" class="w-32 border rounded-lg px-2 py-1.5 text-xs mono shrink-0" />
+        <span class="basis-full text-[11px] text-slate-400 pl-[126px]" data-i18n="viz_image_help"><code>image:</code> markers render a generated picture — needs an image-capable model + that provider's key</span>
       </div>
     </div>
 
@@ -214,32 +215,11 @@
     </div>
     <p class="text-xs text-slate-500 -mt-2" data-i18n="longterm_help">🧠 Long-term memory keeps durable facts (name, allergies, “remember this”) under the named <b>profile</b> across sessions and restarts. Off by default. <b>Incognito</b> keeps recalling what's stored but pauses new writes.</p>
 
-    <!-- v1.12 B4: LLM-4 inline visualizer -->
+    <!-- v1.12 B4: LLM-4 inline visualizer (its model lives in the role grid above; the image row shows only when this is on) -->
     <div class="flex flex-wrap gap-4 text-sm items-center">
       <label class="flex items-center gap-2" data-i18n-title="viz_title" title="inline data visualizations (LLM-4)">
         <input id="optViz" type="checkbox" /> <b>📊 <span data-i18n="viz">Visualizations</span></b>
       </label>
-      <label class="flex items-center gap-1 text-xs text-slate-500">
-        <span class="text-orange-700 font-semibold" data-i18n="viz_role">Visualizer</span> · LLM-4
-        <select id="modelViz" class="border rounded-lg px-2 py-1 text-xs mono" disabled></select>
-      </label>
-    </div>
-    <!-- v1.12 P1: optional text→image model for `image:` viz markers (shown only with viz on) -->
-    <div id="vizImageRow" class="hidden flex-wrap gap-2 text-sm items-center">
-      <label class="flex items-center gap-1 text-xs text-slate-500">
-        <span class="text-orange-700 font-semibold" data-i18n="viz_image_model">image model</span>
-        <select id="vizImageProvider" class="border rounded-lg px-2 py-1 text-xs mono">
-          <option value="gemini">Gemini</option>
-          <option value="openai" selected>OpenAI</option>
-          <option value="anthropic">Anthropic</option>
-          <option value="deepinfra">DeepInfra</option>
-          <option value="together">Together</option>
-          <option value="openrouter">OpenRouter</option>
-          <option value="local">Local</option>
-        </select>
-        <input id="vizImageModel" type="text" placeholder="dall-e-3" class="border rounded-lg px-2 py-1 text-xs mono w-36" />
-      </label>
-      <span class="text-[11px] text-slate-400" data-i18n="viz_image_help"><code>image:</code> markers render a generated picture — needs an image-capable model + that provider's key</span>
     </div>
     <p class="text-xs text-slate-500 -mt-2" data-i18n="viz_help">📊 When on, LLM-1 (and deep research) may drop an inline chart where a visual genuinely helps; LLM-4 renders it into a self-contained, sandboxed artifact. Off by default.</p>
 
