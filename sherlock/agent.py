@@ -1348,12 +1348,17 @@ class Sherlock:
         consume. Returns the reply with markers → placeholders. Called ONLY when
         ``config.visualization.enabled`` — off (default) → never invoked, so a
         stray marker stays verbatim (byte-identical)."""
+        from sherlock.viz import sanitize_image_allowlist
+
         cap = int(self.config.visualization.max_markers_chat)
         new_text, jobs = _parse_viz_tags(text, cap=cap, id_prefix=f"t{turn_index}")
         if not jobs:
             return new_text
         for job in jobs:
             job["turn"] = turn_index  # so viz.rendered/failed can echo the turn
+            # v1.12 Stage V1: per-job img-src allowlist, sanitised at CONSTRUCTION
+            # (never from model output). V2 fills it; today it is always ().
+            job["image_urls"] = sanitize_image_allowlist(job.get("image_urls", ()))
             self._emit(
                 "viz.pending",
                 "llm4",
@@ -1475,13 +1480,21 @@ class Sherlock:
         cid = self.conversation_id or "_"
         return re.sub(r"[^A-Za-z0-9._-]", "_", str(cid)) or "_"
 
-    def _write_viz_artifact(self, viz_id: str, html: str) -> str:
+    def _write_viz_artifact(self, viz_id: str, html: str, image_urls=()) -> str:  # noqa: ANN001
         """Persist a validated artifact to ``<storage_dir>/viz/<conv_id>/<viz_id>.html``
         and return the path. Both the conversation component and viz_id are
         sanitised for the filesystem, and the resolved path is confined under the
         viz dir (defense-in-depth against a literal ``..`` component slipping the
-        char filter)."""
+        char filter).
+
+        v1.12 Stage V1: when ``image_urls`` is a NON-EMPTY (sanitised) img-src
+        allowlist, a sibling ``<viz_id>.allow`` sidecar (newline-joined URLs) is
+        written so the repair path can re-lint with the SAME pins. An empty
+        allowlist writes NO sidecar — the off/no-image path leaves the viz dir
+        byte-identical to pre-V1."""
         from pathlib import Path as _Path
+
+        from sherlock.viz import sanitize_image_allowlist
 
         base = (_Path(self.config.storage.sqlite_path).resolve().parent / "viz").resolve()
         conv = self._viz_conv_component()
@@ -1491,7 +1504,38 @@ class Sherlock:
             raise ValueError("unsafe viz artifact path")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(html, encoding="utf-8")
+        urls = sanitize_image_allowlist(image_urls)
+        if urls:
+            path.with_suffix(".allow").write_text("\n".join(urls), encoding="utf-8")
         return str(path)
+
+    def _viz_allowlist_for(self, viz_id: str) -> tuple[str, ...]:
+        """v1.12 Stage V1: recover the sanitised img-src allowlist for a viz_id on
+        the REPAIR path. Checks the in-memory ``_pending_viz_jobs`` stash first
+        (most recent wins), then falls back to the ``<viz_id>.allow`` sidecar next
+        to the persisted artifact. MISSING ⇒ ``()`` (strict — a repaired doc that
+        embeds an image but has no recoverable allowlist fails the lint). The
+        sidecar is re-sanitised on read (a tampered file can't widen the pins)."""
+        from pathlib import Path as _Path
+
+        from sherlock.viz import sanitize_image_allowlist
+
+        for job in reversed(getattr(self, "_pending_viz_jobs", None) or []):
+            if job.get("viz_id") == viz_id:
+                return sanitize_image_allowlist(job.get("image_urls", ()))
+        try:
+            base = (_Path(self.config.storage.sqlite_path).resolve().parent / "viz").resolve()
+            safe = re.sub(r"[^A-Za-z0-9._-]", "_", str(viz_id))
+            # F4: look up ONLY the current conversation's own sidecar. An rglob over
+            # ALL conversation dirs could recover a DIFFERENT conversation's pins,
+            # since chat viz_ids (``t{turn}-{n}``) collide across conversations.
+            cand = (base / self._viz_conv_component() / f"{safe}.allow").resolve()
+            if str(cand).startswith(str(base) + os.sep) and cand.is_file():
+                raw = cand.read_text(encoding="utf-8").splitlines()
+                return sanitize_image_allowlist(raw)
+        except Exception:
+            pass
+        return ()
 
     def _finalize_viz_render(self, job: dict, html: str) -> None:
         """A render passed the lint: stamp the validated meta, best-effort persist
@@ -1504,7 +1548,9 @@ class Sherlock:
         path = None
         if cfg.save_artifacts:
             try:
-                path = self._write_viz_artifact(job.get("viz_id"), validated)
+                path = self._write_viz_artifact(
+                    job.get("viz_id"), validated, job.get("image_urls", ())
+                )
             except Exception:
                 path = None  # best-effort: a write failure never drops the render
         data = {
@@ -1559,6 +1605,11 @@ class Sherlock:
             )
             if s
         )
+        # v1.12 Stage V1: the per-job img-src allowlist (sanitised at construction;
+        # always () today). Thread it into BOTH the generation system prompt (so the
+        # CSP the model is told to emit matches) and every lint call.
+        allowlist = _viz.sanitize_image_allowlist(job.get("image_urls", ()))
+        gen_system = _viz.build_generation_system(allowlist)
 
         def _expired() -> bool:
             return _time.monotonic() > deadline
@@ -1568,11 +1619,9 @@ class Sherlock:
             if _expired():
                 return self._emit_viz_failed(job, "timeout")
             html = _viz.strip_code_fences(
-                self._viz_chat(
-                    provider, _viz.VIZ_GENERATION_SYSTEM, _viz.build_generation_user(job)
-                )
+                self._viz_chat(provider, gen_system, _viz.build_generation_user(job))
             )
-            ok, errors = _viz._viz_static_lint(html, source, cfg)
+            ok, errors = _viz._viz_static_lint(html, source, cfg, allowlist)
 
             # Self-review rounds (checklist self-critique) — only while failing.
             for _ in range(self_reviews):
@@ -1581,11 +1630,9 @@ class Sherlock:
                 if _expired():
                     return self._emit_viz_failed(job, "timeout")
                 html = _viz.strip_code_fences(
-                    self._viz_chat(
-                        provider, _viz.VIZ_GENERATION_SYSTEM, _viz.build_self_review_user(html)
-                    )
+                    self._viz_chat(provider, gen_system, _viz.build_self_review_user(html))
                 )
-                ok, errors = _viz._viz_static_lint(html, source, cfg)
+                ok, errors = _viz._viz_static_lint(html, source, cfg, allowlist)
 
             # Repair rounds (explicit lint errors fed back) — only while failing.
             rounds = 0
@@ -1599,11 +1646,9 @@ class Sherlock:
                     {"viz_id": job.get("viz_id"), "round": rounds, "errors": errors},
                 )
                 html = _viz.strip_code_fences(
-                    self._viz_chat(
-                        provider, _viz.VIZ_GENERATION_SYSTEM, _viz.build_repair_user(html, errors)
-                    )
+                    self._viz_chat(provider, gen_system, _viz.build_repair_user(html, errors))
                 )
-                ok, errors = _viz._viz_static_lint(html, source, cfg)
+                ok, errors = _viz._viz_static_lint(html, source, cfg, allowlist)
 
             if not ok:
                 reason = "; ".join(errors)[:500] or "validation failed"
@@ -1661,6 +1706,8 @@ class Sherlock:
         # the whole body best-effort: on ANY failure return the original answer so
         # the caller still persists the report and emits deep_research.done.
         try:
+            from sherlock.viz import sanitize_image_allowlist
+
             cap = int(self.config.visualization.max_markers_report)
             new_text, jobs = _parse_viz_tags(answer, cap=cap, id_prefix=str(research_id))
             if not jobs:
@@ -1669,6 +1716,9 @@ class Sherlock:
                 job["research_id"] = research_id
                 if turn_index is not None:
                     job["turn"] = turn_index
+                # v1.12 Stage V1: per-job img-src allowlist, sanitised at
+                # CONSTRUCTION (never from model output). V2 fills it; today ().
+                job["image_urls"] = sanitize_image_allowlist(job.get("image_urls", ()))
                 data = {
                     "research_id": research_id,
                     "viz_id": job["viz_id"],

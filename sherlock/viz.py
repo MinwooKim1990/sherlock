@@ -16,6 +16,7 @@ an unsafe or lying artifact.
 
 from __future__ import annotations
 
+import html
 import re
 from html.parser import HTMLParser
 
@@ -23,15 +24,94 @@ from html.parser import HTMLParser
 # Required skeleton                                                            #
 # --------------------------------------------------------------------------- #
 
+# v1.12 Stage V1: IMAGE SECURITY CORE. The visualizer may embed web images WITHOUT
+# weakening the sandbox by pinning the CSP ``img-src`` to an EXACT per-job URL
+# allowlist. The allowlist is populated at JOB CONSTRUCTION (never from model
+# output) and sanitised so nothing in it can break out of the CSP meta string or
+# the lint (see ``sanitize_image_allowlist``). V1 ships the mechanism with an
+# EMPTY allowlist everywhere, so every emitted/injected CSP is byte-identical to
+# the pre-V1 constant; V2 will populate it.
+#
 # The CSP meta LLM-4 must emit verbatim (the prompt asks for exactly this). The
-# lint checks the individual directives (normalised, substring) rather than a
-# byte-exact match, so trivial whitespace/quote drift doesn't force a needless
-# repair round while still proving every directive is present.
-CSP_META = (
-    '<meta http-equiv="Content-Security-Policy" '
-    "content=\"default-src 'none'; script-src 'unsafe-inline'; "
-    "style-src 'unsafe-inline'; img-src data:\">"
-)
+# lint checks the individual directives (normalised, substring for the fixed
+# directives; a real parse for ``img-src``) rather than a byte-exact match, so
+# trivial whitespace/quote drift doesn't force a needless repair round while
+# still proving every directive is present.
+
+
+def build_csp_meta(allowed: tuple[str, ...] = ()) -> str:
+    """The inline CSP ``<meta>`` for a viz artifact. ``img-src`` is ALWAYS
+    ``data:``; when ``allowed`` is non-empty each EXACT URL is appended as an
+    additional ``img-src`` source (space-joined, verbatim). Every other directive
+    is fixed and inert in the opaque-origin sandbox. ``build_csp_meta(())`` is
+    byte-identical to the pre-V1 ``CSP_META`` constant."""
+    img_src = "img-src data:"
+    if allowed:
+        img_src = img_src + " " + " ".join(allowed)
+    content = (
+        "default-src 'none'; script-src 'unsafe-inline'; " "style-src 'unsafe-inline'; " + img_src
+    )
+    return '<meta http-equiv="Content-Security-Policy" content="' + content + '">'
+
+
+# Module-level constant (empty allowlist) so existing references stay
+# byte-identical to today.
+CSP_META = build_csp_meta()
+
+
+def sanitize_image_allowlist(urls) -> tuple[str, ...]:  # noqa: ANN001
+    """Return the SAFE subset of a proposed per-job image ``img-src`` allowlist.
+
+    This is the exfil-sensitive gate. It runs at JOB CONSTRUCTION on
+    caller-supplied URLs — NEVER on model output. An entry is kept ONLY if it:
+      * is a ``str`` that starts with ``http://`` or ``https://``;
+      * is at most 500 bytes (utf-8);
+      * is composed ENTIRELY of printable ASCII (0x21–0x7E) with NONE of the
+        forbidden metacharacters — space, ``'``, ``"``, ``;``, ``\\``, backtick,
+        ``<``, ``>``, ``(``, ``)``, ``*`` — so it can neither break out of the
+        double-quoted, semicolon-delimited CSP meta string / the lint, widen to a
+        wildcard host (``*``), nor smuggle Unicode whitespace (NBSP, NEL,
+        U+2028/29, U+3000) that a later ``split()`` on the CSP would fragment
+        (this printable-ASCII test subsumes the old control-char/DEL checks);
+      * carries no HTML entity (``html.unescape(u) == u``) that ``HTMLParser``
+        would decode in an ``<img src>`` value and thereby desync from the
+        byte-exact allowlist compare.
+    Order is preserved, duplicates are dropped, and the result is capped at 4."""
+    out: list[str] = []
+    for u in urls or ():
+        if not isinstance(u, str):
+            continue
+        if not (u.startswith("http://") or u.startswith("https://")):
+            continue
+        if len(u.encode("utf-8")) > 500:
+            continue
+        # F2: require every char to be printable ASCII (0x21–0x7E) AND not a
+        # forbidden metacharacter. This subsumes the old control/DEL checks and
+        # additionally drops Unicode whitespace (NBSP \xa0, NEL \x85, U+2028/29,
+        # U+3000) that would otherwise fragment the URL when the CSP is later
+        # re-split on Unicode whitespace, false-rejecting the mandated policy.
+        if any((ch in _ALLOWLIST_FORBIDDEN_CHARS) or not (0x21 <= ord(ch) <= 0x7E) for ch in u):
+            continue
+        # F6: a URL carrying an HTML entity (e.g. ``&copy`` / ``&amp``) would
+        # survive the char gate but be entity-decoded by HTMLParser in the
+        # ``<img src>`` value, breaking the byte-exact allowlist compare → a
+        # job-killing false reject. Drop it now if unescaping would change it.
+        if html.unescape(u) != u:
+            continue
+        if u in out:
+            continue
+        out.append(u)
+        if len(out) >= 4:
+            break
+    return tuple(out)
+
+
+# The metacharacters an allowlist entry may NOT contain (see sanitize_image_allowlist).
+# The printable-ASCII test there already blocks whitespace, control chars, DEL and
+# every non-ASCII char; this set names the printable hostiles (plus the space) so
+# the intent stays legible. ``*`` is listed EXPLICITLY (F3) so an entry can never
+# widen the CSP img-src to a wildcard host, even though the ASCII gate also drops it.
+_ALLOWLIST_FORBIDDEN_CHARS = frozenset(" \t\n\r\x0b\x0c'\";\\`<>()*")
 
 # v1.12 Stage B4: the iframe→parent signalling protocol. The sandboxed artifact
 # runs at an OPAQUE origin (sandbox="allow-scripts", NO allow-same-origin), so the
@@ -53,14 +133,89 @@ ERROR_HANDLER = (
 # re-hydrated artifact records HOW it was validated (Stage B3+ may add runtime).
 VALIDATED_META = '<meta name="sherlock-viz-validated" content="static">'
 
-# The CSP directives that must all be present (normalised substring match).
+# The FIXED CSP directives that must all be present (normalised substring match).
+# ``img-src`` is NOT here — it is parsed for real (L1) so the per-job allowlist can
+# be enforced byte-exactly instead of by a loose substring.
 _CSP_REQUIRED = (
     "content-security-policy",
     "default-src 'none'",
     "script-src 'unsafe-inline'",
     "style-src 'unsafe-inline'",
-    "img-src data:",
 )
+
+
+# --------------------------------------------------------------------------- #
+# CSP directive parsing (Stage V1 L1)                                          #
+# --------------------------------------------------------------------------- #
+
+# A whole ``<meta …>`` tag (no ``>`` may appear inside — the allowlist sanitiser
+# forbids ``>`` so a pinned URL can never smuggle one in).
+_META_TAG_RE = re.compile(r"<meta\b[^>]*>", re.IGNORECASE)
+# The ``content="…"`` / ``content='…'`` attribute value inside one meta tag.
+_META_CONTENT_RE = re.compile(r"""content\s*=\s*"([^"]*)"|content\s*=\s*'([^']*)'""", re.IGNORECASE)
+
+
+def _iter_csp_contents(html: str):
+    """Yield the ``content`` value of every ``http-equiv=Content-Security-Policy``
+    meta tag (there is normally exactly one; a second can only ever intersect to a
+    STRICTER policy, but we check them all so none can hide a bad source)."""
+    for tag in _META_TAG_RE.findall(html):
+        low = tag.lower()
+        if "http-equiv" not in low or "content-security-policy" not in low:
+            continue
+        m = _META_CONTENT_RE.search(tag)
+        if m:
+            yield m.group(1) if m.group(1) is not None else m.group(2)
+
+
+def _parse_csp_directives(content: str) -> list[tuple[str, list[str]]]:
+    """``content`` → ``[(directive_name_lower, [source tokens verbatim]), …]``.
+    Sources are kept BYTE-EXACT (not lowercased) so the allowlist compare is
+    byte-equal."""
+    out: list[tuple[str, list[str]]] = []
+    for part in content.split(";"):
+        toks = part.split()
+        if not toks:
+            continue
+        out.append((toks[0].lower(), toks[1:]))
+    return out
+
+
+def _looks_like_url_source(tok: str) -> bool:
+    """True if a CSP source token is a URL/host (scheme, ``//host``, or bare
+    ``a.b`` host) rather than an inert keyword like ``'none'`` / ``'unsafe-inline'``
+    / a nonce / hash. Used to reject a URL creeping into a NON-``img-src``
+    directive."""
+    if "//" in tok:
+        return True
+    if re.match(r"^[A-Za-z][A-Za-z0-9+.\-]*:$", tok):  # bare scheme e.g. data: https:
+        return True
+    if re.match(r"^(\*\.)?[A-Za-z0-9\-]+(\.[A-Za-z0-9\-]+)+", tok):  # bare host
+        return True
+    return False
+
+
+def _img_src_required_str(allowed: tuple[str, ...]) -> str:
+    """The ``img-src`` directive the artifact must carry, for the missing-directive
+    message. Empty allowlist → ``img-src data:`` (byte-identical to pre-V1)."""
+    s = "img-src data:"
+    if allowed:
+        s = s + " " + " ".join(allowed)
+    return s
+
+
+# The external src/href DETECTOR (Stage V1 L2). Formerly the first entry of
+# ``_FORBIDDEN``; now pulled out so a detected external ref can be RECONCILED
+# against parser-approved ``<img src>`` allowlist entries instead of always
+# failing. Matches ``src=/href=`` pointing at ``http(s)://`` or protocol-relative
+# ``//``; data: URIs, ``#`` fragments and single-slash local paths do NOT match.
+_SRC_HREF_EXTERNAL_RE = re.compile(r"""(?:src|href)\s*=\s*["']?\s*(?:https?:)?//""", re.IGNORECASE)
+
+# Stage V1 L2 (F1): matches a PARSER-RESOLVED attribute VALUE (entities already
+# decoded) that points at an external origin — ``http(s)://`` or protocol-relative
+# ``//``. Used to build the explicit unapproved-reference list so an obfuscated
+# external ref that the count-only reconciliation would offset can't slip through.
+_EXTERNAL_VALUE_RE = re.compile(r"\s*(?:https?:)?//", re.IGNORECASE)
 
 # Structural tags whose open/close balance is checked. Everything else (incl.
 # SVG shape elements and void HTML elements) is exempt — void/self-closing tags
@@ -75,17 +230,15 @@ _STRUCTURAL = frozenset({"html", "body", "div", "svg", "script", "style"})
 # (compiled regex, human message). Case-insensitive. Kept as a table so the
 # repair prompt can feed the exact message back to LLM-4.
 _FORBIDDEN: list[tuple[re.Pattern[str], str]] = [
-    # External resource refs: src=/href= pointing at http(s):// or a
-    # protocol-relative //. Data URIs (img-src data:), fragment refs (#id) and
-    # single-slash local paths are NOT matched. Inline SVG xmlns="http://..."
-    # is an ``xmlns=`` attribute, not src/href, so it is left alone.
-    (
-        re.compile(r"""(?:src|href)\s*=\s*["']?\s*(?:https?:)?//""", re.IGNORECASE),
-        "external resource reference (src=/href= to http(s):// or //) — inline everything",
-    ),
+    # NOTE: the src=/href= external-ref detector that used to live HERE (first
+    # entry) is now ``_SRC_HREF_EXTERNAL_RE``, reconciled against the allowlist in
+    # the L2 reference scan (Stage V1) so a pinned ``<img src>`` can pass while a
+    # ref the parser can't confirm still fails.
     # F3 (defense-in-depth): further external-reference forms the src/href scan
     # above misses. The sandbox CSP already contains these (default-src 'none'),
     # but the lint is itself a security control, so we reject them statically.
+    # These get ZERO allowlist carve-out: a srcset / css url() / form action to an
+    # allowlisted URL still FAILS — only an ``<img src>`` may bear a pinned URL.
     # OUT OF SCOPE (documented as contained): entity-decoded attribute values
     # (e.g. src=&#104;ttp…) — the sandbox CSP blocks the fetch regardless.
     (
@@ -157,12 +310,20 @@ class _VizHTMLParser(HTMLParser):
         self.balance_errors: list[str] = []
         self._suppress = 0  # >0 while inside script/style (text ignored)
         self.text_parts: list[str] = []
+        # Stage V1 L2: every (tag, attr, value) for src/href/srcset, with the value
+        # RESOLVED by the parser (entities decoded). Reconciled against the raw-text
+        # external-ref regex so an obfuscation the parser normalises away is caught.
+        self.attr_refs: list[tuple[str, str, str]] = []
 
     def handle_starttag(self, tag: str, attrs) -> None:  # noqa: ANN001
         if tag in _STRUCTURAL:
             self.stack.append(tag)
         if tag in ("script", "style"):
             self._suppress += 1
+        for name, value in attrs:
+            lname = (name or "").lower()
+            if lname in ("src", "href", "srcset") and value is not None:
+                self.attr_refs.append((tag.lower(), lname, value))
 
     def handle_endtag(self, tag: str) -> None:
         if tag in ("script", "style") and self._suppress > 0:
@@ -219,44 +380,98 @@ def _significant_numbers(text: str) -> list[str]:
     return out
 
 
-def _viz_static_lint(html: str, source_text: str, cfg) -> tuple[bool, list[str]]:  # noqa: ANN001
+def _viz_static_lint(
+    html: str,
+    source_text: str,
+    cfg,  # noqa: ANN001
+    image_allowlist: tuple[str, ...] = (),
+) -> tuple[bool, list[str]]:
     """Statically validate an LLM-4 HTML artifact.
 
     Returns ``(ok, errors)`` where ``errors`` are precise English strings the
     repair prompt feeds back verbatim. All checks run (no short-circuit) so a
     single repair round sees every problem at once.
 
-    Checks: non-empty; ``len(utf-8) <= cfg.max_html_bytes``; required CSP meta +
-    the ``{sherlockViz:'ready'}`` ready signal + the ``window.onerror`` →
-    ``{sherlockViz:'error'}`` handler present; structural tags balanced (stdlib
-    ``html.parser``); no forbidden patterns (external refs / network / storage /
-    frame-busting / disallowed elements / ``javascript:``); and DATA FIDELITY —
-    every significant number rendered in the artifact's TEXT must appear in
-    ``source_text`` (the marker description + data hint + surrounding reply
-    slice), comma/space-insensitive.
+    ``image_allowlist`` is the per-job set of EXACT web-image URLs the artifact may
+    reference (sanitised at job construction, see ``sanitize_image_allowlist``). It
+    defaults to ``()`` — with an empty allowlist this function's ``(ok, errors)``
+    output is BYTE-IDENTICAL to the pre-Stage-V1 behaviour.
+
+    Checks: non-empty; size cap (``max_image_html_bytes`` for an image-bearing
+    artifact, else ``max_html_bytes``); the required CSP meta — the fixed
+    directives by substring PLUS a real parse of ``img-src`` where every source
+    must be ``data:`` or an allowlist entry (L1), and no other directive may carry
+    a URL source; the ``{sherlockViz:'ready'}`` ready signal + the
+    ``window.onerror`` → ``{sherlockViz:'error'}`` handler; structural tags
+    balanced (stdlib ``html.parser``); the external-reference scan reconciled
+    against parser-approved ``<img src>`` allowlist entries (L2); no other
+    forbidden patterns (srcset / css url() / network / storage / frame-busting /
+    disallowed elements / ``javascript:``); and DATA FIDELITY — every significant
+    number rendered in the artifact's TEXT must appear in ``source_text``.
     """
     errors: list[str] = []
 
     if not html or not html.strip():
         return False, ["empty document"]
 
+    # Stage V1 byte caps: an IMAGE-BEARING artifact (embeds a data:image OR an
+    # allowlisted web image) may be much larger than a pure-vector chart. Detect it
+    # cheaply (no parser): a ``data:image`` substring, or an allowlist URL present
+    # verbatim. Empty allowlist + no data:image ⇒ the 64KB cap, unchanged.
+    image_bearing = ("data:image" in html.lower()) or bool(
+        image_allowlist and any(u in html for u in image_allowlist)
+    )
     # F4: reserve headroom for the validated-meta injected in the finalize path.
     # ``_finalize_viz_render`` runs ``inject_validated_meta`` (~54 bytes) and emits
-    # ``bytes=len(validated)``; capping the pre-injection HTML at
-    # ``max_html_bytes - 128`` guarantees the emitted payload stays under the cap.
-    max_bytes = int(getattr(cfg, "max_html_bytes", 64_000)) - 128
+    # ``bytes=len(validated)``; capping the pre-injection HTML at cap - 128
+    # guarantees the emitted payload stays under the cap.
+    if image_bearing:
+        cap = int(getattr(cfg, "max_image_html_bytes", 600_000))
+    else:
+        cap = int(getattr(cfg, "max_html_bytes", 64_000))
+    max_bytes = cap - 128
     n_bytes = len(html.encode("utf-8"))
     if n_bytes > max_bytes:
         errors.append(f"document too large: {n_bytes} bytes exceeds {max_bytes}")
 
+    # ---- CSP: fixed directives (substring) + a real img-src parse (L1) ----
     norm_html = _norm(html)
     missing = [d for d in _CSP_REQUIRED if d not in norm_html]
+    img_present = False
+    img_has_data = False
+    img_bad: list[str] = []
+    nonimg_url: list[tuple[str, str]] = []
+    for content in _iter_csp_contents(html):
+        for name, sources in _parse_csp_directives(content):
+            if name == "img-src":
+                img_present = True
+                for tok in sources:
+                    if tok == "data:":
+                        img_has_data = True
+                    if tok != "data:" and tok not in image_allowlist:
+                        img_bad.append(tok)
+            else:
+                for tok in sources:
+                    if _looks_like_url_source(tok):
+                        nonimg_url.append((name, tok))
+    # F5: img-src must carry ``data:`` — an img-src with ZERO sources or only
+    # ``'none'`` was ACCEPTED by the V1 parse but pre-V1 REJECTED it (the fixed
+    # "img-src data:" substring was absent). Require the data: token so the
+    # missing-directive message fires for those docs exactly as before.
+    if not img_present or not img_has_data:
+        # Fold the missing img-src into the SAME combined message the fixed
+        # directives use, in the same position (last) as pre-V1.
+        missing.append(_img_src_required_str(image_allowlist))
     if missing:
         errors.append(
             "missing Content-Security-Policy meta directive(s): "
             + ", ".join(missing)
-            + f" — emit exactly: {CSP_META}"
+            + f" — emit exactly: {build_csp_meta(image_allowlist)}"
         )
+    for tok in img_bad:
+        errors.append(f"img-src has a non-allowlisted source: {tok}")
+    for name, tok in nonimg_url:
+        errors.append(f"CSP {name} must not carry a URL source: {tok}")
 
     if not _POSTMESSAGE_READY.search(html):
         errors.append(
@@ -282,7 +497,45 @@ def _viz_static_lint(html: str, source_text: str, cfg) -> tuple[bool, list[str]]
     if parser.stack:
         errors.append("unbalanced tags: unclosed " + ", ".join(f"<{t}>" for t in parser.stack))
 
-    # Forbidden patterns (scan the whole document).
+    # L2 external-reference scan (runs FIRST, at the position the old src/href
+    # forbidden entry used to — so error ORDER is unchanged for the empty
+    # allowlist). The regex DETECTS every external src/href in the raw text; the
+    # parser RESOLVES entities and approves ONLY an ``<img src>`` whose value is
+    # byte-equal to an allowlist entry. If the two counts disagree, some detected
+    # ref is NOT a confirmed allowlisted image (a non-<img> ref, a srcset, an
+    # obfuscation the parser normalises away) → fail. ZERO carve-out for anything
+    # but ``<img src>``.
+    regex_hits = len(_SRC_HREF_EXTERNAL_RE.findall(html))
+    approved_img = sum(
+        1
+        for (tag, attr, value) in parser.attr_refs
+        if tag == "img" and attr == "src" and value in image_allowlist
+    )
+    # F1: the count-only reconciliation (regex_hits vs approved_img) can be OFFSET —
+    # an entity-encoded allowlisted <img> (regex miss, parser approve) cancels a raw
+    # external ref (regex hit, parser miss), yielding a wrong ACCEPT. Also require
+    # that NO parser-resolved ref is an unapproved external/allowlisted value: every
+    # such ref must be exactly an <img src> whose value is an allowlist entry.
+    unapproved_refs = [
+        (tag, attr, value)
+        for (tag, attr, value) in parser.attr_refs
+        if (_EXTERNAL_VALUE_RE.match(value) or value in image_allowlist)
+        and not (tag == "img" and attr == "src" and value in image_allowlist)
+    ]
+    if regex_hits != approved_img or (image_allowlist and unapproved_refs):
+        if image_allowlist:
+            errors.append(
+                "forbidden: external reference the parser could not confirm as an "
+                "allowlisted <img src>"
+            )
+        else:
+            # Empty allowlist ⇒ byte-identical to the pre-V1 forbidden message.
+            errors.append(
+                "forbidden: external resource reference (src=/href= to http(s):// or //)"
+                " — inline everything"
+            )
+
+    # Other forbidden patterns (scan the whole document).
     for pattern, message in _FORBIDDEN:
         if pattern.search(html):
             errors.append(f"forbidden: {message}")
@@ -365,44 +618,55 @@ LANGUAGE_RULE = (
     "SAME language as the material below — never translate the data's language."
 )
 
-VIZ_GENERATION_SYSTEM = (
-    "You are a visualization coder. Produce ONE self-contained HTML document that "
-    "renders a single small data visualization for embedding in a locked-down "
-    "sandboxed iframe. Output ONLY the HTML document — no prose, no markdown, no "
-    "code fences.\n"
-    "\n"
-    "REQUIRED SKELETON (exactly):\n"
-    "- Start with <!DOCTYPE html>.\n"
-    "- In <head>, include this inline meta VERBATIM:\n"
-    f"  {CSP_META}\n"
-    "- ALL CSS in inline <style>; ALL JS in inline <script>. No external "
-    "stylesheets, scripts, fonts, images, or imports of any kind.\n"
-    "- At the TOP of your <script>, install an error handler so a runtime throw is "
-    "reported to the host:\n"
-    "  window.onerror = (e) => parent.postMessage({sherlockViz:'error', "
-    "message:String(e)}, '*');\n"
-    "- After the visual has painted, signal readiness as the LAST thing your script "
-    "does (optionally carry the content height):\n"
-    "  parent.postMessage({sherlockViz:'ready', height: document.documentElement."
-    "scrollHeight}, '*');\n"
-    "\n"
-    "TECHNIQUE: use inline SVG, <canvas>, or plain styled DOM — your choice. "
-    "Interactivity (hover, click, tooltips) is allowed as long as it stays "
-    "inside the document. Keep the whole document under the size cap.\n"
-    "\n"
-    "DATA FIDELITY: visualize ONLY the numbers and labels present in the material "
-    "below — invent nothing. Do NOT introduce axis ticks, totals, percentages, or "
-    "rounded values that are not in the material. If a number is not in the "
-    "material, it must not appear in the output.\n"
-    "\n"
-    f"{LANGUAGE_RULE}\n"
-    "\n"
-    "SANDBOX: no network (no fetch/XMLHttpRequest/WebSocket/EventSource/"
-    "sendBeacon), no storage (cookie/localStorage/indexedDB), no navigation, no "
-    "window.top/window.parent access — signal ONLY via parent.postMessage("
-    "{sherlockViz:'ready'|'error'}), no "
-    "<iframe>/<object>/<embed>/<base>, no javascript: URLs, no external URLs."
-)
+
+def build_generation_system(allowed: tuple[str, ...] = ()) -> str:
+    """The LLM-4 generation system prompt, threaded with the per-job image
+    allowlist so the CSP meta the model is told to emit VERBATIM matches the one
+    the lint enforces. ``build_generation_system(())`` is byte-identical to the
+    pre-Stage-V1 constant (V1's allowlist is always empty)."""
+    return (
+        "You are a visualization coder. Produce ONE self-contained HTML document that "
+        "renders a single small data visualization for embedding in a locked-down "
+        "sandboxed iframe. Output ONLY the HTML document — no prose, no markdown, no "
+        "code fences.\n"
+        "\n"
+        "REQUIRED SKELETON (exactly):\n"
+        "- Start with <!DOCTYPE html>.\n"
+        "- In <head>, include this inline meta VERBATIM:\n"
+        f"  {build_csp_meta(allowed)}\n"
+        "- ALL CSS in inline <style>; ALL JS in inline <script>. No external "
+        "stylesheets, scripts, fonts, images, or imports of any kind.\n"
+        "- At the TOP of your <script>, install an error handler so a runtime throw is "
+        "reported to the host:\n"
+        "  window.onerror = (e) => parent.postMessage({sherlockViz:'error', "
+        "message:String(e)}, '*');\n"
+        "- After the visual has painted, signal readiness as the LAST thing your script "
+        "does (optionally carry the content height):\n"
+        "  parent.postMessage({sherlockViz:'ready', height: document.documentElement."
+        "scrollHeight}, '*');\n"
+        "\n"
+        "TECHNIQUE: use inline SVG, <canvas>, or plain styled DOM — your choice. "
+        "Interactivity (hover, click, tooltips) is allowed as long as it stays "
+        "inside the document. Keep the whole document under the size cap.\n"
+        "\n"
+        "DATA FIDELITY: visualize ONLY the numbers and labels present in the material "
+        "below — invent nothing. Do NOT introduce axis ticks, totals, percentages, or "
+        "rounded values that are not in the material. If a number is not in the "
+        "material, it must not appear in the output.\n"
+        "\n"
+        f"{LANGUAGE_RULE}\n"
+        "\n"
+        "SANDBOX: no network (no fetch/XMLHttpRequest/WebSocket/EventSource/"
+        "sendBeacon), no storage (cookie/localStorage/indexedDB), no navigation, no "
+        "window.top/window.parent access — signal ONLY via parent.postMessage("
+        "{sherlockViz:'ready'|'error'}), no "
+        "<iframe>/<object>/<embed>/<base>, no javascript: URLs, no external URLs."
+    )
+
+
+# Module-level constant (empty allowlist) so existing references stay
+# byte-identical to today.
+VIZ_GENERATION_SYSTEM = build_generation_system()
 
 
 def build_generation_user(job: dict) -> str:

@@ -464,6 +464,11 @@ class VisualizationConfig(BaseModel):
     max_markers_report: int = 4
     # Upper bound on a single rendered artifact's HTML payload (bytes).
     max_html_bytes: int = 64_000
+    # v1.12 Stage V1: a HIGHER cap that applies ONLY to an image-bearing artifact
+    # (one that embeds a data:image or an allowlisted web image) — an embedded
+    # image legitimately needs far more room than a pure-vector chart. A non-image
+    # artifact still uses max_html_bytes.
+    max_image_html_bytes: int = 600_000
     # Persist rendered artifacts to storage so a reopened session can re-hydrate
     # them (Stage B3+). Best-effort; off = render-and-forget.
     save_artifacts: bool = True

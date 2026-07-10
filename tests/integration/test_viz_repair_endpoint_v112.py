@@ -40,6 +40,18 @@ BROKEN_INPUT = (
 # A repair output that STILL fails the static lint (no ready signal).
 STILL_BROKEN = BROKEN_INPUT
 
+# v1.12 Stage V1: an allowlisted web image. A repaired doc that embeds it passes
+# the lint ONLY when the per-job allowlist is recovered (stash or .allow sidecar).
+IMG_URL = "https://cdn.example.com/logo.png"
+IMG_VALID = (
+    "<!DOCTYPE html><html><head>\n"
+    '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; '
+    "script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: " + IMG_URL + '">\n'
+    '</head><body><div><img src="' + IMG_URL + '"><span>Q1 12</span><span>Q2 19</span></div>\n'
+    "<script>window.onerror=(e)=>parent.postMessage({sherlockViz:'error',message:String(e)},'*');"
+    "parent.postMessage({sherlockViz:'ready'}, '*');</script></body></html>"
+)
+
 
 class _ScriptViz:
     def __init__(self, *responses):
@@ -321,6 +333,114 @@ def test_get_artifact_rejects_path_traversal(monkeypatch):
         g = client.get(f"/api/viz/{bad}", params={"session_id": sid})
         assert g.status_code == 404 or g.json().get("error")
         assert "TOP-SECRET-DO-NOT-SERVE" not in g.text
+
+
+# ------------------------------------------------------------ V1 allowlist parity
+
+
+def test_repair_with_stashed_allowlist_accepts_allowlisted_img(monkeypatch):
+    """v1.12 Stage V1: the img-src allowlist survives to the repair path via the
+    in-memory _pending_viz_jobs stash — a repaired doc embedding the allowlisted
+    <img> re-lints clean."""
+    client, server = _client(
+        monkeypatch,
+        viz_responses=[IMG_VALID],
+        viz_cfg={"enabled": True, "max_repair_rounds": 2},
+    )
+    sid = _start(client)
+    sess = server.SESSIONS[sid]
+    sess.viz_ids.add("t1-1")
+    # the stashed job carries the sanitised per-job allowlist for this viz_id
+    sess.agent._pending_viz_jobs.append({"viz_id": "t1-1", "image_urls": (IMG_URL,)})
+
+    r = client.post(
+        "/api/viz/repair",
+        json={"session_id": sid, "viz_id": "t1-1", "html": BROKEN_INPUT, "error": "boom"},
+    ).json()
+    assert r["ok"] is True, r
+    assert r["validated"] == "runtime"
+    assert IMG_URL in r["html"]
+
+
+def test_repair_missing_allowlist_rejects_allowlisted_img(monkeypatch):
+    """v1.12 Stage V1 (strict): with NO stash entry and NO sidecar the allowlist
+    recovers as () — so the very same repaired doc, now bearing an unpinned <img>,
+    FAILS the re-lint. Missing ⇒ empty ⇒ reject."""
+    client, server = _client(
+        monkeypatch,
+        viz_responses=[IMG_VALID],
+        viz_cfg={"enabled": True, "max_repair_rounds": 2},
+    )
+    sid = _start(client)
+    sess = server.SESSIONS[sid]
+    sess.viz_ids.add("t1-1")  # registered, but no allowlist anywhere
+
+    r = client.post(
+        "/api/viz/repair",
+        json={"session_id": sid, "viz_id": "t1-1", "html": BROKEN_INPUT, "error": "boom"},
+    ).json()
+    assert r["ok"] is False, r
+    assert "could not confirm" in r["error"] or "img-src" in r["error"]
+    assert _events_of(sess, "viz.rendered") == []
+
+
+def test_allowlist_sidecar_round_trip(monkeypatch):
+    """v1.12 Stage V1: _write_viz_artifact drops a <viz_id>.allow sidecar for a
+    non-empty allowlist, and _viz_allowlist_for recovers it when the stash misses.
+    An empty allowlist writes NO sidecar and recovers as ()."""
+    client, server = _client(
+        monkeypatch,
+        viz_responses=[VALID],
+        viz_cfg={"enabled": True, "save_artifacts": True},
+    )
+    sid = _start(client)
+    agent = server.SESSIONS[sid].agent
+
+    agent._write_viz_artifact("t9-1", IMG_VALID, (IMG_URL,))
+    assert agent._pending_viz_jobs == []  # stash empty → sidecar fallback exercised
+    assert agent._viz_allowlist_for("t9-1") == (IMG_URL,)
+
+    # no artifact / no sidecar → strict empty
+    assert agent._viz_allowlist_for("t9-nope") == ()
+
+    # an empty-allowlist write leaves NO sidecar (byte-identical disk to pre-V1)
+    agent._write_viz_artifact("t9-2", VALID, ())
+    assert agent._viz_allowlist_for("t9-2") == ()
+
+
+def test_viz_allowlist_sidecar_conversation_isolated(monkeypatch):
+    """v1.12 F4: chat viz_ids (``t{turn}-{n}``) collide across conversations, so the
+    sidecar recovery must read ONLY the CURRENT conversation's own dir — never an
+    rglob over all conv dirs that could recover a DIFFERENT conversation's pins."""
+    from pathlib import Path as _Path
+
+    client, server = _client(
+        monkeypatch,
+        viz_responses=[VALID],
+        viz_cfg={"enabled": True, "save_artifacts": True},
+    )
+    sid = _start(client)
+    agent = server.SESSIONS[sid].agent
+    assert agent._pending_viz_jobs == []  # force the .allow sidecar fallback path
+
+    base = (_Path(agent.config.storage.sqlite_path).resolve().parent / "viz").resolve()
+    own = base / agent._viz_conv_component()
+    other = base / "otherconv"
+    own.mkdir(parents=True, exist_ok=True)
+    other.mkdir(parents=True, exist_ok=True)
+
+    other_url = "https://cdn.example.com/other-conversation.png"
+    # SAME viz_id sidecar in BOTH conversations, DIFFERENT pins.
+    (own / "t1-1.allow").write_text(IMG_URL, encoding="utf-8")
+    (other / "t1-1.allow").write_text(other_url, encoding="utf-8")
+    # recovers ONLY the current conversation's pins; the other conv's are invisible
+    got = agent._viz_allowlist_for("t1-1")
+    assert got == (IMG_URL,)
+    assert other_url not in got
+
+    # a viz_id whose sidecar exists ONLY in another conversation recovers nothing
+    (other / "t2-1.allow").write_text(other_url, encoding="utf-8")
+    assert agent._viz_allowlist_for("t2-1") == ()
 
 
 # ------------------------------------------------------------ NICE-3 bounded rounds

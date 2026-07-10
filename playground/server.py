@@ -457,6 +457,13 @@ async def api_viz_repair(req: VizRepairReq):
 
     from sherlock import viz as _viz
 
+    # v1.12 Stage V1: recover the per-job img-src allowlist for this viz_id (stash
+    # first, then the ``.allow`` sidecar). MISSING ⇒ () — strict, so a repaired doc
+    # that embeds an image but has no recoverable allowlist fails the lint. Thread
+    # it into BOTH the repair generation prompt and the re-lint below.
+    allowlist = agent._viz_allowlist_for(req.viz_id)
+    gen_system = _viz.build_generation_system(allowlist)
+
     agent._emit(
         "viz.repairing",
         "llm4",
@@ -473,9 +480,7 @@ async def api_viz_repair(req: VizRepairReq):
 
     def _repair() -> str:
         provider = agent._viz_llm()
-        raw = agent._viz_chat(
-            provider, _viz.VIZ_GENERATION_SYSTEM, _viz.build_repair_user(req.html, errors_in)
-        )
+        raw = agent._viz_chat(provider, gen_system, _viz.build_repair_user(req.html, errors_in))
         return _viz.strip_code_fences(raw)
 
     try:
@@ -492,7 +497,7 @@ async def api_viz_repair(req: VizRepairReq):
 
     # Re-lint the repaired HTML. The prior (browser) HTML is the fidelity anchor:
     # the repair may not introduce numbers the failing artifact never contained.
-    ok, lint_errors = _viz._viz_static_lint(fixed, req.html, cfg)
+    ok, lint_errors = _viz._viz_static_lint(fixed, req.html, cfg, allowlist)
     if not ok:
         return {
             "ok": False,
@@ -503,7 +508,7 @@ async def api_viz_repair(req: VizRepairReq):
     validated = _viz.inject_validated_meta(fixed)
     if cfg.save_artifacts:
         try:
-            agent._write_viz_artifact(req.viz_id, validated)
+            agent._write_viz_artifact(req.viz_id, validated, allowlist)
         except Exception:
             pass
     agent._emit(
