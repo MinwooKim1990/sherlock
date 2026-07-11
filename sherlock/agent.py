@@ -44,7 +44,7 @@ from sherlock.memory import (
     SummarizerEngine,
     build_embedding_provider,
 )
-from sherlock.memory.entry import MemoryEntry, MemorySource, MemoryType
+from sherlock.memory.entry import MemoryEntry, MemorySource, MemoryState, MemoryType
 from sherlock.providers import BaseProvider, ChatMessage, ChatResponse, build_provider
 from sherlock.rag import HybridSearch
 from sherlock.storage import Conversation, Message, Storage
@@ -223,6 +223,107 @@ def _parse_deep_research_tag(text: str) -> tuple[str, str | None]:
     return cleaned, topic
 
 
+# v1.12 Stage B1: LLM-4 VISUALIZER marker protocol. LLM-1 (and, later, the
+# deep-research report) may drop an INLINE marker where a diagram/chart belongs:
+#   <<sherlock-viz: a bar chart of Q1-Q4 revenue | Q1 12, Q2 19, Q3 3, Q4 5>>
+# PAYLOAD is free text "description | optional data hint" — the FIRST '|' splits
+# the two halves. No nesting; ``.{1,2000}?`` is non-greedy so two markers on one
+# line don't merge into one; DOTALL lets ``.`` match any rune incl. newlines, so
+# CJK/multiline payloads pass through intact. The ``{1,2000}`` upper bound caps
+# how far the engine scans past each ``<<sherlock-viz:`` before giving up: an
+# UNCLOSED marker (no ``>>``) — or a payload longer than 2000 chars — never
+# matches and is left VERBATIM, instead of the old ``.+?`` which rescanned to
+# end-of-string from every opener (quadratic backtracking: a flood of unclosed
+# openers + a long tail could block chat()/achat() for tens of seconds). The
+# one-line-description guidance keeps real payloads far under 2000.
+_VIZ_TAG_RE = re.compile(
+    r"<<\s*sherlock-viz\s*:\s*(.{1,2000}?)\s*>>",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _parse_viz_tags(text: str, cap: int, id_prefix: str) -> tuple[str, list[dict]]:
+    """Replace the first ``cap`` ``<<sherlock-viz: ...>>`` markers with placeholder
+    tokens and return ``(new_text, jobs)``.
+
+    Placeholder token = ``⟦viz:<id_prefix>-<n>⟧`` (n from 1; U+27E6/U+27E7 white
+    brackets — plain text that survives markdown → marked+DOMPurify, so a later
+    render can find and swap it in). Markers beyond ``cap`` are STRIPPED entirely
+    (no placeholder, no job), and a marker whose payload is empty
+    (``<<sherlock-viz: >>``) is likewise stripped without minting a placeholder
+    or job (and without consuming cap budget). Each job is
+    ``{"viz_id", "description", "data_hint", "anchor", "context", "context_flags"}``
+    where description/data_hint are the two halves of the FIRST '|' (both
+    stripped; ``data_hint`` is ``""`` when the payload has no pipe), ``anchor``
+    is the placeholder token, ``context`` is the ±1500 chars of the ORIGINAL
+    reply text around the marker (Stage B2 render source), and ``context_flags``
+    (Stage V2) is ``detect_context_flags(context)`` — ``("table",)`` when that
+    slice already shows a table, so the render prompt forbids duplicating it.
+    Doubled blank lines left where a marker was removed WITHOUT a placeholder
+    are collapsed so the reply still reads cleanly.
+    """
+    if not text:
+        return text, []
+    from sherlock.viz import detect_context_flags
+
+    jobs: list[dict] = []
+    seen = 0
+    stripped = False  # a marker was removed WITHOUT leaving a placeholder
+
+    def _sub(m: "re.Match[str]") -> str:
+        nonlocal seen, stripped
+        payload = (m.group(1) or "").strip()
+        if not payload:
+            # empty payload → strip the marker, mint no placeholder / no job
+            # and don't spend cap budget on it.
+            stripped = True
+            return ""
+        seen += 1
+        if seen > cap:
+            stripped = True
+            return ""  # over the cap → strip entirely, no placeholder/job
+        desc, sep, hint = payload.partition("|")
+        # v1.12 Stage V3: an ``image:`` description prefix marks a text→image job.
+        # The prefix is stripped from the stored description; the render pipeline
+        # honours the kind ONLY when an image model/callable is configured,
+        # otherwise the job degrades to a normal LLM-4 render of the bare
+        # description (a stray prefix never breaks anything).
+        desc = desc.strip()
+        kind = "html"
+        if desc[:6].lower() == "image:":
+            kind = "image"
+            desc = desc[6:].strip()
+        viz_id = f"{id_prefix}-{seen}"
+        anchor = f"⟦viz:{viz_id}⟧"
+        # v1.12 Stage B2: capture the ±1500 chars of ORIGINAL reply text around
+        # this marker as the render CONTEXT (source material for the data-fidelity
+        # lint + the generation prompt). Positions are into the pre-substitution
+        # ``text`` (re.sub matches the original), so slices are stable regardless
+        # of earlier placeholder swaps. Additive: B1 job consumers ignore it.
+        context = text[max(0, m.start() - 1500) : m.end() + 1500]
+        jobs.append(
+            {
+                "viz_id": viz_id,
+                "description": desc,
+                "data_hint": hint.strip() if sep else "",
+                "anchor": anchor,
+                "context": context,
+                "context_flags": detect_context_flags(context),
+                "kind": kind,
+            }
+        )
+        return anchor
+
+    new_text = _VIZ_TAG_RE.sub(_sub, text)
+    # Tidy ONLY when a marker was actually removed without a placeholder (over-cap
+    # OR empty payload): an empty replacement can leave a 3+-newline gap where the
+    # marker sat on its own line. Collapse those to a single paragraph break;
+    # untouched text is never reflowed.
+    if stripped:
+        new_text = re.sub(r"\n{3,}", "\n\n", new_text)
+    return new_text, jobs
+
+
 # Cheap affirmative classifier for the conversational deep-research approval
 # (no UI). English + Korean. This gates an EXPENSIVE action, so it is
 # deliberately conservative — a non-affirmative simply cancels the pending
@@ -374,6 +475,26 @@ _PRESENTATION_GUIDE = (
     "GUARDRAILS (the only hard limits): invent nothing — no made-up facts, numbers, names, or "
     "URLs; and keep every fact consistent with the sources and with itself (no contradictions, "
     "no figure that disagrees with its own parts). Everything else is your judgment."
+)
+
+
+# v1.12 Stage B3: the gated INLINE-VISUALIZER one-liner appended to the shared DR
+# presentation guide (above) ONLY when config.visualization.enabled. It teaches
+# the deep-research SYNTHESIS + EDITOR to drop <<sherlock-viz: ...>> markers in
+# the report where a chart/diagram would clarify a finding; the post-final hook
+# (_apply_deep_research_viz) then swaps each for a ⟦viz:…⟧ placeholder and renders
+# it on the SAME LLM-4 pool as chat. OFF (default) it is never appended, so every
+# DR prompt stays byte-identical. English-internal (only the marker SYNTAX); the
+# report's own language rule already lives in _PRESENTATION_GUIDE above.
+_DR_VIZ_GUIDANCE_TEMPLATE = (
+    "\n• VISUALS (optional): when a chart or diagram would make a finding clearer "
+    "(a trend, comparison, distribution, or step-by-step flow), insert an inline "
+    "marker EXACTLY where the visual belongs, on its own line:\n"
+    "  <<sherlock-viz: one-line description | the exact figures from the report>>\n"
+    "Use at most {N} such marker(s), and reference ONLY data already present in the "
+    "report — never invent figures just to draw them. Markers are for GRAPHICAL "
+    "visuals only — if a table serves better, write a markdown table in the report "
+    "instead. If a visual would not genuinely help the reader, emit none."
 )
 
 
@@ -812,6 +933,108 @@ def build_sherlock_extension(*, search: bool = True, deep_research: bool | None 
     return text
 
 
+# v1.12 Stage A3: terse (small-model-friendly) protocol addendum documenting the
+# long-term memory MANAGEMENT verbs. Injected into TIER 1 ONLY when long-term
+# memory is enabled — off (the default) it is never added, so the slot stays
+# byte-identical. Kept as its own block (never edited into DEFAULT_SHERLOCK_
+# EXTENSION) so the build_sherlock_extension byte-identity invariant holds.
+LTM_TOOL_GUIDANCE = """\
+Long-term memory (durable ACROSS conversations) — extra `<<sherlock-tool: memory ...>>` verbs:
+- `memory profile` — list what you currently remember about the user long-term. Use when they ask "what do you remember / know about me?".
+- `memory save <fact>` — remember a fact PERMANENTLY. Use when the user tells you to remember something ("remember that…", "from now on…"). Write the fact in the user's own words.
+- `memory update <id> <fact>` — correct a durable fact. Run `memory profile` first to get the short id, then pass its prefix + the corrected fact.
+- `memory forget <what>` — find durable facts to delete. PREVIEW only: it deletes NOTHING and returns matches + a confirm token.
+- `memory forget-confirm <token>` — actually delete the previewed facts. Use ONLY after the user confirms; never invent a token.
+- `memory wipe` / `memory wipe-confirm <token>` — preview / confirm deletion of ALL long-term memory.
+Deletion rule: on any "forget X" / "wipe my memory" request, FIRST run `memory forget`/`memory wipe`, tell the user exactly what will be erased, and WAIT for their confirmation before emitting the matching `-confirm`."""
+
+
+# v1.12 Stage B1: LLM-4 VISUALIZER marker guidance. Injected into TIER 1 ONLY when
+# visualization is enabled (off, the default → never added → slot byte-identical).
+# Deliberately ENGLISH-INTERNAL: this only teaches LLM-1 the marker SYNTAX; the
+# v1.11 language lesson (pin OUTPUT/label language to the user's) lands in B2's
+# render prompt, not here. {N} = the per-reply marker cap from config; the string
+# is constant per config, so it rides the stable cached TIER-1 prefix.
+_VIZ_MARKER_GUIDANCE_TEMPLATE = """\
+Inline visualizations: when a chart or diagram would genuinely help the reader grasp your answer (a trend, a comparison, a distribution, a step-by-step flow), insert a marker EXACTLY where the visual belongs, on its own line:
+  <<sherlock-viz: one-line description of the visual | the exact numbers/labels from your answer>>
+- Only reference data ALREADY present in your reply — never invent figures just to draw them. NARRATIVE content (a story, a scene, characters) has no data: never chart made-up stats for it — request an illustrative scene/diagram instead, or emit no marker.
+- The part after `|` is an optional data hint (the concrete series/labels); omit it (and the `|`) when there is nothing numeric to pass.
+- Markers are for GRAPHICAL visuals only: if the insight is naturally a table, write a normal markdown table in your reply instead of a marker.
+- At most {N} marker(s) per reply. If a visual would not genuinely add understanding, do NOT emit one — plain prose is the right answer."""
+
+
+# v1.12 Stage V3: the image-modality one-liner, appended to the marker guidance
+# ONLY when an image model/callable is configured — absent, the guidance stays
+# byte-identical to pre-V3 (and LLM-1 never learns the ``image:`` prefix).
+_VIZ_IMAGE_GUIDANCE = (
+    "\n- For an illustrative PICTURE (a scene, an object, a mascot — NOT a data "
+    "chart), start the description with `image:` — e.g. <<sherlock-viz: image: a "
+    "lighthouse in a storm, watercolor>>. Keep data in charts; use image: only "
+    "when a picture genuinely helps."
+)
+
+
+def _viz_marker_guidance(cap: int, image: bool = False) -> str:
+    """Render the (constant-per-config) visualizer marker guidance block."""
+    out = _VIZ_MARKER_GUIDANCE_TEMPLATE.format(N=cap)
+    if image:
+        out += _VIZ_IMAGE_GUIDANCE
+    return out
+
+
+# The one-line TIER-3 nudge injected the SAME turn a deterministic "remember
+# this" cue fires (long-term enabled only). An internal English control line —
+# it rides the SYSTEM-ANALYSIS block, never the user-visible reply.
+_LTM_REMEMBER_NUDGE = (
+    "[SHERLOCK LONG-TERM MEMORY] The user asked you to REMEMBER something this "
+    "turn. Emit <<sherlock-tool: memory save ...>> with the EXACT fact (in the "
+    "user's own words) so it persists across future conversations, then confirm "
+    "to the user that you will remember it."
+)
+
+# Deterministic "remember this" directive cue (multilingual). Intentionally
+# targets IMPERATIVE remember-directives ("remember that…", "from now on…",
+# "기억해", "覚えて", "merke dir", "recuerda"), not recall QUESTIONS ("do you
+# remember…?"). Advisory: a rare false positive only injects a nudge.
+_REMEMBER_CUE_RE = re.compile(
+    # English: imperative remember-directives only. The (?<!you ) guard drops the
+    # recall QUESTION form ("do you remember this?") while keeping "please
+    # remember …" / "remember to…" / "remember this".
+    # F2 (audit): the bare declarative "remember that…" alternative was REMOVED —
+    # it false-fired on "I remember that trip fondly". "please remember" (below)
+    # still covers the polite-directive case.
+    r"(?<!you )\bremember\s+(?:this|to)\b"
+    r"|\bplease\s+remember\b"
+    r"|\bfrom\s+now\s+on\b"
+    r"|\bkeep\s+in\s+mind\b"
+    r"|\bdon'?t\s+forget\b"
+    r"|\bmake\s+(?:a\s+)?note\s+(?:of|that)\b"
+    # F2 (audit): Korean + Spanish imperative directives, gated so a recall
+    # QUESTION ("기억해?", "¿recuerdas…?") does NOT fire. The trailing
+    # (?!.*[?？]\s*$) rejects a same-line trailing question mark; imperative
+    # forms ("기억해줘", "recuerda esto", "기억해!") still match.
+    r"|(?:"
+    r"기억\s*(?:해|하|해줘|해 줘|해둬|해 둬|해두|하세요|할 것)"
+    r"|잊지\s*마|잊지마|외워둬|외워"
+    r"|recu[eé]rda"
+    r")(?!.*[?？]\s*$)"
+    r"|覚え(?:て|とい|ておい)"
+    r"|忘れないで"
+    r"|merke\s+dir|merk\s+dir",
+    re.IGNORECASE,
+)
+
+
+def _detect_remember_cue(text: str) -> bool:
+    """True when the user's turn carries an imperative 'remember this' directive."""
+    # F2 (audit): collapse internal whitespace runs first — the fixed-width
+    # (?<!you ) lookbehind above is defeated by a double space ("do you  remember
+    # this"), which Python's re can't express as a variable-width lookbehind.
+    t = re.sub(r"\s+", " ", (text or "").strip())
+    return bool(t) and bool(_REMEMBER_CUE_RE.search(t))
+
+
 @dataclass
 class TurnState:
     """Read-only snapshot of the last turn for inspection (SPEC §8.1)."""
@@ -882,6 +1105,7 @@ class Sherlock:
         provider: BaseProvider | None = None,
         background_summary_provider: BaseProvider | None = None,
         background_inference_provider: BaseProvider | None = None,
+        background_viz_provider: BaseProvider | None = None,
         background: bool | None = None,
     ) -> None:
         self.config = config
@@ -891,6 +1115,12 @@ class Sherlock:
         )
         self._inference_provider = background_inference_provider or self._build_optional(
             config.models.background_inference
+        )
+        # v1.12 Stage B1: optional 4th role — LLM-4 VISUALIZER. Unset (no
+        # background_viz_provider AND no config.models.viz) → None, and _viz_llm()
+        # falls back to the MAIN provider, so visualization works with no 4th key.
+        self._viz_provider = background_viz_provider or self._build_optional(
+            getattr(config.models, "viz", None)
         )
         # Storage: conversations + messages
         self._storage = Storage(config.storage.sqlite_path)
@@ -1029,6 +1259,36 @@ class Sherlock:
         self._event_sink = None
         self._turn_index_for_emit = 0
 
+        # v1.12 Stage A3: natural-language long-term memory MANAGEMENT state.
+        # `_ltm_pending` is the AGENT-owned single-use confirm-token store the
+        # (stateless) memory_tool module mints into via an LTMToolContext:
+        #   token -> {"kind": "delete"|"wipe", "ids": [...]|None, "minted_turn": int}
+        # `_ltm_remember_promote_pending` latches when a deterministic
+        # "remember this" cue fires so the NEXT LLM-2 compaction promotes the
+        # turn's facts as user_directive (belt-and-braces behind the LLM-1 nudge).
+        self._ltm_pending: dict[str, dict] = {}
+        self._ltm_remember_promote_pending: bool = False
+
+        # v1.12 Stage B1: LLM-4 VISUALIZER pending render jobs. Each honoured
+        # <<sherlock-viz: ...>> marker parsed out of an LLM-1 reply stashes a job
+        # here for LLM-4 (Stage B2) to render; for now they only accumulate. The
+        # stash is bounded (32, oldest dropped) so it can't grow unboundedly. When
+        # visualization is disabled the parse never runs, so this stays empty.
+        # B2 CONTRACT (F7): the placeholder anchors are persisted in the reply
+        # TEXT, but this stash is in-memory only and is trimmed (bound of 32) and
+        # cleared on session boundaries — so a persisted placeholder may have NO
+        # surviving job. Consumers (the B2 renderer / any UI) MUST gracefully
+        # degrade such orphaned placeholders — remove or replace them in the
+        # rendered text — rather than assuming every ⟦viz:…⟧ has a job to render.
+        self._pending_viz_jobs: list[dict] = []
+        # v1.12 Stage B2: LLM-4 render dispatch. Dedicated 2-worker pool (lazy),
+        # a fire-and-forget futures list (pruned of done), and the set of viz_ids
+        # already dispatched (so re-submitting the un-emptied stash each turn can't
+        # double-render). All independent of the single-worker bg executor.
+        self._viz_executor = None
+        self._viz_futures: list = []
+        self._viz_submitted_ids: set[str] = set()
+
         # v0.5.0 Phase 3: true background execution. Default ON (v1.8): chat()
         # returns the LLM-1 reply immediately and runs companions (LLM-2/LLM-3) +
         # decay in a single-worker background thread, so the user-facing reply
@@ -1105,6 +1365,573 @@ class Sherlock:
             return None
         return build_provider(model_cfg)
 
+    # ---- v1.12 Stage B1: LLM-4 VISUALIZER plumbing ----
+
+    def _viz_llm(self) -> BaseProvider:
+        """The provider LLM-4 (the visualizer) uses. Falls back to the MAIN
+        provider when no dedicated viz model is configured, so visualization can
+        be enabled with no extra model key."""
+        return self._viz_provider or self._provider
+
+    def _extract_viz_jobs(self, text: str, turn_index: int, question: str = "") -> str:
+        """Parse inline ``<<sherlock-viz: ...>>`` markers out of an LLM-1 reply:
+        replace each (up to the chat cap) with a placeholder token, emit a
+        ``viz.pending`` event per job, and stash the jobs for LLM-4 (Stage B2) to
+        consume. Returns the reply with markers → placeholders. Called ONLY when
+        ``config.visualization.enabled`` — off (default) → never invoked, so a
+        stray marker stays verbatim (byte-identical).
+
+        ``question`` (Stage V2) is the USER TURN this reply answers; it rides
+        every job (trimmed) into the LLM-4 generation prompt as EMPHASIS-ONLY,
+        untrusted context — deliberately NOT into the fidelity-lint source, so
+        a number appearing only in the question (e.g. a wrong premise) still
+        fails the invented-number check."""
+        from sherlock.viz import sanitize_image_allowlist
+
+        cap = int(self.config.visualization.max_markers_chat)
+        new_text, jobs = _parse_viz_tags(text, cap=cap, id_prefix=f"t{turn_index}")
+        if not jobs:
+            return new_text
+        for job in jobs:
+            job["turn"] = turn_index  # so viz.rendered/failed can echo the turn
+            job["question"] = (question or "").strip()[:600]
+            # H1 audit: pin the SOURCE conversation at job creation — a render
+            # finishing after switch_session/new_session must persist under the
+            # conversation that produced it, not whichever is active by then.
+            job["conv"] = self._viz_conv_component()
+            # v1.12 Stage V1: per-job img-src allowlist, sanitised at CONSTRUCTION
+            # (never from model output). The image-modality stage (V3) fills it;
+            # today it is always ().
+            job["image_urls"] = sanitize_image_allowlist(job.get("image_urls", ()))
+            self._emit(
+                "viz.pending",
+                "llm4",
+                {
+                    "turn": turn_index,
+                    "viz_id": job["viz_id"],
+                    "anchor": job["anchor"],
+                    "description": job["description"],
+                },
+            )
+            self._pending_viz_jobs.append(job)
+        # Bound the stash so pending jobs (B2 consumes them later) can't grow
+        # without limit — keep the 32 most recent, drop the oldest.
+        if len(self._pending_viz_jobs) > 32:
+            del self._pending_viz_jobs[:-32]
+        return new_text
+
+    # ---- v1.12 Stage B2: LLM-4 VISUALIZER render pipeline ----
+
+    def _ensure_viz_pool(self):
+        """Lazy DEDICATED pool for LLM-4 renders. NEVER the single-worker bg
+        executor (``_executor``/``_bg_future``) — those serialise memory writes
+        and draining them must stay deterministic; viz renders are independent,
+        fire-and-forget, and may run 2-up."""
+        pool = getattr(self, "_viz_executor", None)
+        if pool is None:
+            import concurrent.futures
+
+            pool = concurrent.futures.ThreadPoolExecutor(
+                max_workers=2, thread_name_prefix="sherlock-viz"
+            )
+            self._viz_executor = pool
+        return pool
+
+    def _submit_viz_jobs(self) -> None:
+        """Fire-and-forget dispatch of not-yet-submitted stashed viz jobs onto the
+        viz pool. SUBMIT-ONLY — pool.submit() just enqueues, so this never delays
+        the chat()/achat() return. Called right after the marker strip seam.
+
+        ORPHAN CONTRACT (B1 → B2): the ⟦viz:…⟧ placeholder was already written into
+        the persisted reply TEXT at parse time. A job that FAILS or never runs is
+        NOT healed by rewriting that text — instead it degrades at RENDER time
+        (playground B4) via the ``viz.failed`` event (which drops the chip). The
+        stored token stays by design.
+
+        The observable ``_pending_viz_jobs`` stash is NOT emptied here (a
+        session-scoped, bounded-32 record other code + B1 tests inspect); instead
+        ``_viz_submitted_ids`` dedupes so each job dispatches exactly once across
+        turns. viz_ids reset per session, so the id set is cleared on every
+        session boundary alongside the stash."""
+        if not self.config.visualization.enabled:
+            return
+        jobs = getattr(self, "_pending_viz_jobs", None)
+        if not jobs:
+            return
+        submitted = getattr(self, "_viz_submitted_ids", None)
+        if submitted is None:
+            submitted = set()
+            self._viz_submitted_ids = submitted
+        futures = getattr(self, "_viz_futures", None)
+        if futures is None:
+            futures = []
+            self._viz_futures = futures
+        # Prune completed futures so the tracking list can't grow without bound.
+        futures[:] = [f for f in futures if not f.done()]
+        pool = self._ensure_viz_pool()
+        for job in list(jobs):
+            vid = job.get("viz_id")
+            if vid in submitted:
+                continue
+            submitted.add(vid)
+            futures.append(pool.submit(self._render_viz_job, dict(job)))
+        # Keep the id set bounded to ids still live in the (bounded-32) stash.
+        live = {j.get("viz_id") for j in jobs}
+        self._viz_submitted_ids = {v for v in submitted if v in live}
+        if len(futures) > 64:
+            del futures[:-64]
+
+    def wait_for_viz(self, timeout: float | None = None) -> bool:
+        """Block until outstanding LLM-4 renders finish (or timeout). Returns True
+        if all done / none outstanding, False on timeout. Mirrors
+        ``wait_for_background`` for tests + the CLI; INDEPENDENT of the bg future,
+        so waiting on viz never touches companion draining."""
+        import concurrent.futures
+
+        futures = [f for f in list(getattr(self, "_viz_futures", []) or []) if not f.done()]
+        if not futures:
+            return True
+        _done, not_done = concurrent.futures.wait(futures, timeout=timeout)
+        return not not_done
+
+    def _viz_chat(self, provider, system: str, user: str) -> str:
+        """One LLM-4 turn: system + user → reply text ("" on empty)."""
+        resp = provider.chat(
+            [ChatMessage(role="system", content=system), ChatMessage(role="user", content=user)]
+        )
+        return getattr(resp, "text", "") or ""
+
+    def _emit_viz_failed(self, job: dict, reason: str) -> None:
+        """Emit ``viz.failed`` for a job that could not be rendered/validated.
+
+        Echoes ``turn``/``research_id`` when the job carries them (mirrors
+        ``_finalize_viz_render``), so a deep-research viz failure is attributable
+        to its run; both keys are omitted for jobs that lack them."""
+        data = {"viz_id": job.get("viz_id"), "anchor": job.get("anchor"), "reason": reason}
+        if job.get("turn") is not None:
+            data["turn"] = job["turn"]
+        if job.get("research_id") is not None:
+            data["research_id"] = job["research_id"]
+        self._emit("viz.failed", "llm4", data)
+
+    def _viz_conv_component(self) -> str:
+        """v1.12 F2: a sanitized single path component naming the ACTIVE
+        conversation, used to namespace viz artifacts. In a persistent profile dir
+        the session-local viz_id (``t1-1``) is reused across restarts/sessions, so
+        a flat ``viz/<viz_id>.html`` silently clobbers a prior conversation's chart;
+        keying by conversation_id keeps them separate. ``None`` (pre-conversation)
+        collapses to ``_``."""
+        cid = self.conversation_id or "_"
+        return re.sub(r"[^A-Za-z0-9._-]", "_", str(cid)) or "_"
+
+    def _write_viz_artifact(
+        self, viz_id: str, html: str, image_urls=(), conv=None
+    ) -> str:  # noqa: ANN001
+        """Persist a validated artifact to ``<storage_dir>/viz/<conv_id>/<viz_id>.html``
+        and return the path. Both the conversation component and viz_id are
+        sanitised for the filesystem, and the resolved path is confined under the
+        viz dir (defense-in-depth against a literal ``..`` component slipping the
+        char filter).
+
+        v1.12 Stage V1: when ``image_urls`` is a NON-EMPTY (sanitised) img-src
+        allowlist, a sibling ``<viz_id>.allow`` sidecar (newline-joined URLs) is
+        written so the repair path can re-lint with the SAME pins. An empty
+        allowlist writes NO sidecar — the off/no-image path leaves the viz dir
+        byte-identical to pre-V1."""
+        from pathlib import Path as _Path
+
+        from sherlock.viz import sanitize_image_allowlist
+
+        base = (_Path(self.config.storage.sqlite_path).resolve().parent / "viz").resolve()
+        # H1 audit: prefer the job's pinned source conversation (re-sanitised
+        # defensively); fall back to the ACTIVE one for callers without a job
+        # (e.g. the playground repair endpoint, which runs while its
+        # conversation is open).
+        conv = re.sub(r"[^A-Za-z0-9._-]", "_", str(conv)) if conv else self._viz_conv_component()
+        conv = conv or "_"
+        safe = re.sub(r"[^A-Za-z0-9._-]", "_", str(viz_id))
+        path = (base / conv / f"{safe}.html").resolve()
+        if not str(path).startswith(str(base) + os.sep):
+            raise ValueError("unsafe viz artifact path")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(html, encoding="utf-8")
+        urls = sanitize_image_allowlist(image_urls)
+        if urls:
+            path.with_suffix(".allow").write_text("\n".join(urls), encoding="utf-8")
+        return str(path)
+
+    def _viz_allowlist_for(self, viz_id: str) -> tuple[str, ...]:
+        """v1.12 Stage V1: recover the sanitised img-src allowlist for a viz_id on
+        the REPAIR path. Checks the in-memory ``_pending_viz_jobs`` stash first
+        (most recent wins), then falls back to the ``<viz_id>.allow`` sidecar next
+        to the persisted artifact. MISSING ⇒ ``()`` (strict — a repaired doc that
+        embeds an image but has no recoverable allowlist fails the lint). The
+        sidecar is re-sanitised on read (a tampered file can't widen the pins)."""
+        from pathlib import Path as _Path
+
+        from sherlock.viz import sanitize_image_allowlist
+
+        for job in reversed(getattr(self, "_pending_viz_jobs", None) or []):
+            if job.get("viz_id") == viz_id:
+                urls = sanitize_image_allowlist(job.get("image_urls", ()))
+                if urls:
+                    return urls
+                # V3 audit: an image job sets image_urls on the POOL COPY
+                # (dict(job)), so the stash entry can be stale-empty even
+                # though a hosted-URL artifact wrote a sidecar — fall through
+                # to the sidecar instead of shadowing it with ().
+                break
+        try:
+            base = (_Path(self.config.storage.sqlite_path).resolve().parent / "viz").resolve()
+            safe = re.sub(r"[^A-Za-z0-9._-]", "_", str(viz_id))
+            # F4: look up ONLY the current conversation's own sidecar. An rglob over
+            # ALL conversation dirs could recover a DIFFERENT conversation's pins,
+            # since chat viz_ids (``t{turn}-{n}``) collide across conversations.
+            cand = (base / self._viz_conv_component() / f"{safe}.allow").resolve()
+            if str(cand).startswith(str(base) + os.sep) and cand.is_file():
+                raw = cand.read_text(encoding="utf-8").splitlines()
+                return sanitize_image_allowlist(raw)
+        except Exception:
+            pass
+        return ()
+
+    def _finalize_viz_render(self, job: dict, html: str) -> None:
+        """A render passed the lint: stamp the validated meta, best-effort persist
+        the artifact, and emit ``viz.rendered`` (html INCLUDED — capped at
+        max_html_bytes, so the playground renders straight from the event)."""
+        from sherlock import viz as _viz
+
+        cfg = self.config.visualization
+        validated = _viz.inject_validated_meta(html)
+        path = None
+        if cfg.save_artifacts:
+            try:
+                path = self._write_viz_artifact(
+                    job.get("viz_id"), validated, job.get("image_urls", ()), job.get("conv")
+                )
+            except Exception:
+                path = None  # best-effort: a write failure never drops the render
+        data = {
+            "viz_id": job.get("viz_id"),
+            "anchor": job.get("anchor"),
+            "html": validated,
+            "validated": "static",
+            "bytes": len(validated.encode("utf-8")),
+            # v1.12 F2: the conversation component the artifact is filed under, so
+            # the export's relative link (viz/<conv>/<viz_id>.html) resolves.
+            # H1 audit: the job's pinned source conversation wins (see above).
+            "conv": job.get("conv") or self._viz_conv_component(),
+        }
+        if job.get("turn") is not None:
+            data["turn"] = job["turn"]
+        if job.get("research_id") is not None:
+            data["research_id"] = job["research_id"]
+        if path is not None:
+            data["path"] = path
+        self._emit("viz.rendered", "llm4", data)
+
+    # ---- v1.12 Stage V3: text→image modality ----
+
+    def _viz_image_available(self) -> bool:
+        """True when the text→image modality is configured: an injected callable
+        (``with_callable(viz_image_gen=…)``) or ``visualization.image_model``.
+        False (default) keeps every V3 seam dormant — guidance, prompts and the
+        render pipeline are byte-identical to pre-V3."""
+        return getattr(self, "_viz_image_gen", None) is not None or bool(
+            getattr(getattr(self.config, "visualization", None), "image_model", None)
+        )
+
+    def _viz_image_generate(self, prompt: str) -> tuple[str | None, str | None]:
+        """One text→image call → ``(data_uri, url)`` with EXACTLY one non-None.
+
+        Uses the injected callable when present, else litellm.image_generation
+        with ``visualization.image_model``. Accepted callable returns: a dict
+        with ``b64``/``b64_json`` or ``url``; a raw base64 string; a
+        ``data:image/…`` URI; or an http(s) URL. Raises on anything else —
+        the caller (``_render_viz_job``) converts every raise to ``viz.failed``."""
+        fn = getattr(self, "_viz_image_gen", None)
+        if fn is not None:
+            res = fn(prompt)
+        else:
+            import litellm
+
+            resp = litellm.image_generation(
+                prompt=prompt, model=str(self.config.visualization.image_model)
+            )
+            data = getattr(resp, "data", None) or []
+            first = data[0] if data else None
+            res = {
+                "b64": getattr(first, "b64_json", None)
+                or (first.get("b64_json") if isinstance(first, dict) else None),
+                "url": getattr(first, "url", None)
+                or (first.get("url") if isinstance(first, dict) else None),
+            }
+        b64 = url = None
+        if isinstance(res, dict):
+            b64 = res.get("b64") or res.get("b64_json")
+            url = res.get("url")
+        elif isinstance(res, str):
+            s = res.strip()
+            if s.startswith("data:image"):
+                return s, None
+            if s.startswith("http://") or s.startswith("https://"):
+                url = s
+            else:
+                b64 = s
+        if b64:
+            b64_s = str(b64).strip()
+            # V3 audit: bound the materialised payload BEFORE it becomes a
+            # document (a hostile/buggy provider could return hundreds of MB).
+            if len(b64_s) > 32_000_000:
+                raise ValueError(
+                    f"image generation returned an oversized payload ({len(b64_s)} b64 chars)"
+                )
+            return "data:image/png;base64," + b64_s, None
+        if url:
+            return None, str(url).strip()
+        raise ValueError("image generation returned neither image bytes nor a URL")
+
+    def _render_viz_image_job(self, job: dict, source: str, cfg) -> None:  # noqa: ANN001
+        """Render ONE ``image:`` job: text→image call → deterministic wrapper →
+        static lint → persist + ``viz.rendered``. No LLM writes the document and
+        there are no self-review/repair rounds — a failure (unsafe URL, oversized
+        payload, provider error) is terminal ``viz.failed``. A hosted-URL result
+        populates the job's img-src allowlist (the V1 mechanism), so the CSP pins
+        that EXACT URL and the ``.allow`` sidecar persists it for repairs."""
+        from sherlock import viz as _viz
+
+        prompt = " — ".join(
+            s for s in (job.get("description") or "", job.get("data_hint") or "") if s
+        )
+        data_uri, url = self._viz_image_generate(prompt or "an illustrative image")
+        # V3 audit: fail fast BEFORE building/linting a document around an
+        # over-cap image — the lint would reject it anyway, after scanning MBs.
+        cap = int(getattr(cfg, "max_image_html_bytes", 4_000_000))
+        if data_uri and len(data_uri) > cap - 2048:
+            return self._emit_viz_failed(
+                job, f"generated image too large ({len(data_uri)} bytes > {cap - 2048} budget)"
+            )
+        allowlist = _viz.sanitize_image_allowlist((url,) if url else ())
+        if url and not allowlist:
+            return self._emit_viz_failed(job, "generated image URL failed sanitisation")
+        job["image_urls"] = allowlist
+        html = _viz.build_image_artifact(
+            job.get("description") or "", data_uri or allowlist[0], allowlist
+        )
+        ok, errors = _viz._viz_static_lint(html, source, cfg, allowlist)
+        if not ok:
+            return self._emit_viz_failed(job, "; ".join(errors)[:500] or "validation failed")
+        self._finalize_viz_render(job, html)
+
+    def _render_viz_job(self, job: dict) -> None:
+        """Render ONE stashed viz job on the pool: generate → strip fences → lint →
+        (self-review rounds) → (repair rounds) → persist + ``viz.rendered``, else
+        ``viz.failed``. EVERYTHING is best-effort — any exception becomes
+        ``viz.failed`` and never propagates off the pool thread.
+
+        v1.12 Stage V3: an ``image:`` job takes the text→image path instead
+        (deterministic wrapper, no LLM rounds) WHEN the modality is configured;
+        otherwise it degrades to a normal render of the bare description.
+
+        TIMEOUT ACCOUNTING (deliberate, documented): the job already runs ON the
+        pool, so we do NOT nest a second pool for per-call timeouts (that would
+        deadlock a 2-worker pool under load). Instead each provider.chat is issued
+        directly and an OUTER wall-clock deadline is checked BETWEEN steps. The
+        budget is ``timeout_s * (1 + self_review_rounds + max_repair_rounds)`` —
+        one slot per possible LLM call. A single hung provider.chat can overrun
+        (no mid-call interrupt), but the deadline guarantees the job can't loop
+        forever; overrun → ``viz.failed`` "timeout"."""
+        import time as _time
+
+        from sherlock import viz as _viz
+
+        cfg = self.config.visualization
+        self_reviews = max(0, int(cfg.self_review_rounds))
+        max_repairs = max(0, int(cfg.max_repair_rounds))
+        per_call = float(cfg.timeout_s)
+        deadline = _time.monotonic() + per_call * (1 + self_reviews + max_repairs)
+        # Source material for the fidelity lint + a legible prompt: the marker
+        # description + data hint + the surrounding reply slice. DELIBERATELY NOT
+        # included (Stage V2 audit): the reader's question — it is unverified
+        # user/model-authored text shown to the model for EMPHASIS only, so a
+        # number appearing only there (a wrong premise, an unverified DR topic)
+        # must still fail the invented-number check; a number the reply genuinely
+        # engages appears in the context slice anyway. The system prompt is
+        # likewise not data (it is worded digit-free and tells the model styling
+        # values belong only in CSS, which the lint's text scan already skips).
+        source = " ".join(
+            s
+            for s in (
+                job.get("context") or "",
+                job.get("description") or "",
+                job.get("data_hint") or "",
+            )
+            if s
+        )
+        # v1.12 Stage V1: the per-job img-src allowlist (sanitised at construction;
+        # always () today). Thread it into BOTH the generation system prompt (so the
+        # CSP the model is told to emit matches) and every lint call.
+        allowlist = _viz.sanitize_image_allowlist(job.get("image_urls", ()))
+        gen_system = _viz.build_generation_system(allowlist)
+
+        def _expired() -> bool:
+            return _time.monotonic() > deadline
+
+        try:
+            # v1.12 Stage V3: image jobs branch to the deterministic image path
+            # (one provider call, no LLM rounds). Unconfigured → fall through to
+            # the normal LLM-4 render of the bare description.
+            if job.get("kind") == "image" and self._viz_image_available():
+                try:
+                    return self._render_viz_image_job(job, source, cfg)
+                except Exception:
+                    # v1.12 omni fix: the configured path can't produce an image
+                    # (text-only model, provider hiccup) → draw the visual as
+                    # HTML/SVG below instead of killing the slot. Size/lint
+                    # failures inside the image job stay terminal (they return).
+                    pass
+            provider = self._viz_llm()
+            if _expired():
+                return self._emit_viz_failed(job, "timeout")
+            html = _viz.strip_code_fences(
+                self._viz_chat(provider, gen_system, _viz.build_generation_user(job))
+            )
+            ok, errors = _viz._viz_static_lint(html, source, cfg, allowlist)
+
+            # Self-review rounds (checklist self-critique) — only while failing.
+            for _ in range(self_reviews):
+                if ok:
+                    break
+                if _expired():
+                    return self._emit_viz_failed(job, "timeout")
+                html = _viz.strip_code_fences(
+                    self._viz_chat(provider, gen_system, _viz.build_self_review_user(html))
+                )
+                ok, errors = _viz._viz_static_lint(html, source, cfg, allowlist)
+
+            # Repair rounds (explicit lint errors fed back) — only while failing.
+            rounds = 0
+            while not ok and rounds < max_repairs:
+                rounds += 1
+                if _expired():
+                    return self._emit_viz_failed(job, "timeout")
+                self._emit(
+                    "viz.repairing",
+                    "llm4",
+                    {"viz_id": job.get("viz_id"), "round": rounds, "errors": errors},
+                )
+                html = _viz.strip_code_fences(
+                    self._viz_chat(provider, gen_system, _viz.build_repair_user(html, errors))
+                )
+                ok, errors = _viz._viz_static_lint(html, source, cfg, allowlist)
+
+            if not ok:
+                reason = "; ".join(errors)[:500] or "validation failed"
+                return self._emit_viz_failed(job, reason)
+            self._finalize_viz_render(job, html)
+        except Exception as exc:  # best-effort: never propagate off the pool
+            try:
+                self._emit_viz_failed(job, f"{type(exc).__name__}: {exc}"[:200])
+            except Exception:
+                pass
+
+    # ---- v1.12 Stage B3: LLM-4 VISUALIZER in the deep-research report ----
+
+    def _presentation_guide(self) -> str:
+        """The shared deep-research SYNTHESIS/EDITOR presentation instruction.
+
+        Returns ``_PRESENTATION_GUIDE`` verbatim UNLESS the LLM-4 visualizer is
+        enabled, in which case the gated inline-marker one-liner is appended so the
+        synthesis/editor may place ``<<sherlock-viz: ...>>`` markers in the report.
+        OFF (default) → byte-identical to the raw guide, so every DR prompt (and
+        thus every DR report) is unchanged when visualization is off."""
+        viz = getattr(self.config, "visualization", None)
+        if viz is not None and getattr(viz, "enabled", False):
+            guide = _PRESENTATION_GUIDE + _DR_VIZ_GUIDANCE_TEMPLATE.format(
+                N=int(viz.max_markers_report)
+            )
+            # v1.12 Stage V3: the image-modality one-liner, only when configured
+            # (parity with the chat marker guidance).
+            if self._viz_image_available():
+                guide += _VIZ_IMAGE_GUIDANCE
+            return guide
+        return _PRESENTATION_GUIDE
+
+    def _apply_deep_research_viz(
+        self, answer: str, research_id: str, turn_index: int | None, question: str = ""
+    ) -> str:
+        """Post-final DR VISUALIZER hook. When visualization is enabled, parse the
+        inline ``<<sherlock-viz: ...>>`` markers the synthesis/editor placed in the
+        FINAL report, swap each (up to ``max_markers_report``) for a ⟦viz:…⟧
+        placeholder, stash the jobs (keyed with ``research_id`` + ``turn``) and
+        dispatch them to the SAME LLM-4 render pool as chat. Returns the
+        placeholdered answer.
+
+        Runs AFTER the whole verify chain, right BEFORE the ``deep_research.done``
+        emit, in BOTH the inline path (``_execute_deep_research``) and the
+        background runner (``_run_deep_research_bg``) — so the two paths stay at
+        parity and the persisted report + the ``deep_research.done`` answer both
+        carry placeholders.
+
+        OFF (default) → returns the answer BYTE-IDENTICAL, emits nothing, submits
+        nothing. The id_prefix is the research_id itself (e.g. ``dr1``), so DR
+        viz_ids (``dr1-1``) can never collide with chat viz_ids (``t{turn}-n``).
+
+        ``question`` (Stage V2) is the RESEARCH TOPIC; it rides every job into
+        the LLM-4 generation prompt as EMPHASIS-ONLY untrusted context (parity
+        with chat's user turn) — NOT into the fidelity-lint source: the topic is
+        model-authored and never passed the DR accuracy layer, so its numbers
+        must not legitimise artifact numbers."""
+        if not self.config.visualization.enabled:
+            return answer
+        # v1.12 F1: this hook is the ONLY step between the DR answer computation and
+        # the persist + deep_research.done emit. A raise here (e.g. a pool.submit
+        # RuntimeError during interpreter shutdown) is swallowed by _bg_wrapper, so
+        # BOTH add_message AND deep_research.done would silently never fire — the
+        # "stuck at 'Starting deep research…' + lost report" regression class. Make
+        # the whole body best-effort: on ANY failure return the original answer so
+        # the caller still persists the report and emits deep_research.done.
+        try:
+            from sherlock.viz import sanitize_image_allowlist
+
+            cap = int(self.config.visualization.max_markers_report)
+            new_text, jobs = _parse_viz_tags(answer, cap=cap, id_prefix=str(research_id))
+            if not jobs:
+                return new_text
+            for job in jobs:
+                job["research_id"] = research_id
+                if turn_index is not None:
+                    job["turn"] = turn_index
+                job["question"] = (question or "").strip()[:600]
+                # H1 audit: pin the SOURCE conversation (parity with chat jobs).
+                job["conv"] = self._viz_conv_component()
+                # v1.12 Stage V1: per-job img-src allowlist, sanitised at
+                # CONSTRUCTION (never from model output). The image-modality
+                # stage (V3) fills it; today ().
+                job["image_urls"] = sanitize_image_allowlist(job.get("image_urls", ()))
+                data = {
+                    "research_id": research_id,
+                    "viz_id": job["viz_id"],
+                    "anchor": job["anchor"],
+                    "description": job["description"],
+                }
+                if turn_index is not None:
+                    data["turn"] = turn_index
+                self._emit("viz.pending", "llm4", data)
+                self._pending_viz_jobs.append(job)
+            # Same bound as the chat stash: keep the 32 most recent, drop the oldest.
+            if len(self._pending_viz_jobs) > 32:
+                del self._pending_viz_jobs[:-32]
+            # Fire-and-forget dispatch onto the dedicated viz pool (different pool
+            # from the single-worker bg executor this DR runner may itself be on —
+            # no _bg_future misuse). SUBMIT-ONLY, so the deep_research.done emit
+            # isn't delayed; renders surface later via viz.rendered/viz.failed (each
+            # carrying research_id).
+            self._submit_viz_jobs()
+            return new_text
+        except Exception:
+            return answer
+
     @property
     def provider(self) -> BaseProvider:
         return self._provider
@@ -1116,6 +1943,174 @@ class Sherlock:
     @property
     def conversation_id(self) -> Optional[str]:
         return self._conversation.id if self._conversation else None
+
+    # ---- v1.12 Stage A1: long-term (cross-conversation) memory ----
+
+    def long_term_memory(self) -> list[dict]:
+        """Return the live cross-conversation long-term memory (the sentinel
+        scope), newest first. Superseded/frozen rows are excluded — this is the
+        currently-true durable memory. Each dict carries ``id``, ``content``,
+        ``category`` (from tags), ``confidence``, ``created_at`` and
+        ``origin_conversation_id`` (the conversation the fact was first seen in).
+        """
+        from sherlock.memory.entry import LTM_CONVERSATION_ID, ltm_category
+
+        rows = [
+            e for e in self._memory.list(conversation_id=LTM_CONVERSATION_ID) if not e.superseded_by
+        ]
+        rows.sort(key=lambda e: e.created_at, reverse=True)
+        return [
+            {
+                "id": e.id,
+                "content": e.content,
+                "category": ltm_category(e.tags),
+                "confidence": e.confidence,
+                "created_at": e.created_at,
+                "origin_conversation_id": e.origin_conversation_id,
+            }
+            for e in rows
+        ]
+
+    def wipe_long_term(self, backup: bool | None = None) -> dict:
+        """Delete ALL long-term memory (the sentinel scope). Ordinary
+        per-conversation memory is untouched.
+
+        v1.12 Stage A4: when ``backup`` is requested (``backup=True``, or
+        ``None`` → resolved from ``config.memory.long_term.auto_export_on_wipe``,
+        default True), a Markdown export is written to
+        ``<storage_dir>/ltm_backup_<UTCtimestamp>.md`` BEFORE anything is
+        deleted, so a wipe is recoverable. Returns
+        ``{"removed": N, "backup_path": <str|None>}`` and emits ``memory.wiped``.
+        """
+        from sherlock.memory.entry import LTM_CONVERSATION_ID
+
+        _lt = getattr(self.config.memory, "long_term", None)
+        if backup is None:
+            # NICE-4: fall back to True so the resolved default matches the
+            # documented "default True" AND config.memory.long_term.auto_export_on_wipe
+            # (itself default True). ``_lt is None`` (no long-term config at all)
+            # still short-circuits to no-backup via the ``_lt and`` guard.
+            backup = bool(_lt and getattr(_lt, "auto_export_on_wipe", True))
+        backup_path: str | None = None
+        if backup:
+            try:
+                from sherlock.memory.portability import backup_ltm_markdown
+
+                backup_path = backup_ltm_markdown(self._memory, self._ltm_storage_dir())
+            except Exception as exc:
+                # F2 (audit): fail CLOSED — if the backup write fails we must NOT
+                # proceed to an unrecoverable delete. Abort, emit no memory.wiped.
+                return {
+                    "removed": 0,
+                    "backup_path": None,
+                    "error": f"backup failed, wipe aborted: {exc}",
+                }
+        removed = self._memory.delete_conversation_memories(LTM_CONVERSATION_ID)
+        self._emit("memory.wiped", "memory", {"count": removed, "backup_path": backup_path})
+        return {"removed": removed, "backup_path": backup_path}
+
+    def _ltm_storage_dir(self) -> "Path":
+        """Directory for long-term export/backup files: the folder holding
+        ``sherlock.db`` (created if missing)."""
+        from pathlib import Path as _Path
+
+        d = _Path(self.config.storage.sqlite_path).resolve().parent
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def export_memory(self, fmt: str = "markdown", path: str | None = None) -> str:
+        """Export the cross-conversation long-term memory as ``markdown``,
+        ``json`` or ``sql`` and return the string. When ``path`` is given the
+        string is also written there (UTF-8). Reading is harmless, so this works
+        regardless of ``long_term.enabled``. Emits ``memory.exported``."""
+        from sherlock.memory import portability as _port
+
+        fmt_norm = (fmt or "markdown").strip().lower()
+        if fmt_norm in ("markdown", "md"):
+            text = _port.export_ltm_markdown(self._memory)
+        elif fmt_norm == "json":
+            text = _port.export_ltm_json(self._memory)
+        elif fmt_norm == "sql":
+            text = _port.export_ltm_sql(self._memory)
+        else:
+            raise ValueError(f"unknown export format {fmt!r} (use 'markdown', 'json', or 'sql')")
+        count = len(_port.live_ltm_rows(self._memory))
+        written_path: str | None = None
+        if path is not None:
+            from pathlib import Path as _Path
+
+            # F4 (audit): honour "~" and create missing parent dirs so an export
+            # to a home-relative or nested path doesn't crash on a missing folder.
+            p = _Path(path).expanduser()
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(text, encoding="utf-8")
+            written_path = str(p)
+        self._emit(
+            "memory.exported",
+            "memory",
+            {"format": fmt_norm, "count": count, "path": written_path},
+        )
+        return text
+
+    def import_memory(self, src: str, fmt: str | None = None) -> dict:
+        """Import long-term facts from ``src`` — a filesystem PATH or raw TEXT
+        (a short existing path is read; otherwise ``src`` is treated as the
+        content). ``fmt`` is auto-detected when ``None`` (leading ``{`` → json,
+        ``# Sherlock`` → markdown). REQUIRES ``long_term.enabled`` (it writes).
+        Every fact is routed through the store so redaction + dedup re-apply.
+        Emits ``memory.imported`` on success. Returns
+        ``{imported, skipped, warnings}`` or ``{"error": ...}``."""
+        _lt = getattr(self.config.memory, "long_term", None)
+        if not (_lt and getattr(_lt, "enabled", False)):
+            return {
+                "error": "long-term memory is disabled",
+                "imported": 0,
+                "skipped": 0,
+                "warnings": [],
+            }
+        text = src
+        try:
+            if isinstance(src, str) and len(src) < 4096 and os.path.exists(src):
+                from pathlib import Path as _Path
+
+                text = _Path(src).read_text(encoding="utf-8")
+        except (OSError, ValueError):
+            text = src
+        detected = fmt
+        if detected is None:
+            stripped = text.lstrip()
+            if stripped.startswith("{"):
+                detected = "json"
+            elif stripped.startswith("# Sherlock"):
+                detected = "markdown"
+            else:
+                return {
+                    "error": "could not detect format (expected JSON '{' or '# Sherlock' markdown)",
+                    "imported": 0,
+                    "skipped": 0,
+                    "warnings": [],
+                }
+        detected = detected.strip().lower()
+        from sherlock.memory import portability as _port
+
+        if detected == "json":
+            result = _port.import_ltm_json(self._memory, text)
+        elif detected in ("markdown", "md"):
+            result = _port.import_ltm_markdown(self._memory, text)
+        else:
+            return {
+                "error": f"unknown import format {fmt!r} (use 'json' or 'markdown')",
+                "imported": 0,
+                "skipped": 0,
+                "warnings": [],
+            }
+        if "error" not in result:
+            self._emit(
+                "memory.imported",
+                "memory",
+                {"imported": result.get("imported", 0), "skipped": result.get("skipped", 0)},
+            )
+        return result
 
     # ---- bootstrap wiring (filled by sherlock.bootstrap.engine) ----
 
@@ -1139,6 +2134,10 @@ class Sherlock:
                     topic_change_similarity_threshold=self.config.memory.topic_change_similarity_threshold,
                     prompt=llm2,
                 ),
+                # v1.12 Stage A1: pass the (shared-by-reference) long-term config
+                # so the summarizer can gate promotion + the prompt suffix. None-
+                # safe: getattr default keeps pre-v1.12 configs working.
+                long_term=getattr(self.config.memory, "long_term", None),
             )
         # Inference engine:
         from sherlock.inference.engine import (  # local import to avoid cycle
@@ -1271,8 +2270,25 @@ class Sherlock:
         self._pending_notebook = None
         self._slot_notebook = None
         self._conv_tool_calls = 0
+        # v1.12 B1: viz jobs (and their viz_ids) are keyed off the session-local
+        # turn index, which resets to 0 here — clear the stash so next session's
+        # ``t1-1`` can't collide with a stale one from this session.
+        self._pending_viz_jobs = []
+        # v1.12 B2: also drop the submitted-id dedupe — viz_ids restart at t1-1,
+        # so a stale id would otherwise mark the new session's job as done.
+        # NOTE (auditor E): clearing the stash/ids does NOT cancel in-flight render
+        # futures from the previous session — a late completion may still emit into
+        # the new session's sink carrying a stale data["turn"]. Self-corrects (the
+        # playground keys events by turn) and is acceptable.
+        self._viz_submitted_ids = set()
         self._reset_companion_pressure()
         self._last_compact_turn = 0
+        # v1.12 A3: confirm tokens + the remember-cue latch are session-local.
+        self._ltm_pending = {}
+        self._ltm_remember_promote_pending = False
+        # NICE-2: drop any per-turn LTM profile snapshot stashed by retrieval but
+        # not yet consumed by the USER PROFILE block, so it can't leak cross-session.
+        self._ltm_profile_selection = None
         # Re-seed domain hints into the new conversation.
         self._ensure_conversation()
         return conv.id
@@ -1299,11 +2315,20 @@ class Sherlock:
         self._pending_inference_extras = {}
         self._pending_search_results = []
         self._conv_tool_calls = 0
+        # v1.12 B1: drop viz jobs from the previous session — the incoming turn
+        # index (restored below) keys viz_ids, so a stale stash risks collisions.
+        self._pending_viz_jobs = []
+        self._viz_submitted_ids = set()  # v1.12 B2: reset the dispatch dedupe too
         # v1.6: zero the gating state, then re-seed intent pressure from the last
         # user message so a long sustained-need conversation doesn't silently drop
         # to single-model after a reload (one free stdlib perception pass).
         self._reset_companion_pressure()
         self._reseed_companion_pressure_from_last_user(self._prev_user_text)
+        # v1.12 A3: a confirm token from another session must never carry over.
+        self._ltm_pending = {}
+        self._ltm_remember_promote_pending = False
+        # NICE-2: clear any stale per-turn LTM profile snapshot.
+        self._ltm_profile_selection = None
         # Restore last-compact turn from existing summaries so the fallback
         # doesn't immediately fire on resume.
         self._last_compact_turn = self._turn_index
@@ -1329,8 +2354,17 @@ class Sherlock:
             self._pending_inference_extras = {}
             self._pending_search_results = []
             self._conv_tool_calls = 0
+            # v1.12 B1: clear the viz stash — turn index resets to 0 below, so a
+            # stale ``t1-1`` would otherwise collide with the next session's.
+            self._pending_viz_jobs = []
+            self._viz_submitted_ids = set()  # v1.12 B2: reset the dispatch dedupe
             self._reset_companion_pressure()
             self._last_compact_turn = 0
+            # v1.12 A3: drop confirm tokens + the remember-cue latch.
+            self._ltm_pending = {}
+            self._ltm_remember_promote_pending = False
+            # NICE-2: clear any stale per-turn LTM profile snapshot.
+            self._ltm_profile_selection = None
         return {
             "session_id": conversation_id,
             "messages_removed": msgs_removed,
@@ -1416,7 +2450,94 @@ class Sherlock:
         # v1.1 R13: pinned entries already ride TIER 2 verbatim every turn —
         # re-surfacing them via RAG pays for the same fact twice.
         hits = [(e, s) for (e, s) in hits if not e.pinned]
+        # v1.12 Stage A2: cross-conversation LONG-TERM sentinel RAG channel. A
+        # SECOND small hybrid search over the sentinel scope so durable facts
+        # that DON'T ride this turn's always-on USER PROFILE block can still
+        # surface semantically. OFF (or rag_channel=False) → zero extra work,
+        # byte-identical to a no-LTM run.
+        lt = getattr(self.config.memory, "long_term", None)
+        if lt is not None and getattr(lt, "enabled", False):
+            # v1.12 A2 F3: compute the profile selection ONCE per turn, here inside
+            # the retrieval _mem_lock, and stash it so the sentinel dedup below and
+            # the assembly-side USER PROFILE block reuse the SAME snapshot — a
+            # background compaction committing a promotion/supersede mid-turn can't
+            # desync the two selections (fact duplicated in profile+RAG, or dropped
+            # from both) and we pay for the store.list+sort only once.
+            self._ltm_profile_selection = self._select_ltm_profile_rows()
+            self._last_ltm_rag_hits = 0
+            if getattr(lt, "rag_channel", True) and query.strip():
+                try:
+                    sentinel = self._ltm_sentinel_hits(query, current_turn_index)
+                except Exception:
+                    sentinel = []
+                if sentinel:
+                    # Append AFTER the session hits (already downweighted) so a
+                    # session-relevant memory always wins position on a tie.
+                    hits = hits + sentinel
+                    self._last_ltm_rag_hits = len(sentinel)
         return hits
+
+    def _ltm_sentinel_hits(
+        self, query: str, current_turn_index: int | None
+    ) -> list[tuple[MemoryEntry, float]]:
+        """v1.12 Stage A2: hybrid search over the long-term sentinel scope.
+
+        Caller has already gated on ``enabled`` + ``rag_channel`` + non-empty
+        query. Drops facts already shown in THIS turn's USER PROFILE block
+        (reusing the per-turn selection snapshot so the two can't drift), then
+        DOWN-WEIGHTS the survivors — mirroring the tier-4 RAG-fallback weight —
+        so a session-scoped hit always wins a tie.
+
+        The R13 pinned-drop is deliberately NOT applied here: every sentinel row
+        is pinned, but only the top ``profile_max_facts`` ride TIER 2 verbatim,
+        so the narrower profile-dedup above (not "drop all pinned") is correct.
+        """
+        from sherlock.memory.entry import LTM_CONVERSATION_ID
+
+        top_k = min(3, int(self.config.memory.rag_top_k or 0))
+        if top_k <= 0:
+            return []
+        raw = self._hybrid.search(
+            query,
+            conversation_id=LTM_CONVERSATION_ID,
+            top_k=top_k,
+            confidence_threshold=0.0,
+            exclude_inferences_below=self.config.inference.confidence_threshold,
+            # v1.12 A2 F1: NEVER feed a session turn index into the sentinel scope.
+            # Its rows carry created_turn_index values from OTHER conversations, so
+            # the R29 recency boost (0.2*exp(-age/40)) would compare across
+            # conversations and dominate the RRF base term. The session search
+            # (above) doesn't pass it either — keep the two symmetric.
+            current_turn_index=None,
+        )
+        if not raw:
+            return []
+        # v1.12 A2 F3: reuse the per-turn snapshot stashed by the retrieval branch
+        # so this dedup can't drift from the injected profile block. Fall back to a
+        # direct compute for the direct-call/test path where retrieval hasn't run.
+        sel = getattr(self, "_ltm_profile_selection", None)
+        if sel is None:
+            sel = self._select_ltm_profile_rows()
+        profile_ids = {e.id for e, _ in sel}
+        weight = float(
+            (getattr(self.config.memory, "memory_tier_weights", {}) or {}).get(
+                "tier4_rag_fallback", 0.5
+            )
+        )
+        out: list[tuple[MemoryEntry, float]] = []
+        for e, s in raw:
+            if e.id in profile_ids:
+                continue
+            # v1.12 A2 F5: a pinned row can bypass the store's state filter, so a
+            # FORGOTTEN sentinel fact could resurface here even though the
+            # profile-side selection already excludes it — drop it to keep the two
+            # channels symmetric (and to not leak a future soft-deleted forget).
+            if e.state == MemoryState.FORGOTTEN:
+                continue
+            if e.type == MemoryType.DEEP_RESEARCH:
+                continue
+            out.append((e, s * weight))
+        return out
 
     # ---- v0.5.0 helpers: redaction + durable carry-forward ----
 
@@ -2025,6 +3146,11 @@ class Sherlock:
             answer = self._run_deep_research(conv_id, topic, turn_index, research_id, user_text)
         except Exception as exc:
             answer = self._deep_research_failure_text(topic, exc, research_id)
+        # v1.12 Stage B3: post-final VISUALIZER hook — after the whole verify chain,
+        # right before persistence + the done emit. Off (default) → answer
+        # unchanged. On → report markers become ⟦viz:…⟧ placeholders + async renders
+        # (so both the persisted message and the done answer carry placeholders).
+        answer = self._apply_deep_research_viz(answer, research_id, turn_index, question=topic)
         try:
             self._storage.add_message(
                 conv_id, role="assistant", content=answer, turn_index=turn_index
@@ -2059,6 +3185,11 @@ class Sherlock:
             answer = self._deep_research_failure_text(topic, exc, research_id)
         finally:
             self._deep_researching = False
+        # v1.12 Stage B3: post-final VISUALIZER hook (parity with the inline path
+        # above) — after the verify chain, before persistence + the done emit. This
+        # bg runner is on the single-worker bg executor; _submit_viz_jobs dispatches
+        # onto the SEPARATE dedicated viz pool, so no _bg_future is touched.
+        answer = self._apply_deep_research_viz(answer, research_id, turn_index, question=topic)
         try:
             self._storage.add_message(
                 conv_id, role="assistant", content=answer, turn_index=turn_index
@@ -3384,7 +4515,7 @@ class Sherlock:
                     "section in whatever form reads best for its content (see PRESENTATION). "
                     "Cite source URLs inline where they back a claim; disputed facts get BOTH "
                     "sides. If this section genuinely has nothing, OMIT it — never pad with a "
-                    "'consult official sources' placeholder.\n\n" + _PRESENTATION_GUIDE
+                    "'consult official sources' placeholder.\n\n" + self._presentation_guide()
                 )
                 resp = self._provider.chat([ChatMessage(role="user", content=prompt)])
                 self._dr_account(
@@ -3482,7 +4613,7 @@ class Sherlock:
                     "reads best for its content (see PRESENTATION). Cite source URLs inline "
                     "where they back a claim; facts marked disputed get BOTH sides. If this "
                     "section genuinely has nothing, OMIT it — never pad with a placeholder."
-                    "\n\n" + _PRESENTATION_GUIDE
+                    "\n\n" + self._presentation_guide()
                 )
                 resp = self._provider.chat([ChatMessage(role="user", content=prompt)])
                 self._dr_account(
@@ -3898,7 +5029,7 @@ class Sherlock:
                 "or URLs; the only mandatory edits are the consistency/grounding fixes (1-6). "
                 "Formatting, images, a verdict lead, and length are YOUR call (item 7, "
                 "optional) — improve them where it helps, leave them where it doesn't. Return "
-                "ONLY the report text.\n\n" + _PRESENTATION_GUIDE
+                "ONLY the report text.\n\n" + self._presentation_guide()
             )
             prompt = (
                 f"You are fact-checking a research report on: {topic}\n\n"
@@ -4081,7 +5212,7 @@ class Sherlock:
             "confirmed by multiple sources — state those with higher confidence. For facts "
             "marked [disputed — sources conflict], present BOTH sides.\n"
             "• End with a short “Sources” list of the URLs you actually used.\n\n"
-            + _PRESENTATION_GUIDE
+            + self._presentation_guide()
         )
         try:
             resp = self._provider.chat([ChatMessage(role="user", content=prompt)])
@@ -4214,6 +5345,82 @@ class Sherlock:
                     "data": data,
                 }
             )
+        except Exception:
+            pass
+
+    @staticmethod
+    def _compact_done_payload(summary_result: dict) -> dict:
+        """v1.12 F9: keep the OFF-state ``compact.done`` event payload
+        byte-identical to v1.11, which had no ``long_term_promoted`` key.
+
+        run()'s return value always carries the key (possibly ``[]``) for
+        callers, but the EVENT payload strips it when empty — so an idle/off
+        cycle emits the unchanged v1.11 shape while a real promotion cycle
+        still surfaces the list."""
+        payload = dict(summary_result)
+        if not payload.get("long_term_promoted"):
+            payload.pop("long_term_promoted", None)
+        return payload
+
+    def _emit_memory_promoted(self, summary_result: dict) -> None:
+        """v1.12 Stage A1: emit ``memory.promoted`` when LLM-2 promoted any fact
+        into long-term memory this cycle. Best-effort; no-op when nothing was
+        promoted (feature off, incognito, or nothing durable). Called at BOTH the
+        sync and achat compaction sites for event parity."""
+        try:
+            promoted = summary_result.get("long_term_promoted") or []
+        except AttributeError:
+            promoted = []
+        if not promoted:
+            return
+        self._emit(
+            "memory.promoted",
+            "llm2",
+            {
+                "count": len(promoted),
+                "items": [
+                    {
+                        "category": p.get("category"),
+                        "content": (p.get("content") or "")[:120],
+                    }
+                    for p in promoted
+                    if isinstance(p, dict)
+                ],
+            },
+        )
+
+    def _emit_ltm_management_event(self, result: dict) -> None:
+        """v1.12 Stage A3: emit a ``memory.*`` event for a long-term MANAGEMENT
+        tool result. Best-effort; no-op on errors or read-only verbs so the
+        off/read paths stay event-quiet."""
+        try:
+            if not isinstance(result, dict) or result.get("tool") != "memory":
+                return
+            if "error" in result:
+                return
+            kind = result.get("kind")
+            if kind == "save" and result.get("saved"):
+                self._emit(
+                    "memory.saved",
+                    "memory",
+                    {"id": result.get("id"), "category": result.get("category")},
+                )
+            elif kind == "update" and result.get("updated"):
+                self._emit(
+                    "memory.updated",
+                    "memory",
+                    {"old_id": result.get("old_id"), "new_id": result.get("new_id")},
+                )
+            elif kind == "forget" and result.get("count"):
+                self._emit("memory.delete_pending", "memory", {"count": result.get("count")})
+            elif kind == "forget-confirm":
+                self._emit("memory.deleted", "memory", {"count": result.get("deleted", 0)})
+            elif kind == "wipe-confirm":
+                self._emit(
+                    "memory.wiped",
+                    "memory",
+                    {"count": result.get("wiped", 0), "backup_path": result.get("backup_path")},
+                )
         except Exception:
             pass
 
@@ -4503,6 +5710,12 @@ class Sherlock:
         summary_result = None
         if "compact" in requested and self._summarizer is not None:
             try:
+                # v1.12 A3 belt-and-braces: if a "remember this" cue latched, this
+                # compaction promotes the covered facts as user_directive. Consume
+                # the latch on the compaction ATTEMPT so it can't leak past the next
+                # compaction (bounded window). No-op when long-term is off/incognito.
+                _promote_ud = bool(getattr(self, "_ltm_remember_promote_pending", False))
+                self._ltm_remember_promote_pending = False
                 summary_result = self._summarizer.run(
                     conversation_id=conv_id,
                     # v1.0 B4: cover the FULL since-last-compaction span — the
@@ -4511,11 +5724,13 @@ class Sherlock:
                         conv_id, max(5, turn_index - self._last_compact_turn)
                     ),
                     turn_index=turn_index,
+                    promote_user_directive=_promote_ud,
                 )
                 summary_run = True
                 self._last_compact_turn = turn_index
                 if isinstance(summary_result, dict):
-                    self._emit("compact.done", "llm2", dict(summary_result))
+                    self._emit("compact.done", "llm2", self._compact_done_payload(summary_result))
+                    self._emit_memory_promoted(summary_result)
                     # v1.6: carry worth_digging/predicted_directions to next turn's gate.
                     self._prev_summary_result = summary_result
             except Exception as exc:
@@ -4727,6 +5942,127 @@ class Sherlock:
             return ""
         latest = max(personas, key=lambda p: p.last_used_turn_index)
         return "[PERSONA SUMMARY — system-tracked, may need correction]\n" f"{latest.content}"
+
+    # ---- v1.12 Stage A2: long-term USER PROFILE tier-2 block ----
+
+    def _select_ltm_profile_rows(self) -> list[tuple[MemoryEntry, str]]:
+        """Rank + cap the durable long-term (sentinel-scope) facts for the
+        USER PROFILE block.
+
+        SINGLE source of truth for BOTH the injected block
+        (:meth:`_format_user_profile_block`) and the RAG-channel dedup in
+        :meth:`_retrieve_memories`, so the two can never disagree on which facts
+        are "already in the profile". Called ONCE per turn from the retrieval
+        branch, which stashes the result on ``self._ltm_profile_selection`` for
+        both consumers to reuse (F3 — retrieval and assembly no longer recompute
+        it independently, which used to let a mid-turn compaction desync them).
+
+        Ranking: ALWAYS categories (user_directive, identity_health) first, then
+        the conservative bucket, then everything else; within a bucket by
+        confidence desc, then created_at desc (newest). Truncated to
+        ``profile_max_facts`` AND ``profile_max_chars`` (whichever binds first);
+        an over-long fact is word-trimmed to the remaining char budget.
+
+        Returns (row, display_content) pairs. ``[]`` when long-term memory is
+        disabled, the sentinel scope is empty, or on any store error
+        (best-effort — a memory fault must never kill the turn).
+        """
+        lt = getattr(self.config.memory, "long_term", None)
+        if lt is None or not getattr(lt, "enabled", False):
+            return []
+        try:
+            from sherlock.memory.entry import (
+                LTM_CONVERSATION_ID,
+                MemoryState,
+                ltm_category,
+            )
+            from sherlock.memory.summarizer import (
+                _LTM_ALWAYS_CATEGORIES,
+                _LTM_CONSERVATIVE_CATEGORIES,
+            )
+
+            rows = [
+                e
+                for e in self._memory.list(conversation_id=LTM_CONVERSATION_ID)
+                if not e.superseded_by and e.state != MemoryState.FORGOTTEN
+            ]
+            if not rows:
+                return []
+
+            def _bucket(cat: str) -> int:
+                if cat in _LTM_ALWAYS_CATEGORIES:
+                    return 0
+                if cat in _LTM_CONSERVATIVE_CATEGORIES:
+                    return 1
+                return 2
+
+            rows.sort(
+                key=lambda e: (
+                    _bucket(ltm_category(e.tags)),
+                    -float(e.confidence or 0.0),
+                    -e.created_at.timestamp(),
+                )
+            )
+            max_facts = int(getattr(lt, "profile_max_facts", 12) or 0)
+            max_chars = int(getattr(lt, "profile_max_chars", 1200) or 0)
+            selected: list[tuple[MemoryEntry, str]] = []
+            chars_used = 0
+            for e in rows:
+                if max_facts and len(selected) >= max_facts:
+                    break
+                content = (e.content or "").strip()
+                if not content:
+                    continue
+                if max_chars:
+                    remaining = max_chars - chars_used
+                    # v1.12 A2 F6: stop before spending a nearly-exhausted char
+                    # budget on a meaningless <16-char fragment.
+                    if remaining < 16:
+                        break
+                    if len(content) > remaining:
+                        content = _trim_at_boundary(content, remaining)
+                selected.append((e, content))
+                chars_used += len(content)
+            return selected
+        except Exception:
+            return []
+
+    def _format_user_profile_block(self) -> str:
+        """USER PROFILE tier-2 block: durable facts remembered across sessions.
+
+        Gated on ``config.memory.long_term.enabled`` — off (the default) returns
+        ``""`` with ZERO extra work, so the assembled slot stays byte-identical
+        to a build without long-term memory. Records this turn's fact count for
+        the ``slot.assembled`` observability key. Empty when the sentinel scope
+        has no live rows. (The RAG-channel dedup and this block share the SAME
+        per-turn selection snapshot — stashed by :meth:`_retrieve_memories` under
+        the memory lock — so a compaction committing between retrieval and
+        assembly can't desync them.)
+        """
+        lt = getattr(self.config.memory, "long_term", None)
+        if lt is None or not getattr(lt, "enabled", False):
+            self._ltm_profile_facts_this_turn = 0
+            return ""
+        # v1.12 A2 F3: consume the snapshot the retrieval branch stashed this turn;
+        # fall back to a direct compute on the paths that skip retrieval
+        # (rag_channel off / empty query / direct callers).
+        selected = getattr(self, "_ltm_profile_selection", None)
+        if selected is not None:
+            self._ltm_profile_selection = None
+        else:
+            selected = self._select_ltm_profile_rows()
+        self._ltm_profile_facts_this_turn = len(selected)
+        if not selected:
+            return ""
+        from sherlock.memory.entry import ltm_category
+
+        lines = [
+            "[USER PROFILE — durable facts remembered across sessions "
+            "(long-term memory); these persist beyond this conversation]"
+        ]
+        for e, content in selected:
+            lines.append(f"- [{ltm_category(e.tags)}] {content}")
+        return "\n".join(lines)
 
     def _format_compacted_highlights_block(
         self, conv_id: str, max_tokens: int, entries: list[MemoryEntry] | None = None
@@ -5263,6 +6599,28 @@ class Sherlock:
             "═══ TIER 1: GROUND TRUTH — always trust ═══",
             tier1_prompt,
         ]
+        # v1.12 Stage A3: document the long-term memory MANAGEMENT verbs ONLY when
+        # the feature is enabled. Appended AFTER the base-prompt truncation (its
+        # own constant block) so the cached base prompt is untouched; OFF (the
+        # default) → nothing added → TIER 1 byte-identical to a no-LTM build.
+        # F3 (audit): when ENABLED this is a bounded, constant ~300-token TIER-1
+        # addition (the LTM_TOOL_GUIDANCE block) — it rides the stable cached
+        # prefix, so the per-turn cost is a one-time cache-write, not a recurring
+        # spend. Opt-in only; there is no growth-with-conversation term here.
+        _lt_cfg = getattr(self.config.memory, "long_term", None)
+        if _lt_cfg is not None and getattr(_lt_cfg, "enabled", False):
+            tier1_parts.append(LTM_TOOL_GUIDANCE)
+        # v1.12 Stage B1: teach LLM-1 the inline visualizer marker syntax ONLY when
+        # visualization is enabled. Same discipline as LTM_TOOL_GUIDANCE — a bounded
+        # constant block appended AFTER the cached base-prompt truncation, so OFF
+        # (the default) → nothing added → TIER 1 byte-identical to a no-viz build.
+        _viz_cfg = getattr(self.config, "visualization", None)
+        if _viz_cfg is not None and getattr(_viz_cfg, "enabled", False):
+            tier1_parts.append(
+                _viz_marker_guidance(
+                    int(_viz_cfg.max_markers_chat), image=self._viz_image_available()
+                )
+            )
         # P0-1: do NOT inject the timestamp here. A fresh microsecond
         # timestamp at the head of TIER 1 mutates the stable prefix every
         # turn and destroys prompt-cache hits across the whole TIER 1+2
@@ -5276,6 +6634,24 @@ class Sherlock:
         persona = self._format_persona_summary_block(conv.id, entries=all_entries)
         if persona:
             tier2_parts.append(persona)
+        # v1.12 Stage A2: durable cross-session USER PROFILE, right after persona.
+        # Appended into tier2_parts BEFORE the highlights-budget subtraction so
+        # its tokens are counted against the same TIER-2 budget as its siblings
+        # (the highlights block gets what's left, and the final tier-2 truncation
+        # clamps the total) — the profile can never silently inflate the slot.
+        # OFF (default) → "" → tier2_parts unchanged → byte-identical.
+        profile = self._format_user_profile_block()
+        if profile:
+            # v1.12 A2 F2: cap the profile at a THIRD of the tier-2 budget so a
+            # worst-case (e.g. Korean, ~1000+ token) profile can't consume the
+            # whole compacted_memory_max — which would drive highlights_budget to 0
+            # (killing session highlights) and then tail-truncate the profile
+            # itself at the final tier-2 clamp.
+            if budget is not None:
+                profile = self._truncate_to_tokens(
+                    profile, max(1, budget.compacted_memory_max // 3)
+                )
+            tier2_parts.append(profile)
         if budget is not None:
             highlights_budget = max(
                 0, budget.compacted_memory_max - count_tokens("\n".join(tier2_parts))
@@ -5334,6 +6710,19 @@ class Sherlock:
                         ]
                     },
                 )
+        # v1.12 Stage A3: deterministic "remember this" cue. When the feature is
+        # enabled and the user's turn carries an imperative remember-directive,
+        # nudge LLM-1 (SAME turn) to emit `memory save`, emit a machine event, and
+        # latch the belt-and-braces flag so the NEXT compaction promotes this
+        # turn's facts as user_directive. OFF (default) → skipped → byte-identical.
+        if (
+            _lt_cfg is not None
+            and getattr(_lt_cfg, "enabled", False)
+            and _detect_remember_cue(user_text)
+        ):
+            tier3_parts.append(_LTM_REMEMBER_NUDGE)
+            self._ltm_remember_promote_pending = True
+            self._emit("memory.remember_cue", "memory", {"turn": self._turn_index_for_emit})
         # v1.5 Stage 3: LLM-2 memory-consistency anchor. Code-first contradiction
         # check of the new message vs pinned facts; surfaced same-turn so LLM-1 can
         # reconcile rather than silently override. Cue is OFF by default →
@@ -5520,28 +6909,38 @@ class Sherlock:
         ]
         messages.extend(tail)
         messages.append(ChatMessage(role="user", content=final_user_content))
+        slot_data = {
+            "system_prompt": composite_system,
+            "system_tokens": count_tokens(composite_system),
+            "slot_budget": budget.as_dict() if budget is not None else {},
+            "k_turn_turns": self._last_k_turn_turns_used,
+            "k_turn_tokens": self._last_k_turn_tokens_used,
+            "tail": [{"role": m.role, "content": m.content} for m in tail],
+            "active_intent": list(hypotheses or []),
+            "search_block": list(search_results or []),
+            "retrieved_count": len(retrieved or []),
+            "user_text": user_text,
+            # v1.5: the FINAL user message carries the volatile SYSTEM-ANALYSIS
+            # block (perception OBSERVED/PRIOR, memory-consistency cue, the
+            # inference notebook) — surface it so the playground inspector can
+            # show the upgrade's per-turn injections. Observability only.
+            "final_user_message": final_user_content,
+        }
+        # v1.12 Stage A2: long-term injection counters. Keys are ABSENT when the
+        # feature is off (off-state payload byte-identical) and only added when a
+        # non-empty USER PROFILE block was injected this turn.
+        _lt = getattr(self.config.memory, "long_term", None)
+        if _lt is not None and getattr(_lt, "enabled", False):
+            _profile_facts = int(getattr(self, "_ltm_profile_facts_this_turn", 0) or 0)
+            # v1.12 A2 F4: also emit the counters when the profile block was empty
+            # but the sentinel RAG channel still hit — gating on _profile_facts
+            # alone silently dropped ltm_rag_hits on a pure-RAG turn.
+            _rag_hits = int(getattr(self, "_last_ltm_rag_hits", 0) or 0)
+            if _profile_facts or _rag_hits:
+                slot_data["ltm_profile_facts"] = _profile_facts
+                slot_data["ltm_rag_hits"] = _rag_hits
         try:
-            self._emit(
-                "slot.assembled",
-                "slot",
-                {
-                    "system_prompt": composite_system,
-                    "system_tokens": count_tokens(composite_system),
-                    "slot_budget": budget.as_dict() if budget is not None else {},
-                    "k_turn_turns": self._last_k_turn_turns_used,
-                    "k_turn_tokens": self._last_k_turn_tokens_used,
-                    "tail": [{"role": m.role, "content": m.content} for m in tail],
-                    "active_intent": list(hypotheses or []),
-                    "search_block": list(search_results or []),
-                    "retrieved_count": len(retrieved or []),
-                    "user_text": user_text,
-                    # v1.5: the FINAL user message carries the volatile SYSTEM-ANALYSIS
-                    # block (perception OBSERVED/PRIOR, memory-consistency cue, the
-                    # inference notebook) — surface it so the playground inspector can
-                    # show the upgrade's per-turn injections. Observability only.
-                    "final_user_message": final_user_content,
-                },
-            )
+            self._emit("slot.assembled", "slot", slot_data)
         except Exception:
             pass
         return messages
@@ -5624,16 +7023,39 @@ class Sherlock:
         # Memory tool — uses the local memory store, never a search engine.
         if kind == "memory":
             try:
-                from sherlock.tools.memory_tool import dispatch_memory
+                from sherlock.tools.memory_tool import LTMToolContext, dispatch_memory
 
                 conv = self._conversation
-                return dispatch_memory(
+                # v1.12 A3: hand the (feature-gated) long-term MANAGEMENT context
+                # in. It carries the enable/incognito gates, this turn's index, and
+                # a reference to the agent-owned confirm-token store — so the
+                # stateless tool module can mint/validate single-use delete tokens.
+                _lt = getattr(self.config.memory, "long_term", None)
+                ltm_ctx = LTMToolContext(
+                    enabled=bool(_lt and getattr(_lt, "enabled", False)),
+                    incognito=bool(_lt and getattr(_lt, "incognito", False)),
+                    turn_index=self._turn_index,
+                    pending=self._ltm_pending,
+                    # v1.12 Stage A4: a chat-driven wipe-confirm backs up first
+                    # too (same knob + backup dir the agent-level wipe uses).
+                    # F6 (audit): pass the dir-resolver as a CALLABLE so its mkdir
+                    # side effect fires lazily on wipe-confirm only, not on every
+                    # (mostly read) memory dispatch.
+                    # NICE-4: True fallback, same as agent-level wipe_long_term (the
+                    # config default for this knob is True) — keep the two aligned.
+                    auto_export_on_wipe=bool(_lt and getattr(_lt, "auto_export_on_wipe", True)),
+                    backup_dir=self._ltm_storage_dir,
+                )
+                result = dispatch_memory(
                     payload,
                     store=self._memory,
                     hybrid=self._hybrid,
                     storage=self._storage,
                     conversation_id=conv.id if conv else None,
+                    ltm_ctx=ltm_ctx,
                 )
+                self._emit_ltm_management_event(result)
+                return result
             except Exception as exc:
                 return {
                     "tool": "memory",
@@ -5760,6 +7182,31 @@ class Sherlock:
                 lines.append(f"--- ({i}) memory {memkind}: {key} ---")
                 if "error" in item:
                     lines.append(f"ERROR: {item['error']}")
+                elif memkind in ("forget", "wipe") and "confirm_token" in item:
+                    # v1.12 A3: destructive PREVIEW — surface the instruction, the
+                    # confirm token, and exactly what would be deleted so LLM-1 can
+                    # ask the user before emitting the matching `-confirm`.
+                    if item.get("instruction"):
+                        lines.append(item["instruction"])
+                    lines.append(f"CONFIRM TOKEN: {item['confirm_token']}")
+                    if memkind == "wipe":
+                        lines.append(f"(would erase ALL {item.get('count', 0)} long-term fact(s))")
+                    for r in (item.get("pending") or [])[:8]:
+                        cat = r.get("category", "")
+                        lines.append(f"• [{cat}] {(r.get('content') or '')[:300]}")
+                elif memkind in ("forget", "wipe"):
+                    # Preview with no matches (no token minted).
+                    lines.append(item.get("message", "(nothing to delete)"))
+                elif memkind == "forget-confirm":
+                    lines.append(f"deleted {item.get('deleted', 0)} long-term fact(s).")
+                elif memkind == "wipe-confirm":
+                    lines.append(f"wiped {item.get('wiped', 0)} long-term fact(s).")
+                elif memkind == "save" and item.get("saved"):
+                    lines.append(f"saved (long-term): {(item.get('content') or '')[:300]}")
+                elif memkind == "update" and item.get("updated"):
+                    lines.append(
+                        f"updated {item.get('old_id')} → {(item.get('content') or '')[:280]}"
+                    )
                 else:
                     results = item.get("results") or []
                     if not results:
@@ -5774,6 +7221,11 @@ class Sherlock:
                             if "role" in r and "source" not in r:
                                 # timeline entry: show speaker
                                 lines.append(f"• {r.get('role','?')}: {content[:300]}")
+                            elif memkind == "profile":
+                                # v1.12 A3: long-term profile rows carry id+category.
+                                cat = r.get("category", "")
+                                rid = r.get("id", "")
+                                lines.append(f"• [{rid} · {cat}] {content[:300]}")
                             else:
                                 tag = r.get("source", "")
                                 conf = r.get("confidence")
@@ -5968,6 +7420,16 @@ class Sherlock:
             cleaned_text = (
                 (cleaned_text + "\n\n" + _dr_notice).strip() if cleaned_text.strip() else _dr_notice
             )
+        # v1.12 Stage B1: LLM-4 VISUALIZER — turn inline <<sherlock-viz: ...>>
+        # markers into placeholder tokens + stashed render jobs. GATED: off
+        # (default) → the parse never runs, so a stray marker survives verbatim
+        # in the reply exactly as it does today (byte-identical off-state).
+        if self.config.visualization.enabled:
+            cleaned_text = self._extract_viz_jobs(cleaned_text, turn_index, question=user_input)
+            # Stage B2: dispatch each new job to the dedicated viz pool. SUBMIT-ONLY
+            # (fire-and-forget) — this never delays the reply; renders complete
+            # asynchronously and surface via viz.rendered/viz.failed events.
+            self._submit_viz_jobs()
         # Replace the response text with the cleaned version so downstream
         # storage + return value don't show the tag to the user.
         response = ChatResponse(
@@ -6289,6 +7751,14 @@ class Sherlock:
             cleaned_text = (
                 (cleaned_text + "\n\n" + _dr_notice).strip() if cleaned_text.strip() else _dr_notice
             )
+        # v1.12 Stage B1: LLM-4 VISUALIZER (parity with sync chat()) — GATED; off
+        # (default) → the parse never runs → marker stays verbatim (byte-identical).
+        if self.config.visualization.enabled:
+            cleaned_text = self._extract_viz_jobs(cleaned_text, turn_index, question=user_input)
+            # Stage B2: fire-and-forget dispatch (parity with sync). achat runs
+            # companions INLINE, but viz renders go to the dedicated pool — never
+            # the single bg worker — so this stays submit-only and non-blocking.
+            self._submit_viz_jobs()
         if requested:
             self._companion_request_count += 1
         # P0 (achat tag leak): rebuild the response with cleaned text so the
@@ -6385,6 +7855,13 @@ class Sherlock:
         summary_result = None
         if "compact" in requested and self._summarizer is not None:
             try:
+                # v1.12 A3 (F1): mirror the sync _run_post_response latch handling so
+                # the remember-cue promotion is NOT silently lost on the async path —
+                # and the latch is consumed on THIS compaction attempt so it can't
+                # leak forward and force-promote an UNRELATED window's facts on a
+                # later (e.g. sync) compaction. No-op when long-term is off/incognito.
+                _promote_ud = bool(getattr(self, "_ltm_remember_promote_pending", False))
+                self._ltm_remember_promote_pending = False
                 summary_result = await asyncio.to_thread(
                     self._summarizer.run,
                     conversation_id=conv.id,
@@ -6392,11 +7869,13 @@ class Sherlock:
                         conv.id, max(5, turn_index - self._last_compact_turn)
                     ),
                     turn_index=turn_index,
+                    promote_user_directive=_promote_ud,
                 )
                 summary_run = True
                 self._last_compact_turn = turn_index
                 if isinstance(summary_result, dict):
-                    self._emit("compact.done", "llm2", dict(summary_result))
+                    self._emit("compact.done", "llm2", self._compact_done_payload(summary_result))
+                    self._emit_memory_promoted(summary_result)
                     self._prev_summary_result = summary_result  # v1.6 gate signal
             except Exception as exc:
                 self._emit(
@@ -6588,6 +8067,14 @@ class Sherlock:
         system_prompt: str,
         summary_chat=None,
         inference_chat=None,
+        # v1.12 Stage B1: optional 4th role — LLM-4 VISUALIZER. Unset → the
+        # visualizer falls back to main_chat (see _viz_llm), so `visualization`
+        # can be turned on with no dedicated viz callable.
+        viz_chat=None,
+        # v1.12 Stage V3: optional text→image callable for ``image:`` markers
+        # (prompt → dict with b64/url, raw base64, data: URI, or http(s) URL).
+        # Unset AND no visualization.image_model → the modality stays dormant.
+        viz_image_gen=None,
         project: str = "sherlock_app",
         domain_hints: list[str] | None = None,
         storage_dir: str | Path | None = None,
@@ -6638,6 +8125,15 @@ class Sherlock:
         # the SHERLOCK_COMPANIONS env (used to keep the test suite hermetic on
         # legacy) else "cold_start". ---
         companions_mode: str | None = None,
+        # --- v1.12: cross-conversation long-term memory. None (default) → the
+        # library default (ON as of v1.12); False → force OFF (byte-identical to
+        # pre-v1.12); True → enable with defaults; a dict → LongTermMemoryConfig
+        # overrides (enabled defaults True, e.g. {"incognito": True}). ---
+        long_term: bool | dict | None = None,
+        # --- v1.12 Stage B1: LLM-4 inline visualizer (off by default). Pass True
+        # to enable with defaults, or a dict of VisualizationConfig overrides
+        # (e.g. {"enabled": True, "max_markers_chat": 2}). ---
+        visualization: bool | dict | None = None,
     ) -> "Sherlock":
         """Bring-your-own-LLM constructor.
 
@@ -6895,6 +8391,32 @@ class Sherlock:
         # v1.5 Stage 4: recursive inference notebook.
         cfg.inference.inference_notebook = bool(inference_notebook)
         cfg.inference.notebook_max_rounds = int(notebook_max_rounds)
+        # v1.12: cross-conversation long-term memory. Must be resolved BEFORE the
+        # agent is constructed so install_companion_prompts hands the enabled
+        # config to the summarizer. None → leave the library default (ON in
+        # v1.12); False → force OFF (byte-identical to pre-v1.12); True/dict →
+        # enable (a dict supplies LongTermMemoryConfig overrides).
+        if long_term is False:
+            from sherlock.config import LongTermMemoryConfig
+
+            cfg.memory.long_term = LongTermMemoryConfig(enabled=False)
+        elif long_term:
+            from sherlock.config import LongTermMemoryConfig
+
+            if isinstance(long_term, dict):
+                cfg.memory.long_term = LongTermMemoryConfig(**{"enabled": True, **long_term})
+            else:
+                cfg.memory.long_term = LongTermMemoryConfig(enabled=True)
+        # v1.12 Stage B1: opt in to the LLM-4 inline visualizer (mirrors long_term).
+        # Off (default) → byte-identical: marker protocol dormant, no system-prompt
+        # guidance. Must be set BEFORE construction so _assemble_messages sees it.
+        if visualization:
+            from sherlock.config import VisualizationConfig
+
+            if isinstance(visualization, dict):
+                cfg.visualization = VisualizationConfig(**{"enabled": True, **visualization})
+            else:
+                cfg.visualization = VisualizationConfig(enabled=True)
 
         main_provider = CallableProvider(main_chat, model_id=model_id)
         summary_provider = (
@@ -6907,16 +8429,26 @@ class Sherlock:
             if inference_chat is not None
             else main_provider
         )
+        # v1.12 Stage B1: build the viz provider ONLY when a viz callable is
+        # given; unset → None → _viz_llm() resolves to the main provider.
+        viz_provider = (
+            CallableProvider(viz_chat, model_id=model_id) if viz_chat is not None else None
+        )
 
         agent = cls(
             cfg,
             provider=main_provider,
             background_summary_provider=summary_provider,
             background_inference_provider=inference_provider,
+            background_viz_provider=viz_provider,
         )
         # Record the split so consumers / tests can inspect both halves.
         agent._user_system_prompt = user_prompt_text
         agent._sherlock_extension = ext_text
+        # v1.12 Stage V3: optional text→image callable (prompt → dict/b64/url/
+        # data-URI, see _viz_image_generate). None (default) → the image modality
+        # stays dormant unless visualization.image_model is set.
+        agent._viz_image_gen = viz_image_gen
 
         agent.install_companion_prompts(DEFAULT_LLM2_PROMPT, DEFAULT_LLM3_PROMPT, version=0)
 

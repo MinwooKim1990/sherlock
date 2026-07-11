@@ -111,6 +111,7 @@ class MemoryStore:
         semantic_triple: Optional[tuple[str, str, str]] = None,
         dedup: bool = True,
         initial_state: MemoryState = MemoryState.FRESH,
+        origin_conversation_id: Optional[str] = None,
     ) -> MemoryEntry:
         # v0.5.0 security: redact secrets/PII at the SINGLE write choke point,
         # before content feeds dedup-hash, the MemoryEntry row, the embedding
@@ -337,6 +338,9 @@ class MemoryStore:
             # Creation turn == first-use turn; dedup merges never update it.
             created_turn_index=last_used_turn_index,
             content_hash=MemoryEntry.compute_hash(content),
+            # v1.12 Stage A1: provenance for long-term-promoted rows (None for
+            # every ordinary write → existing behaviour unchanged).
+            origin_conversation_id=origin_conversation_id,
         )
         with Session(self._engine) as s:
             s.add(entry)

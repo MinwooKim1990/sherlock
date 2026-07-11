@@ -66,6 +66,11 @@ class ModelsConfig(BaseModel):
     main: ModelConfig
     background_summary: ModelConfig | None = None
     background_inference: ModelConfig | None = None
+    # v1.12 Stage B1: optional 4th role — LLM-4 VISUALIZER (turns an inline
+    # <<sherlock-viz: ...>> marker into a self-contained HTML/SVG artifact).
+    # Unset → the visualizer falls back to the MAIN provider, so `visualization`
+    # can be enabled with no extra model key.
+    viz: ModelConfig | None = None
 
 
 class EmbeddingConfig(BaseModel):
@@ -94,6 +99,51 @@ class DecayPolicyConfig(BaseModel):
 class TopicClusterConfig(BaseModel):
     algorithm: str = "hdbscan"
     min_cluster_size: int = 3
+
+
+class LongTermMemoryConfig(BaseModel):
+    """v1.12 Stage A1: cross-conversation LONG-TERM memory.
+
+    LLM-2 promotes a small, high-value subset of session facts (identity,
+    health, explicit "remember this" directives, durable preferences/projects)
+    into a reserved sentinel scope shared by every conversation. Off by default
+    while the feature is staged; the code-level taxonomy gate — never the model
+    alone — decides what is durable enough to keep forever.
+    """
+
+    # v1.12 release: long-term memory is ON by default — the whole point of the
+    # feature is to be on. Set False to disable; the OFF path is byte-identical
+    # to pre-v1.12 (no USER PROFILE block, no sentinel RAG search, no telemetry
+    # keys), and with an EMPTY sentinel scope the ON path is result-identical too
+    # (only a wasted empty search + telemetry differ).
+    enabled: bool = True
+    # Suppress long-term WRITES only (promotions). Reads are unaffected, so a
+    # user can pause accumulating new durable facts without losing recall of
+    # what's already stored. Mirrors a browser "incognito" session.
+    incognito: bool = False
+    # Hard cap on stored long-term rows. Past it, the lowest-confidence/oldest
+    # promoted rows are hard-deleted (best-effort) so the store stays bounded.
+    cap: int = 200
+    # Budget for the (later-stage) injected long-term PROFILE block: at most
+    # this many facts / characters reach the LLM-1 slot so it can't crowd out
+    # the live conversation. Declared here so the schema is stable across stages.
+    profile_max_facts: int = 12
+    profile_max_chars: int = 1200
+    # Also expose long-term facts to the RAG retrieval channel (semantic recall
+    # across conversations), not just the always-on profile block.
+    rag_channel: bool = True
+    # On wipe_long_term() (and the memory wipe-confirm tool), export the sentinel
+    # scope to a Markdown backup file BEFORE deleting, so a wipe is recoverable.
+    # v1.12 Stage A4: the export hook has landed (sherlock.memory.portability),
+    # so this now defaults True — the whole reason it was False (the promised
+    # export didn't exist yet) is resolved. Set False to opt out of the backup.
+    auto_export_on_wipe: bool = True
+    # Category taxonomy (documentation — enforced in the summarizer's code gate):
+    #   user_directive   — the user explicitly asked to remember it (ALWAYS)
+    #   identity_health  — name/pronouns/allergies/medical (ALWAYS)
+    #   stable_preference / relationship / long_term_project
+    #                    — durable only; promoted with confidence≥0.7 + a quote
+    #   none             — transient/one-off/speculation → NEVER promoted
 
 
 class MemoryConfig(BaseModel):
@@ -164,6 +214,9 @@ class MemoryConfig(BaseModel):
             "tier4_rag_fallback": 0.5,
         }
     )
+
+    # v1.12 Stage A1: cross-conversation long-term memory (off by default).
+    long_term: LongTermMemoryConfig = Field(default_factory=LongTermMemoryConfig)
 
 
 class SearchConfig(BaseModel):
@@ -381,6 +434,55 @@ class PerceptionConfig(BaseModel):
     freshness: bool = True
 
 
+class VisualizationConfig(BaseModel):
+    """v1.12 Stage B1: LLM-4 VISUALIZER — inline data visualizations.
+
+    When LLM-1 answers a question where a diagram/chart would genuinely help, it
+    drops an inline ``<<sherlock-viz: description | data hint>>`` marker at the
+    spot the visual belongs. The agent replaces each marker with a stable
+    placeholder token (``⟦viz:...⟧``) that survives markdown rendering, stashes a
+    per-marker job, and (from Stage B2 onward) LLM-4 renders each job into a
+    self-contained HTML/SVG artifact swapped in for its placeholder.
+
+    ``enabled`` defaults to ``False`` so the marker protocol + system-prompt
+    guidance are completely dormant — a stray marker in an LLM reply stays
+    verbatim exactly as it does today (byte-identical off-state). The playground
+    flips it on. Every knob below is a bound, not a behaviour change when off.
+    """
+
+    enabled: bool = False
+    # LLM-4 self-critique rounds before a render is accepted (Stage B2+).
+    self_review_rounds: int = 1
+    # Max render-repair attempts when a produced artifact fails validation.
+    max_repair_rounds: int = 2
+    # Hard wall-clock budget for one marker's render (seconds); best-effort —
+    # a timeout drops that visual, the placeholder degrades to plain text.
+    timeout_s: float = 30.0
+    # Cap on how many markers are honoured per CHAT reply / per deep-research
+    # REPORT. Markers beyond the cap are stripped (no placeholder), never queued.
+    max_markers_chat: int = 3
+    max_markers_report: int = 4
+    # Upper bound on a single rendered artifact's HTML payload (bytes).
+    max_html_bytes: int = 64_000
+    # v1.12 Stage V1: a HIGHER cap that applies ONLY to an image-bearing artifact
+    # (one that embeds a data:image or an allowlisted web image) — an embedded
+    # image legitimately needs far more room than a pure-vector chart. A non-image
+    # artifact still uses max_html_bytes. v1.12 V3 audit: raised 600KB -> 4MB —
+    # b64-only image providers (gpt-image-1 class) return 1-4MB of base64 for a
+    # 1024px PNG, so the old cap hard-failed the modality's main path.
+    max_image_html_bytes: int = 4_000_000
+    # v1.12 Stage V3: text→image modality. None (default) = OFF — marker guidance,
+    # prompts and rendering stay byte-identical to pre-V3. Set to a litellm image
+    # model id (e.g. "dall-e-3", "gemini/imagen-3.0-generate-002") to let markers
+    # prefixed ``image:`` render a GENERATED picture, embedded as a data: URI (or
+    # pinned as an exact-URL img-src allowlist entry when the provider returns a
+    # hosted URL instead of bytes).
+    image_model: str | None = None
+    # Persist rendered artifacts to storage so a reopened session can re-hydrate
+    # them (Stage B3+). Best-effort; off = render-and-forget.
+    save_artifacts: bool = True
+
+
 class ToolsConfig(BaseModel):
     builtin: list[str] = Field(
         default_factory=lambda: ["web_search", "current_time", "calculator", "url_fetch"]
@@ -440,6 +542,8 @@ class Config(BaseModel):
     inference: InferenceConfig = Field(default_factory=InferenceConfig)
     perception: PerceptionConfig = Field(default_factory=PerceptionConfig)
     companions: CompanionsConfig = Field(default_factory=CompanionsConfig)
+    # v1.12 Stage B1: LLM-4 visualizer (off by default → dormant marker protocol).
+    visualization: VisualizationConfig = Field(default_factory=VisualizationConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     bootstrap: BootstrapConfig = Field(default_factory=BootstrapConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)

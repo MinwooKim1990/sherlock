@@ -48,6 +48,39 @@
   /* streaming caret */
   .stream-caret::after { content:"▋"; margin-left:1px; animation:blink 1s step-end infinite; color:#94a3b8; }
   @keyframes blink { 50% { opacity:0; } }
+  /* v1.12 B4: LLM-4 inline visualizer slots (placeholder → loading → sandboxed iframe) */
+  .viz-slot { position:relative; margin:.55em 0; border-radius:10px; }
+  .viz-slot-loading, .viz-slot-failed { display:flex; align-items:center; gap:.5em; padding:.7em .9em; font-size:.8em; color:#64748b; background:#f8fafc; border:1px dashed #cbd5e1; border-radius:10px; }
+  .viz-slot-failed { border-style:solid; color:#94a3b8; font-style:italic; }
+  .viz-slot-ready { border:1px solid #e2e8f0; overflow:hidden; background:#fff; }
+  .viz-slot iframe { display:block; }
+  .viz-spin { width:13px; height:13px; flex:0 0 auto; border:2px solid #cbd5e1; border-top-color:#6366f1; border-radius:50%; display:inline-block; animation:vizspin .7s linear infinite; }
+  @keyframes vizspin { to { transform:rotate(360deg); } }
+  html.dark .viz-slot-loading, html.dark .viz-slot-failed { background:#0f172a; border-color:#334155; color:#94a3b8; }
+  html.dark .viz-slot-ready { border-color:#293548; background:#111827; }
+  /* v1.12 H2: history sidebar */
+  .hist-item { border-radius:8px; padding:5px 8px; cursor:pointer; position:relative; }
+  .hist-item:hover { background:#f1f5f9; }
+  .hist-item.active { background:#e0e7ff; }
+  html.dark .hist-item:hover { background:#1e293b; }
+  html.dark .hist-item.active { background:#312e81; }
+  /* hover 🗑 delete button on history items */
+  .hist-del { position:absolute; top:4px; right:5px; opacity:0; transition:opacity .15s; font-size:12px; line-height:1; background:transparent; border:0; cursor:pointer; padding:1px 2px; }
+  .hist-item:hover .hist-del { opacity:.8; }
+  .hist-del:hover { opacity:1; }
+  /* setup: connected-provider chips */
+  .conn-chip { border:1px solid #86efac; background:#f0fdf4; color:#15803d; border-radius:9999px; padding:2px 10px; font-size:11px; cursor:pointer; }
+  .conn-chip:hover { background:#dcfce7; }
+  html.dark .conn-chip { background:#052e16; border-color:#166534; color:#4ade80; }
+  html.dark .conn-chip:hover { background:#14532d; }
+  /* v1.12 UI: two-row top bar — fixed-height chips/selects/buttons that never stack */
+  #topbar .topsel { background:#1e293b; color:#fff; border:0; border-radius:6px; height:24px; padding:0 4px; font-size:11px; min-width:0; max-width:200px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #topbar .role-chip { flex:0 0 auto; font-size:10px; font-weight:700; line-height:1; padding:4px 6px; border-radius:5px; letter-spacing:.03em; }
+  #topbar .topbtn { display:inline-flex; align-items:center; gap:4px; height:24px; padding:0 8px; border-radius:6px; background:#334155; white-space:nowrap; }
+  #topbar .topbtn:hover { background:#475569; }
+  #topbar .togchip { display:inline-flex; align-items:center; gap:4px; height:24px; padding:0 6px; border-radius:6px; background:rgba(148,163,184,.12); white-space:nowrap; }
+  /* dark mode paints selects #0f172a (same as the bar) — keep the pills visible */
+  html.dark #topbar .topsel { box-shadow: inset 0 0 0 1px #293548; }
   /* ---------- dark mode ---------- */
   html.dark body { background:#0b1220 !important; color:#e2e8f0; }
   html.dark .bg-white { background:#111827 !important; }
@@ -71,12 +104,13 @@
 <body class="bg-slate-100 text-slate-800 h-screen overflow-hidden">
 
 <!-- ============ SETUP SCREEN ============ -->
-<div id="setup" class="h-full flex items-center justify-center p-4">
-  <div class="bg-white rounded-2xl shadow-xl w-full max-w-2xl p-7 space-y-5">
+<div id="setup" class="h-full overflow-y-auto scroll flex p-4">
+  <!-- m-auto (not items-center on the parent): centers when short, scrolls without top-clipping when tall -->
+  <div class="bg-white rounded-2xl shadow-xl w-full max-w-2xl p-7 space-y-5 m-auto">
     <div class="flex items-start justify-between gap-3">
       <div>
         <h1 class="text-2xl font-bold tracking-tight">🔍 Sherlock Live Inspector</h1>
-        <p class="text-sm text-slate-500 mt-1" data-i18n="subtitle">Bring any LLM — Gemini, OpenAI, Anthropic, an open-source-model host (DeepInfra · Together · OpenRouter), or a local OpenAI-compatible server — and watch Sherlock curate its context in real time.</p>
+        <p class="text-sm text-slate-500 mt-1" data-i18n="subtitle">Connect any LLM — cloud or a local OpenAI-compatible server — and watch Sherlock curate its context in real time.</p>
       </div>
       <div class="flex gap-2 shrink-0">
         <select id="langSel" class="border rounded-lg px-2 py-1 text-xs" title="UI language" aria-label="UI language">
@@ -93,67 +127,59 @@
     </div>
 
     <div class="space-y-2">
-      <label class="text-sm font-semibold"><span data-i18n="providers">Providers</span> <span class="text-slate-400 font-normal" data-i18n="providers_hint">— connect at least one; mix freely per role</span></label>
-      <div class="grid gap-1.5">
-        <div class="flex gap-2 items-center">
-          <span class="w-[72px] text-xs font-semibold shrink-0">Gemini</span>
-          <input id="key-gemini" type="password" placeholder="AIza…" class="flex-1 border rounded-lg px-3 py-1.5 text-xs mono" />
-          <button data-prov="gemini" class="connectBtn bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg shrink-0">Connect</button>
-          <span id="st-gemini" class="text-[11px] text-slate-400 w-20 text-right shrink-0"></span>
-        </div>
-        <div class="flex gap-2 items-center">
-          <span class="w-[72px] text-xs font-semibold shrink-0">OpenAI</span>
-          <input id="key-openai" type="password" placeholder="sk-…" class="flex-1 border rounded-lg px-3 py-1.5 text-xs mono" />
-          <button data-prov="openai" class="connectBtn bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg shrink-0">Connect</button>
-          <span id="st-openai" class="text-[11px] text-slate-400 w-20 text-right shrink-0"></span>
-        </div>
-        <div class="flex gap-2 items-center">
-          <span class="w-[72px] text-xs font-semibold shrink-0">Anthropic</span>
-          <input id="key-anthropic" type="password" placeholder="sk-ant-…" class="flex-1 border rounded-lg px-3 py-1.5 text-xs mono" />
-          <button data-prov="anthropic" class="connectBtn bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg shrink-0">Connect</button>
-          <span id="st-anthropic" class="text-[11px] text-slate-400 w-20 text-right shrink-0"></span>
-        </div>
-        <div class="flex gap-2 items-center">
-          <span class="w-[72px] text-xs font-semibold shrink-0">DeepInfra</span>
-          <input id="key-deepinfra" type="password" placeholder="open-source models (Llama · Qwen · DeepSeek…)" class="flex-1 border rounded-lg px-3 py-1.5 text-xs mono" />
-          <button data-prov="deepinfra" class="connectBtn bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg shrink-0">Connect</button>
-          <span id="st-deepinfra" class="text-[11px] text-slate-400 w-20 text-right shrink-0"></span>
-        </div>
-        <div class="flex gap-2 items-center">
-          <span class="w-[72px] text-xs font-semibold shrink-0">Together</span>
-          <input id="key-together" type="password" placeholder="Together AI key" class="flex-1 border rounded-lg px-3 py-1.5 text-xs mono" />
-          <button data-prov="together" class="connectBtn bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg shrink-0">Connect</button>
-          <span id="st-together" class="text-[11px] text-slate-400 w-20 text-right shrink-0"></span>
-        </div>
-        <div class="flex gap-2 items-center">
-          <span class="w-[72px] text-xs font-semibold shrink-0">OpenRouter</span>
-          <input id="key-openrouter" type="password" placeholder="sk-or-v1-…" class="flex-1 border rounded-lg px-3 py-1.5 text-xs mono" />
-          <button data-prov="openrouter" class="connectBtn bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg shrink-0">Connect</button>
-          <span id="st-openrouter" class="text-[11px] text-slate-400 w-20 text-right shrink-0"></span>
-        </div>
-        <div class="flex gap-2 items-center">
-          <span class="w-[72px] text-xs font-semibold shrink-0">Local</span>
-          <input id="url-local" placeholder="http://localhost:11434  (Ollama · LM Studio · vLLM)" class="flex-1 border rounded-lg px-3 py-1.5 text-xs mono" />
-          <input id="key-local" type="password" placeholder="key (optional)" class="w-28 border rounded-lg px-2 py-1.5 text-xs mono" />
-          <button data-prov="local" class="connectBtn bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg shrink-0">Connect</button>
-          <span id="st-local" class="text-[11px] text-slate-400 w-20 text-right shrink-0"></span>
-        </div>
+      <label class="text-sm font-semibold"><span data-i18n="providers">Providers</span> <span class="text-slate-400 font-normal" data-i18n="providers_hint">— connect at least one; mix providers per role</span></label>
+      <div class="flex gap-2 items-center">
+        <select id="connProvider" class="w-28 border rounded-lg px-2 py-1.5 text-xs shrink-0" data-i18n-title="connect_provider" title="provider" aria-label="provider">
+          <option value="gemini">Gemini</option>
+          <option value="openai">OpenAI</option>
+          <option value="anthropic">Anthropic</option>
+          <option value="deepinfra">DeepInfra</option>
+          <option value="together">Together</option>
+          <option value="openrouter">OpenRouter</option>
+          <option value="local">Local</option>
+        </select>
+        <input id="connUrl" placeholder="http://localhost:11434  (Ollama · LM Studio · vLLM)" class="hidden flex-1 min-w-0 border rounded-lg px-3 py-1.5 text-xs mono" />
+        <input id="connKey" type="password" placeholder="API key" data-i18n-ph="connect_key_ph" class="flex-1 min-w-0 border rounded-lg px-3 py-1.5 text-xs mono" />
+        <button id="connectBtn" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg shrink-0">Connect</button>
+        <span id="connStatus" class="text-[11px] text-slate-400 w-10 text-right shrink-0"></span>
       </div>
+      <div id="connChips" class="flex flex-wrap gap-1.5"></div>
       <p id="modelStatus" class="text-xs text-slate-500"></p>
     </div>
 
-    <div class="grid grid-cols-3 gap-3">
-      <div>
-        <label class="text-xs font-semibold text-blue-700"><span data-i18n="role_main">Main</span> · LLM-1</label>
-        <select id="modelMain" class="w-full border rounded-lg px-2 py-2 text-xs mono mt-1" disabled></select>
+    <div class="space-y-1.5">
+      <div class="flex gap-2 items-center">
+        <span class="w-[118px] text-xs font-bold shrink-0" data-i18n="all_roles">all roles</span>
+        <select id="roleAllProv" class="w-28 border rounded-lg px-2 py-1.5 text-xs mono shrink-0" disabled></select>
+        <select id="roleAllModel" class="flex-1 min-w-0 border rounded-lg px-2 py-1.5 text-xs mono" disabled></select>
       </div>
-      <div>
-        <label class="text-xs font-semibold text-green-700"><span data-i18n="role_summary">Summarizer</span> · LLM-2</label>
-        <select id="modelSummary" class="w-full border rounded-lg px-2 py-2 text-xs mono mt-1" disabled></select>
+      <div class="flex gap-2 items-center">
+        <span class="w-[118px] text-xs font-semibold text-blue-700 shrink-0"><span data-i18n="role_main">Main</span> · LLM-1</span>
+        <select id="roleMainProv" class="w-28 border rounded-lg px-2 py-1.5 text-xs mono shrink-0" disabled></select>
+        <select id="roleMainModel" class="flex-1 min-w-0 border rounded-lg px-2 py-1.5 text-xs mono" disabled></select>
       </div>
-      <div>
-        <label class="text-xs font-semibold text-purple-700"><span data-i18n="role_infer">Inferencer</span> · LLM-3</label>
-        <select id="modelInference" class="w-full border rounded-lg px-2 py-2 text-xs mono mt-1" disabled></select>
+      <div class="flex gap-2 items-center">
+        <span class="w-[118px] text-xs font-semibold text-green-700 shrink-0"><span data-i18n="role_summary">Summarizer</span> · LLM-2</span>
+        <select id="roleSummaryProv" class="w-28 border rounded-lg px-2 py-1.5 text-xs mono shrink-0" disabled></select>
+        <select id="roleSummaryModel" class="flex-1 min-w-0 border rounded-lg px-2 py-1.5 text-xs mono" disabled></select>
+      </div>
+      <div class="flex gap-2 items-center">
+        <span class="w-[118px] text-xs font-semibold text-purple-700 shrink-0"><span data-i18n="role_infer">Inferencer</span> · LLM-3</span>
+        <select id="roleInferenceProv" class="w-28 border rounded-lg px-2 py-1.5 text-xs mono shrink-0" disabled></select>
+        <select id="roleInferenceModel" class="flex-1 min-w-0 border rounded-lg px-2 py-1.5 text-xs mono" disabled></select>
+      </div>
+      <div class="flex gap-2 items-center">
+        <span class="w-[118px] text-xs font-semibold text-orange-700 shrink-0"><span data-i18n="viz_role">Visualizer</span> · LLM-4</span>
+        <select id="roleVizProv" class="w-28 border rounded-lg px-2 py-1.5 text-xs mono shrink-0" disabled></select>
+        <select id="roleVizModel" class="flex-1 min-w-0 border rounded-lg px-2 py-1.5 text-xs mono" disabled></select>
+      </div>
+      <!-- v1.12 P1: optional text→image model for `image:` viz markers (shown only with viz on) -->
+      <div id="vizImageRow" class="hidden flex-wrap gap-2 items-center">
+        <span class="w-[118px] text-xs font-semibold text-orange-700 shrink-0" data-i18n="role_image">image (optional)</span>
+        <select id="roleImageProv" class="w-28 border rounded-lg px-2 py-1.5 text-xs mono shrink-0" disabled></select>
+        <select id="roleImageModel" class="flex-1 min-w-0 border rounded-lg px-2 py-1.5 text-xs mono" disabled></select>
+        <input id="vizImageModel" type="text" placeholder="dall-e-3" class="w-32 border rounded-lg px-2 py-1.5 text-xs mono shrink-0" />
+        <span class="basis-full text-[11px] text-slate-400 pl-[126px]" data-i18n="viz_image_help"><code>image:</code> markers render a generated picture — needs an image-capable model and that provider's key.</span>
       </div>
     </div>
 
@@ -182,6 +208,30 @@
         </select>
       </label>
     </div>
+    <p class="text-xs text-slate-500 -mt-2" data-i18n="companions_help"><b>turbo</b> runs LLM-2 + LLM-3 every turn, <b>cold_start</b> wakes them only when a real signal calls for it, and <b>off</b> stays single-model.</p>
+
+    <!-- v1.12 A5: long-term (cross-session) memory -->
+    <div class="flex flex-wrap gap-4 text-sm items-center">
+      <label class="flex items-center gap-2" title="remember durable facts across sessions">
+        <input id="optLongTerm" type="checkbox" checked /> <b>🧠 <span data-i18n="longterm">Long-term memory</span></b>
+      </label>
+      <label class="flex items-center gap-1 text-xs text-slate-500">
+        <span data-i18n="ltm_profile">profile</span>
+        <input id="ltmProfile" type="text" placeholder="default" data-i18n-ph="ltm_profile_ph" class="border rounded-lg px-2 py-1 text-xs mono w-32" />
+      </label>
+      <label class="flex items-center gap-2 text-xs text-slate-500 pl-2">
+        <input id="optIncognito" type="checkbox" /> <span data-i18n="ltm_incognito">incognito — read, don't save</span>
+      </label>
+    </div>
+    <p class="text-xs text-slate-500 -mt-2" data-i18n="longterm_help">Durable facts (name, allergies, “remember this”) are saved to the chosen <b>profile</b> and survive restarts; <b>incognito</b> keeps recalling them but pauses new writes.</p>
+
+    <!-- v1.12 B4: LLM-4 inline visualizer (its model lives in the role grid above; the image row shows only when this is on) -->
+    <div class="flex flex-wrap gap-4 text-sm items-center">
+      <label class="flex items-center gap-2" data-i18n-title="viz_title" title="inline data visualizations (LLM-4)">
+        <input id="optViz" type="checkbox" checked /> <b>📊 <span data-i18n="viz">Visualizations</span></b>
+      </label>
+    </div>
+    <p class="text-xs text-slate-500 -mt-2" data-i18n="viz_help">Where a chart genuinely helps, LLM-1 proposes one and LLM-4 renders it inline as a sandboxed artifact.</p>
 
     <div class="flex items-center gap-2 text-sm">
       <label class="font-semibold" data-i18n="websearch">🌐 Web search</label>
@@ -194,8 +244,7 @@
       </select>
       <input id="searchKey" type="password" placeholder="search API key" data-i18n-ph="searchkey_ph" class="flex-1 border rounded-lg px-3 py-1.5 text-xs mono hidden" />
     </div>
-    <p class="text-xs text-slate-500 -mt-2" data-i18n="websearch_help">LLM-1 (search + fetch) and LLM-3 (freshness) both use this engine. DuckDuckGo is free but weak for news; Brave/Tavily/Valyu give far better results with a key.</p>
-    <p class="text-xs text-slate-500 -mt-2" data-i18n="companions_help">💡 <b>turbo</b> runs LLM-3 inference + LLM-2 compaction every turn (the 🧠 Inference / 🗜 Compaction panels always fill). <b>cold_start</b> keeps it single-model until a real signal needs the companions; <b>off</b> is the legacy gate.</p>
+    <p class="text-xs text-slate-500 -mt-2" data-i18n="websearch_help">LLM-1 search and LLM-3 freshness checks share this engine; with a key, Brave/Tavily/Valyu beat the free DuckDuckGo by a wide margin.</p>
 
     <button id="startBtn" class="w-full bg-slate-900 hover:bg-black text-white font-semibold py-2.5 rounded-lg disabled:opacity-40" disabled data-i18n="start_session">Start session</button>
     <p id="startStatus" class="text-xs text-slate-500 text-center"></p>
@@ -204,29 +253,76 @@
 
 <!-- ============ MAIN SCREEN ============ -->
 <div id="main" class="h-full hidden flex-col">
-  <!-- top bar -->
-  <div class="bg-slate-900 text-white px-4 py-2 flex items-center gap-4 text-xs">
-    <span class="font-bold">🔍 Sherlock Live Inspector</span>
-    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-blue-400"></span>L1 <select id="liveMain" class="bg-slate-800 rounded px-1 py-0.5 mono"></select></span>
-    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-green-400"></span>L2 <select id="liveSummary" class="bg-slate-800 rounded px-1 py-0.5 mono"></select></span>
-    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-purple-400"></span>L3 <select id="liveInference" class="bg-slate-800 rounded px-1 py-0.5 mono"></select></span>
-    <span class="flex items-center gap-1" title="companion gating — change live"><span>🔬</span> <select id="liveCompanions" class="bg-slate-800 rounded px-1 py-0.5 mono">
-      <option value="cold_start" selected>cold_start</option>
-      <option value="turbo">turbo</option>
-      <option value="off">off</option>
-    </select></span>
-    <span class="flex items-center gap-1" data-i18n-title="async_title" title="async — companions run in the background so the reply never waits (change live)"><span>⚡</span> <select id="liveBackground" class="bg-slate-800 rounded px-1 py-0.5 mono">
-      <option value="on" data-i18n="bg_on">async</option>
-      <option value="off" data-i18n="bg_off">inline</option>
-    </select></span>
-    <span id="tokBar" class="ml-auto mono text-slate-300" title="cumulative tokens this session (in+out per role)"></span>
-    <span id="wsStatus" class="text-slate-400">ws: …</span>
-    <button id="darkToggle2" class="bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded" title="toggle dark mode" aria-label="toggle dark mode">🌙</button>
-    <button id="exportBtn" class="bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded" title="download this session as a markdown debugging doc" data-i18n="export">⬇ export</button>
-    <button id="newSession" class="bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded" data-i18n="new_session">new session</button>
+  <!-- top bar — two rows: (1) brand + per-role model selects, (2) toggles + status + actions -->
+  <div id="topbar" class="bg-slate-900 text-white text-xs">
+    <div class="px-3 pt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+      <span class="font-bold whitespace-nowrap shrink-0">🔍 Sherlock Live Inspector</span>
+      <span class="flex items-center gap-1.5 min-w-0">
+        <span class="role-chip bg-blue-500/25 text-blue-300">L1</span>
+        <select id="liveMain" class="topsel mono"></select>
+      </span>
+      <span class="flex items-center gap-1.5 min-w-0">
+        <span class="role-chip bg-green-500/25 text-green-300">L2</span>
+        <select id="liveSummary" class="topsel mono"></select>
+      </span>
+      <span class="flex items-center gap-1.5 min-w-0">
+        <span class="role-chip bg-purple-500/25 text-purple-300">L3</span>
+        <select id="liveInference" class="topsel mono"></select>
+      </span>
+      <span class="flex items-center gap-1.5 min-w-0" data-i18n-title="viz_title" title="inline data visualizations (LLM-4) — change live">
+        <span class="role-chip bg-orange-500/25 text-orange-300">L4</span>
+        <select id="liveViz" class="topsel mono"></select>
+      </span>
+    </div>
+    <div class="px-3 py-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+      <span class="togchip" title="companion gating — change live">🔬<select id="liveCompanions" class="topsel mono">
+        <option value="cold_start" selected>cold_start</option>
+        <option value="turbo">turbo</option>
+        <option value="off">off</option>
+      </select></span>
+      <span class="togchip" data-i18n-title="async_title" title="async — companions run in the background so the reply never waits (change live)">⚡<select id="liveBackground" class="topsel mono">
+        <option value="on" data-i18n="bg_on">async</option>
+        <option value="off" data-i18n="bg_off">inline</option>
+      </select></span>
+      <span class="togchip" data-i18n-title="ltm_title" title="long-term (cross-session) memory — change live">🧠<select id="liveLongTerm" class="topsel mono">
+        <option value="off" data-i18n="ltm_off">LTM off</option>
+        <option value="on" data-i18n="ltm_on">LTM on</option>
+      </select><select id="liveIncognito" class="topsel mono" data-i18n-title="incog_title" title="incognito — recall but pause new writes">
+        <option value="off" data-i18n="incog_off">rec</option>
+        <option value="on" data-i18n="incog_on">incognito</option>
+      </select></span>
+      <span class="togchip" data-i18n-title="viz_title" title="inline data visualizations (LLM-4) — change live">📊<select id="liveVizOn" class="topsel mono">
+        <option value="off" data-i18n="viz_off">viz off</option>
+        <option value="on" data-i18n="viz_on">viz on</option>
+      </select></span>
+      <span class="ml-auto flex flex-wrap items-center gap-1.5">
+        <span id="tokBar" class="mono text-slate-300 whitespace-nowrap cursor-help px-1 overflow-hidden text-ellipsis" style="max-width:34rem" title="cumulative tokens this session (in/out per role)"></span>
+        <span id="wsStatus" class="text-slate-400 whitespace-nowrap px-1">ws: …</span>
+        <button id="modelsBtn" class="topbtn" data-i18n-title="models_title" title="Per-role models (applies next turn)">⚙ <span data-i18n="models_btn">models</span></button>
+        <button id="exportBtn" class="topbtn" title="download this session as a markdown debugging doc">⬇ <span data-i18n="export">export</span></button>
+        <button id="newSession" class="topbtn">＋ <span data-i18n="new_session">new chat</span></button>
+        <button id="histToggle" class="topbtn" data-i18n-title="hist_title" title="history">🗂</button>
+        <button id="darkToggle2" class="topbtn" title="toggle dark mode" aria-label="toggle dark mode">🌙</button>
+      </span>
+    </div>
+  </div>
+
+  <!-- v1.12 P1: mid-session per-role model panel (⚙ models) -->
+  <div id="modelsPanel" class="hidden fixed right-3 top-[70px] z-50 bg-white border rounded-xl shadow-xl p-3 text-xs w-[400px] space-y-2 text-slate-700">
+    <div class="font-semibold" data-i18n="models_title">Per-role models (applies next turn)</div>
+    <div id="modelsPanelRows" class="space-y-1.5"></div>
   </div>
 
   <div id="cols" class="flex-1 flex min-h-0">
+    <!-- v1.12 H2: collapsible history sidebar (🗂) -->
+    <div id="histSidebar" class="hidden w-56 shrink-0 border-r bg-white flex-col min-h-0">
+      <div class="px-3 py-2 border-b flex items-center justify-between shrink-0">
+        <span class="text-[10px] font-bold text-slate-500 uppercase tracking-wide" data-i18n="hist_title">history</span>
+        <button id="histNew" class="text-[11px] border rounded px-2 py-0.5 hover:bg-slate-100" data-i18n="hist_new">+ new</button>
+      </div>
+      <div id="histList" class="flex-1 overflow-y-auto scroll p-1.5 space-y-0.5"></div>
+    </div>
+
     <!-- LEFT: Sherlock chat -->
     <div id="colSherlock" class="min-w-[240px] flex flex-col border-r bg-white" style="flex:0 0 40%">
       <div id="chat" class="flex-1 overflow-y-auto scroll p-4 space-y-3"></div>
@@ -284,6 +380,7 @@
         <button data-tab="infer" class="tabbtn px-3 py-1.5 rounded-t-lg font-semibold text-purple-700" data-i18n="tab_infer">🧠 Inference</button>
         <button data-tab="compact" class="tabbtn px-3 py-1.5 rounded-t-lg font-semibold text-green-700" data-i18n="tab_compact">🗜 Compaction</button>
         <button data-tab="memory" class="tabbtn px-3 py-1.5 rounded-t-lg font-semibold text-amber-700" data-i18n="tab_memory">🗃 Memory</button>
+        <button data-tab="ltm" class="tabbtn px-3 py-1.5 rounded-t-lg font-semibold text-fuchsia-700" data-i18n="tab_ltm">🧠 Long-term</button>
         <button data-tab="carry" class="tabbtn px-3 py-1.5 rounded-t-lg font-semibold text-rose-700" data-i18n="tab_carry">↪ Carry</button>
         <button data-tab="research" class="tabbtn px-3 py-1.5 rounded-t-lg font-semibold text-indigo-700" data-i18n="tab_research">🔬 Research</button>
       </div>
@@ -294,6 +391,7 @@
         <div id="tab-infer" class="hidden"></div>
         <div id="tab-compact" class="hidden"></div>
         <div id="tab-memory" class="hidden"></div>
+        <div id="tab-ltm" class="hidden"></div>
         <div id="tab-carry" class="hidden"></div>
         <div id="tab-research" class="hidden"></div>
       </div>

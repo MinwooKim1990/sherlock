@@ -4,9 +4,69 @@ event bus that forwards core/companion events to the browser over a WebSocket.
 
 from __future__ import annotations
 
+import re
 import tempfile
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
+
+# v1.12 Stage A5: persistent per-profile storage root for the playground's
+# long-term memory. Sessions that opt into long-term memory share a stable
+# directory under here (keyed by profile) so promoted facts survive a session
+# restart; sessions that DON'T use a throwaway tempdir (byte-identical to the
+# pre-A5 behaviour). The eviction guard in server.py refuses to rmtree anything
+# under this root, so closing/evicting a session never destroys a profile.
+PLAYGROUND_LTM_ROOT = ".sherlock_playground"
+_PROFILE_RE = re.compile(r"[a-z0-9_-]{1,32}")
+
+
+def _ltm_profile_dir(profile: str | None) -> str:
+    """Resolve a sanitized, persistent storage dir for a long-term profile.
+
+    ``profile`` is accepted only if it matches ``[a-z0-9_-]{1,32}`` EXACTLY
+    (a full match — so ``"../x"``, empty, or an over-long name all fall back to
+    ``"default"``). This is the sole path-traversal guard: the name becomes a
+    single directory component under ``~/<PLAYGROUND_LTM_ROOT>/``.
+    """
+    name = (profile or "").strip()
+    if not _PROFILE_RE.fullmatch(name):
+        name = "default"
+    d = Path.home() / PLAYGROUND_LTM_ROOT / name
+    # v1.12 F3: two live sessions on the SAME profile share this one SQLite file;
+    # concurrent writes lean on the 30s busy timeout and stay a known limitation.
+    d.mkdir(parents=True, exist_ok=True)
+    return str(d)
+
+
+class _BoundedIdSet:
+    """v1.12 F5: an insertion-ordered, bounded id registry with a set-like API
+    (``.add`` / ``in`` / ``len`` / iteration).
+
+    A plain ``set`` is hash-ordered, so trimming it with ``list(s)[-N:]`` keeps an
+    ARBITRARY N ids — a still-live viz_id could be evicted and its repair wrongly
+    rejected. Backed by a ``dict`` (insertion-ordered since 3.7) so eviction drops
+    the OLDEST ids first and recent ids always survive."""
+
+    __slots__ = ("_d", "_cap")
+
+    def __init__(self, cap: int = 512):
+        self._d: dict = {}
+        self._cap = int(cap)
+
+    def add(self, item) -> None:
+        self._d[item] = True
+        if len(self._d) > self._cap:
+            for old in list(self._d)[: -self._cap]:
+                del self._d[old]
+
+    def __contains__(self, item) -> bool:
+        return item in self._d
+
+    def __iter__(self):
+        return iter(self._d)
+
+    def __len__(self) -> int:
+        return len(self._d)
 
 
 @dataclass
@@ -27,8 +87,31 @@ class Session:
     baseline_tokens: dict = field(default_factory=lambda: {"in": 0, "out": 0})
     events_log: list = field(default_factory=list)  # every emitted event, for /api/export
     _baseline_engine: Any = None  # lazy search engine for the fair A/B baseline
+    # v1.12 Stage B3: LLM-4 VISUALIZER runtime-repair bookkeeping. ``viz_ids`` is
+    # the set of viz_ids this session has emitted a ``viz.*`` event for — the
+    # registry the /api/viz/repair endpoint checks so it rejects an unknown id.
+    # ``viz_repair_rounds`` bounds runtime-repair attempts PER viz_id ACROSS the
+    # (browser-driven) repair calls. viz_ids is populated automatically in ``emit``;
+    # viz_repair_rounds is written via ``note_viz_repair_round`` (bounded — NICE-3).
+    viz_ids: "_BoundedIdSet" = field(default_factory=_BoundedIdSet)
+    viz_repair_rounds: dict = field(default_factory=dict)
 
     EVENTS_LOG_CAP = 20_000
+    # v1.12 NICE-3: cap the repair-round bookkeeping the same way viz_ids is bounded.
+    VIZ_REPAIR_ROUNDS_CAP = 512
+
+    def note_viz_repair_round(self, viz_id: str, round_no: int) -> None:
+        """Record the per-viz repair-round count, bounded with the same
+        oldest-first eviction as ``viz_ids``. A plain dict would otherwise grow one
+        entry per repaired viz_id for the whole session lifetime (viz_ids is
+        bounded, rounds wasn't). The count is only consulted while the id is still
+        registered in ``viz_ids`` (the /api/viz/repair endpoint rejects unknown
+        ids), so evicting the oldest entries is safe."""
+        d = self.viz_repair_rounds
+        d[viz_id] = int(round_no)  # existing key keeps its insertion position
+        if len(d) > self.VIZ_REPAIR_ROUNDS_CAP:
+            for old in list(d)[: -self.VIZ_REPAIR_ROUNDS_CAP]:
+                del d[old]
 
     def emit(self, event: dict) -> None:
         """Push an event onto the loop-bound asyncio queue from ANY thread.
@@ -43,6 +126,19 @@ class Session:
             self.events_log.append(event)
             if len(self.events_log) > self.EVENTS_LOG_CAP:
                 del self.events_log[: -self.EVENTS_LOG_CAP]
+        except Exception:
+            pass
+        # v1.12 Stage B3: register every viz_id the core surfaces (chat OR the
+        # deep-research report path) so the repair endpoint knows which ids are
+        # legitimately renderable. Bounded so a long session can't grow it forever.
+        try:
+            etype = event.get("type", "")
+            if isinstance(etype, str) and etype.startswith("viz."):
+                vid = (event.get("data") or {}).get("viz_id")
+                if vid:
+                    # v1.12 F5: _BoundedIdSet evicts OLDEST-first internally, so a
+                    # live id is never dropped (a plain set's trim was arbitrary).
+                    self.viz_ids.add(vid)
         except Exception:
             pass
         try:
@@ -61,12 +157,58 @@ def build_agent(session: Session, system_prompt: str, settings: dict):
 
     session.settings = settings or {}
     session.system_prompt = system_prompt or "You are a helpful assistant."
-    storage = tempfile.mkdtemp(prefix="sherlock_pg_")
+    # v1.12: the setup "long_term" toggle. None (key absent) → follow the LIBRARY
+    # default (ON as of v1.12) for the enabled flag, but keep the throwaway
+    # tempdir — persisting to a stable per-profile dir under ~/.sherlock_playground
+    # is a heavier commitment that requires an EXPLICIT opt-in (checkbox on).
+    # True → persist to the profile dir so memory survives a restart. False →
+    # force OFF (throwaway tempdir).
+    _lt_setting = settings.get("long_term")  # None absent | True | False
+    lt_explicit_on = bool(_lt_setting)
+    if lt_explicit_on:
+        storage = _ltm_profile_dir(settings.get("ltm_profile"))
+    else:
+        storage = tempfile.mkdtemp(prefix="sherlock_pg_")
     session.storage_dir = storage
 
     main_cb = make_role_callable("main", session, session.emit)
     summary_cb = make_role_callable("summary", session, session.emit)
     inference_cb = make_role_callable("inference", session, session.emit)
+    # v1.12 Stage B1: LLM-4 VISUALIZER (backend plumbing; UI lands in B4). ALWAYS
+    # build a dedicated viz callable — even when no viz model is selected. The
+    # callable resolves its model as ``models["viz"] or models["main"]``, so with
+    # no viz model it still uses the MAIN model, but under role="viz": that keeps
+    # viz generation on the NON-streaming branch with actor llm4 and correct L4
+    # token accounting. Leaving it None instead made the library fall back to the
+    # MAIN CallableProvider (_viz_llm), whose role="main" streaming branch leaked
+    # the raw viz HTML into the live chat bubble as llm.delta and mis-booked the
+    # spend as L1. (Off-state stays byte-identical: with visualization disabled the
+    # marker protocol is dormant and _viz_llm is never called.)
+    viz_cb = make_role_callable("viz", session, session.emit)
+    # v1.12 Stage V3: optional text→image callable for ``image:`` viz markers.
+    # settings["image_model"] is {"provider","model"} (a bare string is treated
+    # as a GEMINI model id — resolve_model_spec's legacy shape).
+    # Absent/empty → None → the modality stays dormant (guidance byte-identical).
+    _img_spec = settings.get("image_model") if settings else None
+    _img_named = bool(
+        (_img_spec or {}).get("model")
+        if isinstance(_img_spec, dict)
+        else str(_img_spec or "").strip()
+    )
+    viz_image_cb = None
+    if _img_named:
+        from playground.providers import make_image_callable
+
+        viz_image_cb = make_image_callable(session, _img_spec)
+    elif settings and settings.get("visualization"):
+        # v1.12 omni: no dedicated image model → `image:` markers try the viz
+        # (else main) model itself via completion+[image,text] modalities. A
+        # text-only model raises there and the library falls back to drawing
+        # the visual as HTML/SVG — never a dead slot just because no image
+        # model was configured.
+        from playground.providers import make_omni_image_callable
+
+        viz_image_cb = make_omni_image_callable(session)
 
     # Search engine: DuckDuckGo (free, no key) by default; brave/tavily/valyu
     # use the api key the user typed in the UI. "off" disables search. The same
@@ -78,6 +220,8 @@ def build_agent(session: Session, system_prompt: str, settings: dict):
         main_chat=main_cb,
         summary_chat=summary_cb,
         inference_chat=inference_cb,
+        viz_chat=viz_cb,
+        viz_image_gen=viz_image_cb,
         system_prompt=system_prompt or "You are a helpful assistant.",
         storage_dir=storage,
         embedding=settings.get("embedding", "local"),
@@ -101,6 +245,20 @@ def build_agent(session: Session, system_prompt: str, settings: dict):
         # v1.6: dynamic companion gating. "cold_start" (default) = cheap, escalate
         # on signal pressure; "turbo" = the prior all-on; "off" = legacy.
         companions_mode=settings.get("companions_mode", "cold_start"),
+        # v1.12: cross-conversation long-term memory. Explicit toggle ON → enable
+        # + carry incognito (read existing but pause new writes). Explicit OFF →
+        # long_term=False → force disabled. Key ABSENT → long_term=None → inherit
+        # the library default (ON in v1.12), so the playground no longer forces it
+        # off; the setup toggle stays authoritative when present.
+        long_term=(
+            {"enabled": True, "incognito": bool(settings.get("ltm_incognito"))}
+            if lt_explicit_on
+            else (False if _lt_setting is False else None)
+        ),
+        # v1.12 Stage B1: LLM-4 inline visualizer (backend plumbing; the toggle UI
+        # lands in B4). Off (default / absent) → visualization=None → byte-identical
+        # construction: the marker protocol stays dormant.
+        visualization=(True if settings.get("visualization") else None),
     )
     # v1.11: expose the deep-research VERIFY tier (off | faithfulness |
     # faithfulness+web) so the accuracy layer can be A/B'd live in the playground.
@@ -121,6 +279,13 @@ def memory_snapshot(agent) -> list[dict]:
         entries = agent.memory.list(conversation_id=agent.conversation_id)
     except Exception:
         return rows
+    # v1.12 F7: pre-conversation (scope None) list() returns every scope,
+    # including the long-term sentinel; exclude it so the snapshot only shows
+    # the active conversation. The sentinel is a rag_channel-only read door.
+    if agent.conversation_id is None:
+        from sherlock.memory.entry import LTM_CONVERSATION_ID
+
+        entries = [e for e in entries if e.conversation_id != LTM_CONVERSATION_ID]
     for m in entries:
         rows.append(
             {

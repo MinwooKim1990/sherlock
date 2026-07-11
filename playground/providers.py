@@ -30,7 +30,7 @@ from sherlock.providers.base import ChatMessage, ChatResponse, TokenUsage
 _GEMINI_MODELS_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 _OPENAI_MODELS_URL = "https://api.openai.com/v1/models"
 _ANTHROPIC_MODELS_URL = "https://api.anthropic.com/v1/models"
-_ROLE_ACTOR = {"main": "llm1", "summary": "llm2", "inference": "llm3"}
+_ROLE_ACTOR = {"main": "llm1", "summary": "llm2", "inference": "llm3", "viz": "llm4"}
 
 # OpenAI /v1/models lists every modality; keep only chat-capable families.
 _OPENAI_CHAT_RE = re.compile(r"^(gpt-[45o]|gpt-oss|o[134](-|$)|chatgpt-)")
@@ -291,6 +291,159 @@ def _call_litellm(model: str, messages: list[dict], **extra):
     return litellm.completion(model=model, messages=messages, **extra)
 
 
+def _call_litellm_image(model: str, prompt: str, **extra):
+    """litellm image-generation entry point (v1.12 Stage V3). Module-level so
+    tests can monkeypatch it like _call_litellm."""
+    import litellm
+
+    litellm.suppress_debug_info = True
+    return litellm.image_generation(prompt=prompt, model=model, **extra)
+
+
+def _viz_flatten_system(messages: list[dict]) -> list[dict]:
+    """Merge system content into the first user turn — image-capable omni
+    models (Gemini omni previews) 400 on developer/system instructions."""
+    sys_txt = "\n\n".join(m.get("content", "") for m in messages if m.get("role") == "system")
+    rest = [m for m in messages if m.get("role") != "system"]
+    if not sys_txt:
+        return rest
+    if rest and rest[0].get("role") == "user":
+        return [{"role": "user", "content": sys_txt + "\n\n" + rest[0].get("content", "")}] + rest[
+            1:
+        ]
+    return [{"role": "user", "content": sys_txt}] + rest
+
+
+def _call_litellm_viz(model_id: str, send_messages: list[dict], **extra):
+    """LLM-4 call with OMNI adaptation (v1.12 fix, rev2): some image-capable
+    models reject the standard shape with a 400. We do NOT guess error wording —
+    ANY 400 gets the progressive ladder: ① normal shape → ② system merged into
+    the user turn → ③ merged + [image, text] modalities. Non-400 errors
+    (429/5xx/auth) re-raise immediately at every step, so a rate limit is never
+    retried into a bigger burn and the original error is never masked."""
+
+    def _is_400(exc: Exception) -> bool:
+        status = getattr(exc, "status_code", None)
+        try:
+            return status is not None and int(status) == 400
+        except Exception:
+            return False
+
+    try:
+        return _call_litellm(model_id, send_messages, **extra)
+    except Exception as exc:
+        if not _is_400(exc):
+            raise
+        first_err = exc
+    flat = _viz_flatten_system(send_messages)
+    try:
+        return _call_litellm(model_id, flat, **extra)
+    except Exception as exc:
+        if not _is_400(exc):
+            raise
+    try:
+        return _call_litellm(model_id, flat, modalities=["image", "text"], **extra)
+    except Exception as exc:
+        # every rung 400'd — surface the ORIGINAL shape error (most diagnostic)
+        raise first_err if _is_400(exc) else exc
+
+
+def _image_from_completion_response(resp):
+    """Extract a data:/http image from a chat-completion response (litellm
+    normalises omni image output to message.images[{image_url:{url}}]; some
+    routes put a data URI straight into content). Returns the URI/URL string or
+    None."""
+    msg = resp.choices[0].message if getattr(resp, "choices", None) else None
+    if msg is None:
+        return None
+    imgs = getattr(msg, "images", None) or (msg.get("images") if isinstance(msg, dict) else None)
+    for first in imgs or []:
+        u = first.get("image_url") if isinstance(first, dict) else getattr(first, "image_url", None)
+        if isinstance(u, dict):
+            u = u.get("url")
+        elif u is not None and not isinstance(u, str):
+            u = getattr(u, "url", None)
+        if isinstance(u, str) and (u.startswith("data:image") or u.startswith("http")):
+            return u
+    content = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", None)
+    if isinstance(content, str) and content.strip().startswith("data:image"):
+        return content.strip()
+    return None
+
+
+def make_omni_image_callable(session, role: str = "viz"):  # noqa: ANN001
+    """v1.12 omni: text→image via the CHAT model itself (completion +
+    [image, text] modalities) — no dedicated image model needed. Used for
+    ``image:`` markers when settings.image_model is empty; a text-only model
+    raises here and the library falls back to drawing the visual as HTML/SVG."""
+
+    def _generate(prompt: str):
+        spec = session.models.get(role) or session.models.get("main")
+        model_id, extra = resolve_model_spec(spec, getattr(session, "providers", {}))
+        t0 = time.time()
+        resp = _call_litellm(
+            model_id,
+            [{"role": "user", "content": "Generate ONE image (no text reply): " + prompt}],
+            modalities=["image", "text"],
+            **extra,
+        )
+        session.emit(
+            {
+                "type": "llm.call",
+                "actor": "llm4",
+                "turn": session.turn,
+                "data": {
+                    "role": "viz_image_omni",
+                    "model": model_id,
+                    "latency_ms": int((time.time() - t0) * 1000),
+                },
+            }
+        )
+        out = _image_from_completion_response(resp)
+        if not out:
+            raise ValueError("model returned no image (text-only model?)")
+        return out
+
+    return _generate
+
+
+def make_image_callable(session, spec):  # noqa: ANN001
+    """v1.12 Stage V3: a text→image callable for ``image:`` viz markers.
+
+    ``spec`` is the same ``{"provider", "model"}`` shape as the role model specs
+    (or a bare litellm model-id string, treated per resolve_model_spec).
+    Credentials resolve from the session's SERVER-SIDE provider creds at CALL
+    time — a key edited later still applies, and nothing key-shaped ever reaches
+    the browser. Returns ``{"b64": ..., "url": ...}`` for the library adapter
+    (sherlock.agent._viz_image_generate) to normalise."""
+
+    def _generate(prompt: str) -> dict:
+        model, extra = resolve_model_spec(spec, session.providers)
+        t0 = time.time()
+        resp = _call_litellm_image(model, prompt, **extra)
+        data = getattr(resp, "data", None) or []
+        first = data[0] if data else None
+        b64 = getattr(first, "b64_json", None) or (
+            first.get("b64_json") if isinstance(first, dict) else None
+        )
+        url = getattr(first, "url", None) or (first.get("url") if isinstance(first, dict) else None)
+        session.emit(
+            {
+                "type": "llm.call",
+                "actor": "llm4",
+                "turn": session.turn,
+                "data": {
+                    "role": "viz_image",
+                    "model": model,
+                    "latency_ms": int((time.time() - t0) * 1000),
+                },
+            }
+        )
+        return {"b64": b64, "url": url}
+
+    return _generate
+
+
 def _stopped(session) -> bool:
     """True when the user pressed Stop for this session's current turn. Safe if
     the agent / stop event isn't wired yet (returns False)."""
@@ -491,7 +644,10 @@ def _is_internal_research_prompt(messages: list[dict]) -> bool:
 
 
 def make_role_callable(role: str, session, emit):
-    """Build a Sherlock chat callable for ``role`` ∈ {main, summary, inference}.
+    """Build a Sherlock chat callable for ``role`` ∈ {main, summary, inference, viz}.
+
+    Only ``main`` streams; every other role (including the v1.12 Stage B1 ``viz``
+    role — LLM-4, the inline visualizer) takes the non-streaming branch below.
 
     Reads the CURRENT model selection from ``session.models`` each call (so a
     mid-session dropdown change takes effect next turn). Emits an ``llm.call``
@@ -570,7 +726,12 @@ def make_role_callable(role: str, session, emit):
                 if not answer_streamed and not _txt and not _stopped(session):
                     resp = _call_litellm(model_id, send_messages, **extra)
             else:
-                resp = _call_litellm(model_id, send_messages, **extra)
+                # v1.12 omni fix: LLM-4 must work with image-capable omni models
+                # that reject system instructions / demand image modalities.
+                if role == "viz":
+                    resp = _call_litellm_viz(model_id, send_messages, **extra)
+                else:
+                    resp = _call_litellm(model_id, send_messages, **extra)
             text = (resp.choices[0].message.content or "") if resp.choices else ""
             # Reasoning models that expose thinking only on the final message (or
             # the non-streaming fallback) — emit it once if nothing streamed live.
@@ -638,6 +799,14 @@ def make_role_callable(role: str, session, emit):
                 },
             }
         )
+        if err and role == "viz":
+            # v1.12 omni fix rev2: a viz error must FAIL FAST — returning the
+            # wrapper-error string would go through the static lint as if it
+            # were HTML, burning self-review + repair rounds on garbage. The
+            # llm.call event above already carries the full error; also print
+            # it so the uvicorn log keeps a self-serve diagnosis trail.
+            print(f"[viz-error] {model_id}: {err}", flush=True)
+            raise RuntimeError(err)
         return ChatResponse(
             text=returned_text,
             model=model_id,

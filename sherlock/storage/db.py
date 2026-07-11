@@ -27,6 +27,10 @@ def _new_id() -> str:
 class Conversation(SQLModel, table=True):
     id: str = Field(default_factory=_new_id, primary_key=True)
     project: str
+    # v1.12 Stage H1: a human-readable session title (history sidebar). NULL on
+    # rows from older databases (run_migrations adds the column); consumers fall
+    # back to the first user message.
+    title: Optional[str] = None
     created_at: datetime = Field(default_factory=_utcnow)
 
 
@@ -99,7 +103,10 @@ class Storage:
         self.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
         self.engine = create_engine(
             f"sqlite:///{self.sqlite_path}",
-            connect_args={"check_same_thread": False},
+            # v1.12 F3: a 30s busy timeout so a concurrent writer (e.g. a second
+            # session reopening the same profile) waits for the lock instead of
+            # failing immediately with "database is locked".
+            connect_args={"check_same_thread": False, "timeout": 30},
         )
         SQLModel.metadata.create_all(self.engine)
         run_migrations(self.engine)  # v0.5.0: add any newly-introduced columns
@@ -169,10 +176,45 @@ class Storage:
         with self.session() as s:
             return s.get(Conversation, conversation_id)
 
-    def count_messages(self, conversation_id: str) -> int:
+    def set_conversation_title(self, conversation_id: str, title: str) -> bool:
+        """v1.12 Stage H1: set/replace a conversation's human-readable title.
+        Returns False for an unknown id. The title is stored trimmed and capped
+        (120 chars) so a runaway caller can't bloat the row."""
         with self.session() as s:
-            stmt = select(Message).where(Message.conversation_id == conversation_id)
-            return len(list(s.exec(stmt)))
+            conv = s.get(Conversation, conversation_id)
+            if conv is None:
+                return False
+            conv.title = (title or "").strip()[:120] or None
+            s.add(conv)
+            s.commit()
+            return True
+
+    def count_messages(self, conversation_id: str) -> int:
+        # v1.12 H1 audit: SQL COUNT — the old select-all materialised EVERY
+        # message row (full content) just to len() it, an N+1 full scan when the
+        # history sidebar polls per turn.
+        from sqlalchemy import func
+
+        with self.session() as s:
+            stmt = (
+                select(func.count())
+                .select_from(Message)
+                .where(Message.conversation_id == conversation_id)
+            )
+            return int(s.exec(stmt).one())
+
+    def first_user_message(self, conversation_id: str) -> str | None:
+        """v1.12 H1: the first user message's content (LIMIT 1) — the
+        deterministic title fallback, without scanning the conversation."""
+        with self.session() as s:
+            stmt = (
+                select(Message)
+                .where(Message.conversation_id == conversation_id, Message.role == "user")
+                .order_by(Message.created_at, Message.id)
+                .limit(1)
+            )
+            m = s.exec(stmt).first()
+            return m.content if m else None
 
     def latest_message_at(self, conversation_id: str) -> datetime | None:
         msgs = self.list_messages(conversation_id)

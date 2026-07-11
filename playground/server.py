@@ -22,7 +22,9 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import os
 import shutil
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -39,6 +41,32 @@ app = FastAPI(title="Sherlock Live Inspector")
 STATIC = Path(__file__).parent / "static"
 SESSIONS: dict[str, Session] = {}
 MAX_SESSIONS = 8  # evict the oldest session (and its tempdir) beyond this
+
+
+def _safe_to_rmtree(path: str) -> bool:
+    """v1.12 Stage A5: guard the eviction rmtree so it can ONLY delete throwaway
+    session tempdirs, never a persistent long-term-memory PROFILE dir.
+
+    A profile lives under ``~/.sherlock_playground/<profile>/`` and is SHARED by
+    every session on that profile — deleting it on eviction/close would wipe the
+    user's durable memory. So: explicitly REFUSE anything under the playground
+    long-term root, and only permit paths that are inside the OS temp dir or
+    carry the ``sherlock_pg_`` tempdir prefix (what ``build_agent`` uses when
+    long-term memory is off).
+    """
+    if not path:
+        return False
+    # v1.12 F6: resolve symlinks (realpath, not abspath) on BOTH the candidate and
+    # the roots — a symlinked temp/profile path must not slip past the refuse-first
+    # profile guard. Ordering is unchanged: REFUSE a profile before permitting.
+    p = os.path.realpath(path)
+    ltm_root = os.path.realpath(os.path.join(os.path.expanduser("~"), ".sherlock_playground"))
+    if p == ltm_root or p.startswith(ltm_root + os.sep):
+        return False  # a persistent profile — never delete on evict/close
+    tmp = os.path.realpath(tempfile.gettempdir())
+    if p.startswith(tmp + os.sep):
+        return True
+    return "sherlock_pg_" in p
 
 
 class ModelsReq(BaseModel):
@@ -88,7 +116,17 @@ async def api_session(req: SessionReq):
     SESSIONS[sid] = sess
     while len(SESSIONS) > MAX_SESSIONS:  # dicts keep insertion order → oldest first
         evicted = SESSIONS.pop(next(iter(SESSIONS)))
-        if evicted.storage_dir:
+        # v1.12 F3: release the evicted agent's SQLite engine (pooled connections
+        # otherwise linger until GC) so a NEW session reopening the SAME profile
+        # doesn't hit "database is locked". The store, storage and prompt store
+        # all share one engine, so a single dispose covers them. Best-effort.
+        try:
+            evicted.agent.memory._engine.dispose()
+        except Exception:
+            pass
+        # v1.12 Stage A5: only reclaim throwaway tempdirs — a persistent
+        # long-term-memory profile dir survives eviction (see _safe_to_rmtree).
+        if _safe_to_rmtree(evicted.storage_dir):
             shutil.rmtree(evicted.storage_dir, ignore_errors=True)
     return {
         "session_id": sid,
@@ -142,7 +180,26 @@ async def api_chat(req: ChatReq):
     def _timed_chat() -> tuple:
         t0 = time.time()
         text = sess.agent.chat(req.message)
-        return text, int((time.time() - t0) * 1000)
+        # audit: measure the user-facing latency BEFORE the title work — the
+        # title LLM call must not inflate sherlock.latency / the A/B wall-clock.
+        elapsed_ms = int((time.time() - t0) * 1000)
+        # v1.12 H1: auto-title on the worker thread. LLM-generated (user spec)
+        # with a deterministic first-user-message fallback; a stored title is
+        # never overwritten — re-checked AFTER the slow call, so a manual
+        # rename that landed meanwhile wins (TOCTOU).
+        try:
+            cid = sess.agent.conversation_id
+            if cid:
+                conv = sess.agent._storage.get_conversation(cid)
+                if conv is not None and not (getattr(conv, "title", None) or "").strip():
+                    first = sess.agent._storage.first_user_message(cid) or req.message
+                    title = _llm_title(sess, first, text) or " ".join(first.split())[:60]
+                    conv2 = sess.agent._storage.get_conversation(cid)
+                    if conv2 is not None and not (getattr(conv2, "title", None) or "").strip():
+                        sess.agent._storage.set_conversation_title(cid, title)
+        except Exception:
+            pass
+        return text, elapsed_ms
 
     baseline = None
     if req.mode == "both":
@@ -201,6 +258,274 @@ async def api_chat(req: ChatReq):
     if baseline is not None:
         out["baseline"] = baseline
     return out
+
+
+# ==================== v1.12 Stage H1: persistent history ====================
+# The agent's per-profile SQLite already persists every conversation + message
+# (and, with save_artifacts, every rendered viz artifact). These endpoints give
+# the browser a read/open surface over that store so a session on a persistent
+# profile can list old conversations, reopen one (agent.switch_session), and
+# re-hydrate its viz placeholders. Same localhost-trust posture as every route.
+
+_VIZ_PLACEHOLDER_RE = None  # compiled lazily (module import order)
+
+
+def _viz_ids_in(text: str) -> list[str]:
+    """Every ⟦viz:<id>⟧ placeholder id in a persisted message text."""
+    global _VIZ_PLACEHOLDER_RE
+    import re as _re
+
+    if _VIZ_PLACEHOLDER_RE is None:
+        _VIZ_PLACEHOLDER_RE = _re.compile(r"⟦viz:([A-Za-z0-9._-]+)⟧")
+    return _VIZ_PLACEHOLDER_RE.findall(text or "")
+
+
+def _hist_iso(dt) -> str | None:
+    """isoformat with an EXPLICIT UTC marker: SQLite round-trips drop tzinfo, and
+    a naive isoformat string is parsed as LOCAL time by JS Date — off by the
+    user's UTC offset in the sidebar (audit)."""
+    if dt is None:
+        return None
+    s = dt.isoformat()
+    return s if dt.tzinfo is not None else s + "Z"
+
+
+def _conv_title(sess: Session, conv) -> str:  # noqa: ANN001
+    """A display title: the stored title, else the first user message, else id."""
+    title = (getattr(conv, "title", None) or "").strip()
+    if title:
+        return title
+    try:
+        first = sess.agent._storage.first_user_message(conv.id)
+        if first and first.strip():
+            return " ".join(first.split())[:60]
+    except Exception:
+        pass
+    return str(conv.id)[:8]
+
+
+@app.get("/api/history")
+async def api_history(session_id: str):
+    """Every conversation in this session's (profile) store, newest first."""
+    sess = SESSIONS.get(session_id)
+    if sess is None:
+        return {"error": "no such session"}
+    loop = asyncio.get_running_loop()
+
+    def _list() -> list[dict]:
+        storage = sess.agent._storage
+        out = []
+        for c in storage.list_conversations():
+            out.append(
+                {
+                    "id": c.id,
+                    "title": _conv_title(sess, c),
+                    "created_at": _hist_iso(c.created_at),
+                    "messages": storage.count_messages(c.id),
+                    "active": c.id == sess.agent.conversation_id,
+                }
+            )
+        out.reverse()  # list_conversations is oldest-first
+        return out
+
+    try:
+        return {"conversations": await loop.run_in_executor(None, _list)}
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+class HistoryOpenReq(BaseModel):
+    session_id: str
+    conversation_id: str
+
+
+@app.post("/api/history/open")
+async def api_history_open(req: HistoryOpenReq):
+    """Reopen a persisted conversation as the ACTIVE one (agent.switch_session)
+    and return its messages. Every ⟦viz:…⟧ placeholder id found in the returned
+    messages is registered in the session's viz_ids so /api/viz/{viz_id} can
+    serve the persisted artifacts for re-hydration — ONLY ids that actually
+    appear in this profile's own persisted text ever get registered."""
+    sess = SESSIONS.get(req.session_id)
+    if sess is None:
+        return {"error": "no such session"}
+    loop = asyncio.get_running_loop()
+
+    # audit: a background deep-research run writes its report into the ACTIVE
+    # conversation when it finishes — switching mid-run would misfile it (and
+    # the client's busy flag is deliberately false during background DR).
+    if getattr(sess.agent, "is_deep_researching", False):
+        return {"error": "deep research in progress — wait for it to finish"}
+
+    def _open() -> dict:
+        agent = sess.agent
+        agent.switch_session(req.conversation_id)  # raises on unknown id
+        msgs = []
+        for m in agent._storage.list_messages(req.conversation_id):
+            if m.role not in ("user", "assistant"):
+                continue
+            for vid in _viz_ids_in(m.content):
+                sess.viz_ids.add(vid)
+            msgs.append(
+                {
+                    "role": m.role,
+                    "content": m.content,
+                    "turn": m.turn_index,
+                    "created_at": _hist_iso(m.created_at),
+                }
+            )
+        return {"ok": True, "conversation_id": req.conversation_id, "messages": msgs}
+
+    try:
+        return await loop.run_in_executor(None, _open)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+class HistoryNewReq(BaseModel):
+    session_id: str
+
+
+@app.post("/api/history/new")
+async def api_history_new(req: HistoryNewReq):
+    """Start a fresh conversation on the same agent/profile (agent.new_session)."""
+    sess = SESSIONS.get(req.session_id)
+    if sess is None:
+        return {"error": "no such session"}
+    if getattr(sess.agent, "is_deep_researching", False):
+        return {"error": "deep research in progress — wait for it to finish"}
+    loop = asyncio.get_running_loop()
+    try:
+        cid = await loop.run_in_executor(None, sess.agent.new_session)
+        return {"ok": True, "conversation_id": cid}
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+class HistoryTitleReq(BaseModel):
+    session_id: str
+    conversation_id: str
+    title: str
+
+
+@app.post("/api/history/title")
+async def api_history_title(req: HistoryTitleReq):
+    """Rename a conversation in the history sidebar."""
+    sess = SESSIONS.get(req.session_id)
+    if sess is None:
+        return {"error": "no such session"}
+    loop = asyncio.get_running_loop()
+    try:
+        ok = await loop.run_in_executor(
+            None, sess.agent._storage.set_conversation_title, req.conversation_id, req.title
+        )
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
+    return {"ok": bool(ok)} if ok else {"error": "no such conversation"}
+
+
+def _llm_title(sess: Session, first: str, reply: str) -> str:
+    """v1.12 H1 (user spec): the conversation title is LLM-GENERATED on the
+    first turn — one tiny call on the SUMMARY (else main) model. Guarded so
+    hermetic tests/keyless sessions never hit the network (short/absent key →
+    caller falls back to the deterministic first-message truncation)."""
+    try:
+        spec = sess.models.get("summary") or sess.models.get("main")
+        prov_name = spec.get("provider", "gemini") if isinstance(spec, dict) else "gemini"
+        creds = (getattr(sess, "providers", {}) or {}).get(prov_name, {})
+        if prov_name != "local" and len(creds.get("api_key", "") or "") < 12:
+            return ""
+        mid, extra = prov.resolve_model_spec(spec, sess.providers)
+        t0 = time.time()
+        r = prov._call_litellm(
+            mid,
+            [
+                {
+                    "role": "user",
+                    "content": (
+                        "Write a very short conversation title (3-6 words, no quotes, "
+                        "no trailing punctuation) in the SAME language as the text "
+                        "below. Reply with the title only.\n\n"
+                        + first[:400]
+                        + "\n\n"
+                        + (reply or "")[:400]
+                    ),
+                }
+            ],
+            timeout=15,
+            **extra,
+        )
+        # audit: silent spend violates the observability rule — book the call.
+        usage = getattr(r, "usage", None)
+        sess.emit(
+            {
+                "type": "llm.call",
+                "actor": "llm2",
+                "turn": sess.turn,
+                "data": {
+                    "role": "title",
+                    "model": mid,
+                    "latency_ms": int((time.time() - t0) * 1000),
+                    "prompt_tokens": getattr(usage, "prompt_tokens", 0) or 0,
+                    "completion_tokens": getattr(usage, "completion_tokens", 0) or 0,
+                },
+            }
+        )
+        t = ((r.choices[0].message.content or "") if getattr(r, "choices", None) else "").strip()
+        return " ".join(t.strip("'\"").split())[:60]
+    except Exception:
+        return ""
+
+
+class HistoryDeleteReq(BaseModel):
+    session_id: str
+    conversation_id: str
+
+
+@app.post("/api/history/delete")
+async def api_history_delete(req: HistoryDeleteReq):
+    """Delete a conversation (messages + its viz artifacts). Deleting the ACTIVE
+    conversation first switches the agent to a fresh one so chat never points at
+    a dead id — the response carries ``switched`` so the UI can clear the pane."""
+    sess = SESSIONS.get(req.session_id)
+    if sess is None:
+        return {"error": "no such session"}
+    if getattr(sess.agent, "is_deep_researching", False):
+        return {"error": "deep research in progress — wait for it to finish"}
+    loop = asyncio.get_running_loop()
+
+    def _delete() -> dict:
+        import re as _re
+
+        agent = sess.agent
+        if agent._storage.get_conversation(req.conversation_id) is None:
+            return {"error": "no such conversation"}
+        switched = False
+        if agent.conversation_id == req.conversation_id:
+            agent.new_session()
+            switched = True
+        # audit: delete_session removes raw turns AND the conversation's memory
+        # entries (delete_conversation alone leaves orphaned facts in a
+        # persistent profile — a retention bug, per the storage docstring).
+        counts = agent.delete_session(req.conversation_id)
+        removed = int((counts or {}).get("messages_removed", 0)) if isinstance(counts, dict) else 0
+        # best-effort: reclaim the conversation's persisted viz artifacts
+        try:
+            base = (Path(agent.config.storage.sqlite_path).resolve().parent / "viz").resolve()
+            comp = _re.sub(r"[^A-Za-z0-9._-]", "_", str(req.conversation_id)) or "_"
+            d = (base / comp).resolve()
+            if str(d).startswith(str(base) + os.sep) and d.is_dir():
+                shutil.rmtree(d, ignore_errors=True)
+        except Exception:
+            pass
+        return {"ok": True, "removed": removed, "switched": switched}
+
+    try:
+        return await loop.run_in_executor(None, _delete)
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
 
 
 class DeepResearchReq(BaseModel):
@@ -341,6 +666,395 @@ async def api_verify(req: VerifyReq):
     return {"ok": True, "tier": req.tier}
 
 
+class VisualizationReq(BaseModel):
+    session_id: str
+    on: bool
+
+
+@app.post("/api/visualization")
+async def api_visualization(req: VisualizationReq):
+    """v1.12 Stage B4: live-flip the LLM-4 inline visualizer on/off mid-session.
+    The chat marker-extraction seam and the deep-research report hook both read
+    ``config.visualization.enabled`` fresh, so this takes effect on the NEXT turn:
+    ON → LLM-1 may drop ``<<sherlock-viz: …>>`` markers that render into sandboxed
+    charts; OFF → any stray marker stays verbatim (the byte-identical off-state).
+    Mirrors /api/long_term."""
+    sess = SESSIONS.get(req.session_id)
+    if sess is None:
+        return {"error": "no such session"}
+    try:
+        sess.agent.config.visualization.enabled = bool(req.on)
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
+    sess.settings["visualization"] = bool(req.on)
+    return {"ok": True, "on": bool(req.on)}
+
+
+# ============== v1.12 Stage B3: LLM-4 visualizer runtime repair ==============
+# The browser sandbox (B4) renders each ``viz.rendered`` artifact inside a
+# locked-down iframe. If it throws a REAL runtime error (a JS exception, a blank
+# frame), the host posts it here with the current HTML + the exact error; the
+# server runs ONE LLM-4 repair with that error, re-lints the result, and returns
+# the fixed HTML marked runtime-validated. Rounds are bounded PER viz_id ACROSS
+# calls (session.viz_repair_rounds) so a stuck visual can't loop the model
+# forever. Same localhost-trust posture as every other route in this file.
+
+
+class VizRepairReq(BaseModel):
+    session_id: str
+    viz_id: str
+    html: str
+    error: str = ""
+
+
+@app.post("/api/viz/repair")
+async def api_viz_repair(req: VizRepairReq):
+    """Run ONE LLM-4 repair round on a viz artifact that failed at RUNTIME in the
+    browser sandbox. Returns ``{ok, html, validated:"runtime"}`` on a repair that
+    passes the static lint; ``{ok:false, error, exhausted}`` on a lint failure or
+    once the per-viz round cap is hit. Rejects an unknown session / unknown
+    viz_id / a viz_id already past ``visualization.max_repair_rounds``."""
+    sess = SESSIONS.get(req.session_id)
+    if sess is None:
+        return {"ok": False, "error": "no such session"}
+    if not req.viz_id or req.viz_id not in sess.viz_ids:
+        return {"ok": False, "error": "unknown viz_id"}
+    if not (req.html or "").strip():
+        return {"ok": False, "error": "empty html"}
+
+    agent = sess.agent
+    cfg = agent.config.visualization
+    # v1.12 F3: bound the INPUT before we consume a round or hit the LLM. The 64KB
+    # lint only caps the render OUTPUT; without this a 100MB POST would be received
+    # in full and fed straight into the repair prompt (cost / DoS). 4× the output
+    # cap leaves comfortable headroom for a legitimately large broken artifact.
+    if len(req.html.encode("utf-8")) > 4 * int(agent.config.visualization.max_html_bytes):
+        return {"ok": False, "error": "html too large", "exhausted": False}
+    max_rounds = max(0, int(cfg.max_repair_rounds))
+    used = int(sess.viz_repair_rounds.get(req.viz_id, 0))
+    if used >= max_rounds:
+        return {"ok": False, "error": "repair rounds exhausted", "exhausted": True}
+    round_no = used + 1
+    sess.note_viz_repair_round(req.viz_id, round_no)  # NICE-3: bounded write
+    exhausted = round_no >= max_rounds
+
+    anchor = f"⟦viz:{req.viz_id}⟧"
+    err = (req.error or "").strip()
+    errors_in = [err] if err else ["runtime error (unspecified)"]
+
+    from sherlock import viz as _viz
+
+    # v1.12 Stage V1: recover the per-job img-src allowlist for this viz_id (stash
+    # first, then the ``.allow`` sidecar). MISSING ⇒ () — strict, so a repaired doc
+    # that embeds an image but has no recoverable allowlist fails the lint. Thread
+    # it into BOTH the repair generation prompt and the re-lint below.
+    allowlist = agent._viz_allowlist_for(req.viz_id)
+    gen_system = _viz.build_generation_system(allowlist)
+
+    agent._emit(
+        "viz.repairing",
+        "llm4",
+        {
+            "viz_id": req.viz_id,
+            "anchor": anchor,
+            "round": round_no,
+            "errors": errors_in,
+            "runtime": True,
+        },
+    )
+
+    loop = asyncio.get_running_loop()
+
+    def _repair() -> str:
+        provider = agent._viz_llm()
+        raw = agent._viz_chat(provider, gen_system, _viz.build_repair_user(req.html, errors_in))
+        return _viz.strip_code_fences(raw)
+
+    try:
+        # v1.12 F2: bound the provider call. The round is already consumed, so a
+        # hung provider would otherwise make this HTTP request wait forever. Give
+        # the render its own timeout + a small margin over the provider budget.
+        fixed = await asyncio.wait_for(
+            loop.run_in_executor(None, _repair), timeout=float(cfg.timeout_s) + 5.0
+        )
+    except asyncio.TimeoutError:
+        return {"ok": False, "error": "repair timeout", "exhausted": exhausted}
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}", "exhausted": exhausted}
+
+    # Re-lint the repaired HTML. The prior (browser) HTML is the fidelity anchor:
+    # the repair may not introduce numbers the failing artifact never contained.
+    ok, lint_errors = _viz._viz_static_lint(fixed, req.html, cfg, allowlist)
+    if not ok:
+        return {
+            "ok": False,
+            "error": "; ".join(lint_errors)[:500] or "validation failed",
+            "exhausted": exhausted,
+        }
+
+    validated = _viz.inject_validated_meta(fixed)
+    if cfg.save_artifacts:
+        try:
+            agent._write_viz_artifact(req.viz_id, validated, allowlist)
+        except Exception:
+            pass
+    agent._emit(
+        "viz.rendered",
+        "llm4",
+        {
+            "viz_id": req.viz_id,
+            "anchor": anchor,
+            "html": validated,
+            "validated": "runtime",
+            "bytes": len(validated.encode("utf-8")),
+            # v1.12 F2: same conv namespacing as the agent's static-render emit.
+            "conv": agent._viz_conv_component(),
+        },
+    )
+    return {"ok": True, "html": validated, "validated": "runtime"}
+
+
+@app.get("/api/viz/{viz_id}")
+async def api_viz_artifact(viz_id: str, session_id: str, conv: str = ""):
+    """Serve a saved LLM-4 artifact (``<storage>/viz/<conv_id>/<viz_id>.html``) as
+    text/html for a reopened session to re-hydrate. The client still renders it
+    inside the sandboxed iframe (B4); this endpoint just returns the bytes.
+    Path-safe: the id is sanitized to one filename component and the resolved
+    path is confined to the session's viz dir.
+
+    v1.12 F2: artifacts are namespaced under a per-conversation subdir, so the
+    viz dir is searched (one glob) for ``<viz_id>.html`` under any conversation —
+    the endpoint only takes viz_id + session_id and a session may span several
+    conversations (switch_session)."""
+    sess = SESSIONS.get(session_id)
+    if sess is None:
+        return {"error": "no such session"}
+    # v1.12 F6: only serve ids this session has actually registered (rejects
+    # ids from other sessions / never-emitted ids with a 404-style error).
+    if viz_id not in sess.viz_ids:
+        return {"error": "no such artifact"}
+    import re as _re
+
+    safe = _re.sub(r"[^A-Za-z0-9._-]", "_", str(viz_id))
+    base = (Path(sess.agent.config.storage.sqlite_path).resolve().parent / "viz").resolve()
+    # v1.12 H1 audit (P1): chat viz ids (t1-1) COLLIDE across conversations, so
+    # never search OTHER conversations' subdirs (the old rglob served whichever
+    # conversation os.walk visited first — wrong data on restore). Resolution is
+    # scoped: the explicitly requested conversation (H2 restore passes the one
+    # it opened) -> the session's ACTIVE conversation -> the legacy flat file.
+    candidates = []
+    if conv:
+        comp = _re.sub(r"[^A-Za-z0-9._-]", "_", str(conv)) or "_"
+        candidates.append(base / comp / f"{safe}.html")
+    try:
+        candidates.append(base / sess.agent._viz_conv_component() / f"{safe}.html")
+    except Exception:
+        pass
+    candidates.append(base / f"{safe}.html")
+    path = None
+    for cand in candidates:
+        rp = cand.resolve()
+        if str(rp).startswith(str(base) + os.sep) and rp.is_file():
+            path = rp
+            break
+    if path is None:
+        return {"error": "no such artifact"}
+    # v1.12 F6: this endpoint is for B4's sandboxed iframe; a direct visit would
+    # otherwise run the artifact as first-party HTML in the playground origin. Add
+    # a response-level CSP sandbox (defense-in-depth; the artifact's own meta CSP
+    # already blocks exfiltration).
+    return FileResponse(
+        str(path),
+        media_type="text/html",
+        headers={"Content-Security-Policy": "sandbox allow-scripts"},
+    )
+
+
+# ==================== v1.12 Stage A5: long-term memory ====================
+# Live toggles + a small management surface over the A1–A4 library API. The
+# chat-level confirm-token flow (A3) still governs CONVERSATIONAL deletion; the
+# UI buttons below are "direct" because the browser has its own click-confirm.
+#
+# v1.12 F7 (posture): these routes (like every endpoint in this file) trust the
+# caller — the playground is a localhost-only single-user dev inspector with no
+# auth anywhere. This localhost-trust posture is playground-wide, not specific to
+# these memory routes; a Host-header allowlist middleware (reject a non-localhost
+# Host) is a possible future hardening if this is ever exposed beyond loopback.
+
+
+class LongTermReq(BaseModel):
+    session_id: str
+    on: bool
+
+
+@app.post("/api/long_term")
+async def api_long_term(req: LongTermReq):
+    """Live-flip long-term memory on/off mid-session. The summarizer's promotion
+    gate reads ``config.memory.long_term.enabled`` fresh each cycle, so this
+    takes effect on the NEXT turn's compaction."""
+    sess = SESSIONS.get(req.session_id)
+    if sess is None:
+        return {"error": "no such session"}
+    try:
+        sess.agent.config.memory.long_term.enabled = bool(req.on)
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
+    sess.settings["long_term"] = bool(req.on)
+    return {"ok": True, "on": bool(req.on)}
+
+
+@app.post("/api/incognito")
+async def api_incognito(req: LongTermReq):
+    """Live-flip incognito: suppress long-term WRITES (promotions) while leaving
+    reads/recall intact — a 'pause remembering' switch. Takes effect next turn."""
+    sess = SESSIONS.get(req.session_id)
+    if sess is None:
+        return {"error": "no such session"}
+    try:
+        sess.agent.config.memory.long_term.incognito = bool(req.on)
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
+    sess.settings["ltm_incognito"] = bool(req.on)
+    return {"ok": True, "on": bool(req.on)}
+
+
+def _ltm_iso(value) -> str:
+    return value.isoformat() if hasattr(value, "isoformat") else str(value)
+
+
+@app.get("/api/memory/long_term")
+async def api_ltm_snapshot(session_id: str):
+    """The live cross-conversation long-term memory (sentinel scope), newest
+    first — reading is harmless regardless of enabled/incognito."""
+    sess = SESSIONS.get(session_id)
+    if sess is None:
+        return {"error": "no such session"}
+    try:
+        rows = sess.agent.long_term_memory()
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
+    return {
+        "rows": [
+            {
+                "id": r.get("id"),
+                "category": r.get("category"),
+                "content": r.get("content"),
+                "confidence": round(float(r.get("confidence") or 0.0), 2),
+                "created_at": _ltm_iso(r.get("created_at")),
+                "origin": r.get("origin_conversation_id"),
+            }
+            for r in rows
+        ]
+    }
+
+
+class MemDeleteReq(BaseModel):
+    session_id: str
+    id: str
+
+
+@app.post("/api/memory/delete")
+async def api_memory_delete(req: MemDeleteReq):
+    """Hard-delete ONE long-term row by full id. The id MUST belong to the
+    sentinel scope — a session/conversation row can never be deleted through
+    this endpoint (that path stays behind the conversational confirm-token)."""
+    sess = SESSIONS.get(req.session_id)
+    if sess is None:
+        return {"error": "no such session"}
+    from sherlock.memory.entry import LTM_CONVERSATION_ID
+
+    # v1.12 F2: honour the {"error": ...} contract even when the store raises
+    # (locked/corrupt DB) instead of leaking an HTTP 500 — same shape as wipe.
+    try:
+        row = sess.agent.memory.get(req.id)
+        if row is None:
+            return {"error": "no such memory id"}
+        if row.conversation_id != LTM_CONVERSATION_ID:
+            return {"error": "not a long-term memory row (refusing to delete)"}
+        sess.agent.memory.hard_delete(req.id)
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
+    return {"ok": True, "id": req.id}
+
+
+class SessionOnlyReq(BaseModel):
+    session_id: str
+
+
+@app.post("/api/memory/wipe")
+async def api_memory_wipe(req: SessionOnlyReq):
+    """Wipe ALL long-term memory (honours the auto Markdown backup — fail-closed
+    if the backup can't be written). Returns ``{removed, backup_path}``."""
+    sess = SESSIONS.get(req.session_id)
+    if sess is None:
+        return {"error": "no such session"}
+    try:
+        return sess.agent.wipe_long_term()
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+_EXPORT_CT = {
+    "markdown": ("text/markdown", "md"),
+    "md": ("text/markdown", "md"),
+    "json": ("application/json", "json"),
+    "sql": ("application/sql", "sql"),
+}
+
+
+@app.get("/api/memory/export")
+async def api_memory_export(session_id: str, fmt: str = "markdown"):
+    """Download the long-term memory as markdown / json / sql, with the right
+    content-type + a Content-Disposition filename."""
+    sess = SESSIONS.get(session_id)
+    if sess is None:
+        return {"error": "no such session"}
+    fmt_norm = (fmt or "markdown").strip().lower()
+    if fmt_norm not in _EXPORT_CT:
+        return {"error": f"unknown format: {fmt!r} (use markdown/md, json, or sql)"}
+    try:
+        text = sess.agent.export_memory(fmt=fmt_norm)
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
+    media, ext = _EXPORT_CT[fmt_norm]
+    return Response(
+        content=text,
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="sherlock-ltm-{sess.sid}.{ext}"'},
+    )
+
+
+class MemImportReq(BaseModel):
+    session_id: str
+    text: str
+    fmt: str | None = None
+
+
+@app.post("/api/memory/import")
+async def api_memory_import(req: MemImportReq):
+    """Import long-term facts from pasted/uploaded text (json or markdown; auto
+    detected when fmt is omitted). Requires long-term memory enabled — every
+    fact is re-routed through the store so redaction + dedup re-apply."""
+    # v1.12 F5: bound the import body so a runaway paste/upload can't wedge the
+    # single-process inspector.
+    if len(req.text) > 5_000_000:
+        return {"error": "import too large (5 MB max)"}
+    sess = SESSIONS.get(req.session_id)
+    if sess is None:
+        return {"error": "no such session"}
+    # v1.12 F1 (security): agent.import_memory treats a SHORT existing string as a
+    # filesystem PATH and reads it — over HTTP that turns this endpoint into an
+    # arbitrary local-file-read primitive (e.g. slurp a backup, then view via
+    # snapshot/export). The browser only ever posts raw export TEXT, so refuse any
+    # input that resolves to an existing path before it reaches the library.
+    if len(req.text) < 4096 and os.path.exists(req.text):
+        return {"error": "raw export text required (path import is not available over HTTP)"}
+    try:
+        return sess.agent.import_memory(req.text, fmt=req.fmt)
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
 def _md_text(text) -> str:
     """Inline short text as-is; fence multiline LLM text as a blockquote."""
     text = str(text or "").strip()
@@ -414,6 +1128,34 @@ def build_export_markdown(sess: Session) -> str:
                 f"- tokens in/out: {_tok_pair(d.get('prompt_tokens'), d.get('completion_tokens'))}"
                 f" · cache read: {d.get('cache_read_tokens', 0)}"
             )
+
+        # v1.12 Stage B4: LLM-4 visualizations rendered this turn (chat OR the DR
+        # report). Each ⟦viz:id⟧ placeholder that actually rendered becomes a link
+        # to its saved artifact; the description rides the earlier viz.pending event.
+        viz_desc = {
+            data(e).get("viz_id"): data(e).get("description", "")
+            for e in evts
+            if e.get("type") == "viz.pending"
+        }
+        # NOTE: this dedup is PER-TURN (seen_viz is reset for each turn), so a viz
+        # that is re-rendered at runtime (e.g. an /api/viz/repair re-render) and
+        # re-recorded under a later turn will emit a second link for the same vid.
+        # Also the target is RELATIVE: it only resolves when this export is written
+        # beside the session's viz storage dir. v1.12 F2: the artifact lives under a
+        # per-conversation subdir (viz/<conv>/<vid>.html) — the ``conv`` component
+        # rides the viz.rendered event.
+        seen_viz: set[str] = set()
+        for e in evts:
+            if e.get("type") != "viz.rendered":
+                continue
+            vid = data(e).get("viz_id")
+            if not vid or vid in seen_viz:
+                continue
+            seen_viz.add(vid)
+            desc = _one(viz_desc.get(vid)) or "visualization"
+            conv = data(e).get("conv")
+            sub = f"{conv}/" if conv else ""
+            lines.append(f"- [📊 visualization: {desc}](viz/{sub}{vid}.html)")
         if base:
             srch = " (+web search)" if base.get("searched") else ""
             lines.append(

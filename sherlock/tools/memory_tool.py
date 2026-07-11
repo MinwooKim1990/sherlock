@@ -7,13 +7,29 @@ LLM-1 can request a lookup by emitting one of:
     <<sherlock-tool: memory timeline last 10>>          # recent raw turns
     <<sherlock-tool: memory pinned>>                    # all pinned facts
 
+v1.12 Stage A3 adds natural-language MANAGEMENT of cross-conversation LONG-TERM
+memory (the reserved ``LTM_CONVERSATION_ID`` sentinel scope). These verbs are
+gated on ``config.memory.long_term.enabled`` — REJECTED (error, no mutation)
+when the feature is off — and every deletion is protected by a code-level
+single-use confirm token that the model can never forge:
+
+    <<sherlock-tool: memory profile>>                  # what do I remember?
+    <<sherlock-tool: memory save "always use metric">> # explicit remember-this
+    <<sherlock-tool: memory update ab12 "corrected">>  # supersede one durable fact
+    <<sherlock-tool: memory forget allergy>>           # PREVIEW → pending + token
+    <<sherlock-tool: memory forget-confirm <token>>>   # execute the frozen delete
+    <<sherlock-tool: memory wipe>>                      # PREVIEW ALL → count + token
+    <<sherlock-tool: memory wipe-confirm <token>>>     # execute the wipe
+
 The same handlers are exposed as plain callables for users on native
 tool-calling, plus schema generators for OpenAI / Anthropic tools.
 """
 
 from __future__ import annotations
 
+import json as _json
 import re
+import secrets
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
@@ -27,8 +43,12 @@ if TYPE_CHECKING:
 # Payload parsing
 # ---------------------------------------------------------------------------
 
+# v1.12 A3: the hyphenated confirm verbs MUST precede their bare prefixes in the
+# alternation (regex alternation is leftmost-first) so "forget-confirm" is not
+# mis-parsed as "forget" with a "-confirm …" argument.
 _PAYLOAD_RE = re.compile(
-    r"^(lookup|entity|timeline|pinned)\b\s*(.*)$",
+    r"^(lookup|entity|timeline|pinned|profile|save|update|"
+    r"forget-confirm|forget|wipe-confirm|wipe)\b\s*(.*)$",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -105,6 +125,14 @@ def memory_lookup(
     if not query:
         return []
     hits = hybrid.search(query, conversation_id=conversation_id, top_k=top_k)
+    # v1.12 F7: an unscoped lookup (no conversation) runs hybrid's vector tier
+    # over EVERY scope, including the long-term sentinel — but the sentinel is
+    # only meant to be read through the rag_channel. Drop those rows here so a
+    # pre-conversation lookup can't leak durable facts.
+    if conversation_id is None:
+        from sherlock.memory.entry import LTM_CONVERSATION_ID
+
+        hits = [(e, s) for e, s in hits if e.conversation_id != LTM_CONVERSATION_ID]
     return [_entry_to_dict(e) | {"score": float(score)} for e, score in hits]
 
 
@@ -135,9 +163,18 @@ def memory_entity(
         entries = finder(conversation_id, targets)
     else:
         entries = store.list(conversation_id=conversation_id)
+    # v1.12 F7: an unscoped entity scan sees the long-term sentinel scope too;
+    # keep it a rag_channel-only door by excluding sentinel rows when unscoped.
+    ltm_scope: str | None = None
+    if conversation_id is None:
+        from sherlock.memory.entry import LTM_CONVERSATION_ID
+
+        ltm_scope = LTM_CONVERSATION_ID
     hits: list["MemoryEntry"] = []
     for e in entries:
         if e.state == MemoryState.FORGOTTEN:
+            continue
+        if ltm_scope is not None and e.conversation_id == ltm_scope:
             continue
         if _entry_entity_pool(e) & targets:
             hits.append(e)
@@ -170,7 +207,444 @@ def memory_pinned(
     # v1.0: superseded rows are never "current pinned truth", even if a
     # stale pin flag survives somewhere — exclude them outright.
     entries = [e for e in entries if not getattr(e, "superseded_by", None)]
+    # v1.12 F7: an unscoped pinned dump would include the always-pinned
+    # long-term sentinel rows; the sentinel is a rag_channel-only door.
+    if conversation_id is None:
+        from sherlock.memory.entry import LTM_CONVERSATION_ID
+
+        entries = [e for e in entries if e.conversation_id != LTM_CONVERSATION_ID]
     return [_entry_to_dict(e) for e in entries]
+
+
+# ---------------------------------------------------------------------------
+# v1.12 Stage A3: long-term memory MANAGEMENT (write / edit / delete)
+# ---------------------------------------------------------------------------
+
+
+class LTMToolContext:
+    """Per-dispatch context for the long-term memory management verbs.
+
+    The memory_tool module is deliberately stateless, so the AGENT owns the
+    single-use confirm-token store (a plain ``dict``) and hands a fresh context
+    into every ``dispatch_memory`` call. The context carries:
+
+      * the ``enabled`` / ``incognito`` gates (management verbs are rejected when
+        the feature is off; WRITES are additionally rejected under incognito);
+      * the current ``turn_index`` (used to time-stamp + expire tokens);
+      * a reference to the agent-owned ``pending`` dict, so mint/consume mutate
+        agent state without the module holding any of its own.
+
+    Token contract (CODE-LEVEL safety — never trusts the model):
+      * a token is short random hex minted per PREVIEW;
+      * minting a new preview INVALIDATES every prior token (latest wins);
+      * a token is SINGLE-USE (popped on consume) and expires after
+        ``TOKEN_TTL_TURNS`` turns (``turn_index - minted_turn``);
+      * a wrong / expired / reused / wrong-kind token consumes nothing and
+        mutates nothing.
+    """
+
+    TOKEN_TTL_TURNS = 2
+
+    def __init__(
+        self,
+        *,
+        enabled: bool,
+        incognito: bool,
+        turn_index: int,
+        pending: dict,
+        auto_export_on_wipe: bool = False,
+        backup_dir=None,
+    ) -> None:
+        self.enabled = bool(enabled)
+        self.incognito = bool(incognito)
+        self.turn_index = int(turn_index)
+        # token -> {"kind": "delete"|"wipe", "ids": list[str]|None, "minted_turn": int}
+        self.pending = pending
+        # v1.12 Stage A4: wipe-confirm honours the auto-export backup. Both are
+        # threaded from the agent so the stateless tool can write a Markdown
+        # backup of the sentinel scope to ``backup_dir`` BEFORE the wipe.
+        # F6 (audit): ``backup_dir`` MAY be a zero-arg callable, resolved LAZILY
+        # only when a wipe-confirm actually needs to back up — so a read verb
+        # (lookup/profile/…) never triggers the storage-dir mkdir side effect.
+        self.auto_export_on_wipe = bool(auto_export_on_wipe)
+        self.backup_dir = backup_dir
+
+    def resolve_backup_dir(self):
+        """Resolve the (possibly-callable) backup dir; ``None`` when unset."""
+        d = self.backup_dir
+        return d() if callable(d) else d
+
+    def mint(self, kind: str, ids: Optional[list[str]]) -> str:
+        """Freeze a pending destructive action and return its confirm token.
+
+        Clears every prior token first — the latest preview always wins, so a
+        stale token from an earlier turn can never be confirmed after the user
+        re-scopes the request.
+        """
+        self.pending.clear()
+        token = secrets.token_hex(4)
+        self.pending[token] = {
+            "kind": kind,
+            "ids": list(ids) if ids is not None else None,
+            "minted_turn": self.turn_index,
+        }
+        return token
+
+    def consume(self, token: str, kind: str) -> tuple[Optional[dict], Optional[str]]:
+        """Validate + single-use-consume ``token`` for ``kind``.
+
+        Returns ``(record, None)`` on success (record already removed) or
+        ``(None, error_message)`` — never mutating anything on failure.
+        """
+        token = (token or "").strip()
+        rec = self.pending.get(token)
+        if rec is None:
+            return None, "invalid or already-used confirm token — run the preview again"
+        if rec.get("kind") != kind:
+            return None, "confirm token does not match this action"
+        if self.turn_index - int(rec.get("minted_turn", self.turn_index)) > self.TOKEN_TTL_TURNS:
+            self.pending.pop(token, None)
+            return None, "confirm token expired — run the preview again"
+        self.pending.pop(token, None)  # single use
+        return rec, None
+
+
+def _require_ltm(
+    ltm_ctx: Optional[LTMToolContext], kind: str, *, need_write: bool = False
+) -> Optional[dict]:
+    """Gate a management verb. Returns an error dict, or ``None`` when allowed."""
+    if ltm_ctx is None or not ltm_ctx.enabled:
+        return {"tool": "memory", "kind": kind, "error": "long-term memory is disabled"}
+    if need_write and ltm_ctx.incognito:
+        return {
+            "tool": "memory",
+            "kind": kind,
+            "error": "long-term memory is in incognito mode (durable writes paused)",
+        }
+    return None
+
+
+def _live_ltm_rows(store: "MemoryStore") -> list["MemoryEntry"]:
+    """Current (non-superseded, non-forgotten) long-term sentinel rows."""
+    from sherlock.memory.entry import LTM_CONVERSATION_ID, MemoryState
+
+    return [
+        e
+        for e in store.list(conversation_id=LTM_CONVERSATION_ID)
+        if not getattr(e, "superseded_by", None) and e.state != MemoryState.FORGOTTEN
+    ]
+
+
+def memory_profile(*, store: "MemoryStore", limit: int = 50) -> list[dict]:
+    """List the currently-remembered long-term facts (the "what do you remember?"
+    view), newest first. Read-only; superseded/forgotten rows are excluded."""
+    from sherlock.memory.entry import ltm_category
+
+    rows = _live_ltm_rows(store)
+    rows.sort(key=lambda e: e.created_at, reverse=True)
+    return [
+        {
+            "id": e.id[:8],
+            "category": ltm_category(e.tags),
+            "content": e.content,
+            "confidence": e.confidence,
+            "created": str(e.created_at),
+        }
+        for e in rows[:limit]
+    ]
+
+
+def memory_save(
+    text: str,
+    *,
+    store: "MemoryStore",
+    conversation_id: str | None,
+    ltm_ctx: Optional[LTMToolContext],
+) -> dict:
+    """EXPLICIT user-directive save: land ``text`` in the long-term sentinel
+    scope immediately (category ``user_directive``, pinned). Blocked when the
+    feature is disabled or the session is incognito."""
+    err = _require_ltm(ltm_ctx, "save", need_write=True)
+    if err:
+        return err
+    text = (text or "").strip()
+    if not text:
+        return {"tool": "memory", "kind": "save", "error": "nothing to save (empty text)"}
+    from sherlock.memory.entry import LTM_CONVERSATION_ID, MemorySource, MemoryType
+
+    row = store.add(
+        conversation_id=LTM_CONVERSATION_ID,
+        content=text,
+        type=MemoryType.FACT,
+        source=MemorySource.USER,
+        confidence=1.0,
+        pinned=True,
+        last_used_turn_index=ltm_ctx.turn_index,
+        tags="ltm,user_directive",
+        evidence=_json.dumps([{"quote": text, "turn": ltm_ctx.turn_index}]),
+        origin_conversation_id=conversation_id,
+        dedup=True,
+    )
+    return {
+        "tool": "memory",
+        "kind": "save",
+        "saved": True,
+        "id": row.id[:8],
+        "category": "user_directive",
+        "content": row.content,
+    }
+
+
+def memory_update(
+    args: str,
+    *,
+    store: "MemoryStore",
+    conversation_id: str | None,
+    ltm_ctx: Optional[LTMToolContext],
+) -> dict:
+    """Correct one durable fact: supersede the row matched by a UNIQUE id-prefix
+    with a fresh row carrying ``new text`` (reusing the old row's category)."""
+    err = _require_ltm(ltm_ctx, "update")
+    if err:
+        return err
+    args = (args or "").strip()
+    parts = args.split(None, 1)
+    if len(parts) < 2 or not parts[0].strip():
+        return {
+            "tool": "memory",
+            "kind": "update",
+            "error": "usage: memory update <id-prefix> <corrected text>",
+        }
+    prefix = parts[0].strip()
+    new_text = _strip_quotes(parts[1])
+    if not new_text:
+        return {"tool": "memory", "kind": "update", "error": "corrected text is empty"}
+    from sherlock.memory.entry import LTM_CONVERSATION_ID, MemorySource, MemoryType, ltm_category
+
+    live = _live_ltm_rows(store)
+    matches = [e for e in live if e.id.startswith(prefix)]
+    if not matches:
+        return {
+            "tool": "memory",
+            "kind": "update",
+            "error": f"no long-term fact has id starting with '{prefix}'",
+        }
+    if len(matches) > 1:
+        return {
+            "tool": "memory",
+            "kind": "update",
+            "error": "id-prefix is ambiguous; use more characters",
+            "candidates": [{"id": e.id[:8], "content": e.content} for e in matches[:8]],
+        }
+    old = matches[0]
+    category = ltm_category(old.tags)
+    new_row = store.add(
+        conversation_id=LTM_CONVERSATION_ID,
+        content=new_text,
+        type=MemoryType.FACT,
+        source=MemorySource.USER,
+        confidence=max(0.9, float(old.confidence or 0.0)),
+        pinned=True,
+        last_used_turn_index=ltm_ctx.turn_index,
+        tags=old.tags or f"ltm,{category}",
+        evidence=_json.dumps([{"quote": new_text, "turn": ltm_ctx.turn_index}]),
+        origin_conversation_id=conversation_id,
+        # A correction must NOT dedup-merge back into the row it replaces.
+        dedup=False,
+    )
+    store.supersede(old.id, new_row.id, turn_index=ltm_ctx.turn_index)
+    return {
+        "tool": "memory",
+        "kind": "update",
+        "updated": True,
+        "old_id": old.id[:8],
+        "new_id": new_row.id[:8],
+        "content": new_row.content,
+    }
+
+
+def memory_forget(
+    query: str,
+    *,
+    store: "MemoryStore",
+    ltm_ctx: Optional[LTMToolContext],
+) -> dict:
+    """PREVIEW ONLY — never mutates. Find durable facts matching ``query``
+    (id-prefix, substring, or entity token; cap 8) and freeze them behind a
+    single-use confirm token so ``forget-confirm`` can delete EXACTLY them."""
+    err = _require_ltm(ltm_ctx, "forget")
+    if err:
+        return err
+    query = _strip_quotes((query or "").strip())
+    if not query:
+        return {"tool": "memory", "kind": "forget", "error": "usage: memory forget <what>"}
+    # F4 (audit): a 1-char query makes the substring channel ("e" in almost every
+    # row) — and a 1-char id-prefix — match nearly everything. Refuse it and ask
+    # for something specific rather than freezing an over-broad delete set.
+    if len(query) < 2:
+        return {
+            "tool": "memory",
+            "kind": "forget",
+            "error": "query too short — name the fact, person, or topic to forget (>= 2 characters)",
+        }
+    from sherlock.memory.entry import ltm_category
+    from sherlock.rag.hybrid import _entry_entity_pool, extract_entities
+
+    ql = query.lower()
+    targets = extract_entities(query) or {ql}
+    rows = _live_ltm_rows(store)
+    matched: list["MemoryEntry"] = []
+    # F4 (audit): entity-token / id-prefix matching FIRST — the PRECISE channel
+    # (e.g. "유진" hits exactly the 유진 rows, not every row that contains the
+    # substring). Only if that finds nothing do we fall back to the broad
+    # substring channel (already guarded to >= 2 chars above).
+    for e in rows:
+        if e.id.startswith(query) or (_entry_entity_pool(e) & targets):
+            matched.append(e)
+        if len(matched) >= 8:
+            break
+    if not matched:
+        for e in rows:
+            if ql in (e.content or "").lower():
+                matched.append(e)
+            if len(matched) >= 8:
+                break
+    if not matched:
+        return {
+            "tool": "memory",
+            "kind": "forget",
+            "pending": [],
+            "count": 0,
+            "message": f"no long-term memory matches '{query}'.",
+        }
+    token = ltm_ctx.mint("delete", [e.id for e in matched])
+    return {
+        "tool": "memory",
+        "kind": "forget",
+        "pending": [
+            {"id": e.id[:8], "content": e.content, "category": ltm_category(e.tags)}
+            for e in matched
+        ],
+        "count": len(matched),
+        "confirm_token": token,
+        "instruction": (
+            "PREVIEW ONLY — nothing was deleted. Tell the user EXACTLY which fact(s) "
+            "above will be erased and ask them to confirm in their language. Only after "
+            f"they confirm, emit <<sherlock-tool: memory forget-confirm {token}>> next "
+            "turn. Never invent a token."
+        ),
+    }
+
+
+def memory_forget_confirm(
+    token: str,
+    *,
+    store: "MemoryStore",
+    ltm_ctx: Optional[LTMToolContext],
+) -> dict:
+    """Execute a frozen forget: hard-delete EXACTLY the ids captured at preview
+    time. A wrong / expired / reused token deletes nothing."""
+    err = _require_ltm(ltm_ctx, "forget-confirm")
+    if err:
+        return err
+    rec, cerr = ltm_ctx.consume(token, "delete")
+    if cerr:
+        return {"tool": "memory", "kind": "forget-confirm", "error": cerr}
+    ids = rec.get("ids") or []
+    deleted = 0
+    for mid in ids:
+        try:
+            if store.get(mid) is not None:
+                store.hard_delete(mid)
+                deleted += 1
+        except Exception:
+            pass
+    return {"tool": "memory", "kind": "forget-confirm", "deleted": deleted}
+
+
+def memory_wipe(*, store: "MemoryStore", ltm_ctx: Optional[LTMToolContext]) -> dict:
+    """PREVIEW ONLY — count long-term rows and mint a wipe confirm token.
+
+    F6 (audit): the headline ``count`` is LIVE rows only — the exact set the user
+    sees via ``memory profile`` — so the preview never claims a bigger number than
+    what they can see. ``total`` additionally counts the superseded/forgotten
+    tombstone rows that wipe-confirm ALSO purges from the sentinel scope, so the
+    two numbers stay reconcilable when they differ.
+    """
+    err = _require_ltm(ltm_ctx, "wipe")
+    if err:
+        return err
+    from sherlock.memory.entry import LTM_CONVERSATION_ID
+
+    total = len(store.list(conversation_id=LTM_CONVERSATION_ID))
+    live = len(_live_ltm_rows(store))
+    if total == 0:
+        return {
+            "tool": "memory",
+            "kind": "wipe",
+            "count": 0,
+            "total": 0,
+            "message": "long-term memory is already empty.",
+        }
+    token = ltm_ctx.mint("wipe", None)
+    history = total - live
+    history_note = (
+        f" (plus {history} superseded/forgotten history row(s) also purged)" if history else ""
+    )
+    return {
+        "tool": "memory",
+        "kind": "wipe",
+        "count": live,
+        "total": total,
+        "confirm_token": token,
+        "instruction": (
+            "PREVIEW ONLY — nothing was deleted. This will PERMANENTLY erase ALL "
+            f"{live} remembered long-term fact(s){history_note}. Tell the user and ask them "
+            f"to confirm in their language. Only after they confirm, emit "
+            f"<<sherlock-tool: memory wipe-confirm {token}>> next turn. Never invent a token."
+        ),
+    }
+
+
+def memory_wipe_confirm(
+    token: str,
+    *,
+    store: "MemoryStore",
+    ltm_ctx: Optional[LTMToolContext],
+) -> dict:
+    """Execute a wipe: delete the whole long-term sentinel scope."""
+    err = _require_ltm(ltm_ctx, "wipe-confirm")
+    if err:
+        return err
+    rec, cerr = ltm_ctx.consume(token, "wipe")
+    if cerr:
+        return {"tool": "memory", "kind": "wipe-confirm", "error": cerr}
+    from sherlock.memory.entry import LTM_CONVERSATION_ID
+
+    # v1.12 Stage A4: honour auto_export_on_wipe — write a Markdown backup of the
+    # sentinel scope BEFORE deleting, so a chat-driven wipe is recoverable too.
+    backup_path = None
+    backup_dir = ltm_ctx.resolve_backup_dir() if ltm_ctx.auto_export_on_wipe else None
+    if backup_dir is not None:
+        try:
+            from sherlock.memory.portability import backup_ltm_markdown
+
+            backup_path = backup_ltm_markdown(store, backup_dir)
+        except Exception as exc:
+            # F2 (audit): fail CLOSED — a failed backup write must NOT fall
+            # through to an unrecoverable wipe. The confirm token is already
+            # consumed above, so the user must re-preview (correct for a
+            # destructive op).
+            return {
+                "tool": "memory",
+                "kind": "wipe-confirm",
+                "error": f"backup failed, wipe aborted: {exc}",
+            }
+    n = store.delete_conversation_memories(LTM_CONVERSATION_ID)
+    result = {"tool": "memory", "kind": "wipe-confirm", "wiped": n}
+    if backup_path:
+        result["backup_path"] = backup_path
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -185,6 +659,7 @@ def dispatch_memory(
     hybrid: Optional["HybridSearch"] = None,
     storage: Optional["Storage"] = None,
     conversation_id: str | None = None,
+    ltm_ctx: Optional[LTMToolContext] = None,
 ) -> dict:
     """Run a parsed memory payload and return a JSON-serialisable dict.
 
@@ -245,6 +720,41 @@ def dispatch_memory(
             "kind": "pinned",
             "results": memory_pinned(store=store, conversation_id=conversation_id),
         }
+
+    # --- v1.12 Stage A3: long-term management verbs (feature-gated) ---------
+    if kind in {
+        "profile",
+        "save",
+        "update",
+        "forget",
+        "forget-confirm",
+        "wipe",
+        "wipe-confirm",
+    }:
+        if store is None:
+            return {"tool": "memory", "kind": kind, "error": "memory store not available"}
+        if kind == "profile":
+            gate = _require_ltm(ltm_ctx, "profile")
+            if gate:
+                return gate
+            return {"tool": "memory", "kind": "profile", "results": memory_profile(store=store)}
+        if kind == "save":
+            return memory_save(args, store=store, conversation_id=conversation_id, ltm_ctx=ltm_ctx)
+        if kind == "update":
+            # NOTE: pass raw_args (not the quote-stripped `args`) — update splits
+            # "<id> <text>" itself and strips quotes around the text component.
+            return memory_update(
+                raw_args, store=store, conversation_id=conversation_id, ltm_ctx=ltm_ctx
+            )
+        if kind == "forget":
+            return memory_forget(args, store=store, ltm_ctx=ltm_ctx)
+        if kind == "forget-confirm":
+            return memory_forget_confirm(args, store=store, ltm_ctx=ltm_ctx)
+        if kind == "wipe":
+            return memory_wipe(store=store, ltm_ctx=ltm_ctx)
+        if kind == "wipe-confirm":
+            return memory_wipe_confirm(args, store=store, ltm_ctx=ltm_ctx)
+
     return {"tool": "memory", "error": f"unknown kind: {kind}"}
 
 
@@ -252,33 +762,69 @@ def dispatch_memory(
 # Native tool-calling schema generators (for users not using the tag)
 # ---------------------------------------------------------------------------
 
-_MEMORY_DESCRIPTION = (
-    "Look up information from Sherlock's long-term memory store. Use this "
-    "when you need to recall a specific fact the user has shared before "
-    "(allergies, names, dates, preferences) that may not be in the recent "
-    "K-turn window. Cheaper and more precise than re-asking the user."
+# READ verbs work under any config; they recall a fact the user shared before
+# (allergies, names, dates, preferences) that may have fallen out of the recent
+# K-turn window.
+_MEMORY_READ_DESCRIPTION = (
+    "Read Sherlock's memory. READ verbs recall a specific fact the user shared "
+    "before (allergies, names, dates, preferences) that may have fallen out of "
+    "the recent K-turn window: lookup (semantic+entity), entity (deterministic), "
+    "timeline (last N raw turns), pinned (all pinned facts)."
+)
+_MEMORY_DESCRIPTION = _MEMORY_READ_DESCRIPTION + (
+    " MANAGE verbs act on cross-conversation LONG-TERM memory: profile (list "
+    "what is remembered), save (remember this fact permanently), update "
+    "(correct one durable fact by id-prefix), forget (PREVIEW facts to delete "
+    "+ get a confirm token), forget-confirm (execute the previewed delete only "
+    "after the user confirms), wipe / wipe-confirm (all long-term memory). "
+    "Deletions ALWAYS require a two-step preview→confirm with the token."
 )
 
+# v1.12 A3: the verb sets for the native-tool ``kind`` enum. NICE-1: the seven
+# cross-conversation MANAGE verbs are only meaningful when long-term memory is
+# enabled, so they're gated OUT of the schema when it's off — that keeps the
+# native-tool surface byte-identical to the pre-LTM / LTM-off world (the
+# dispatcher already safe-errors these verbs, but the SCHEMA shouldn't advertise
+# them). Pass ``long_term`` to the builders to mirror ``memory.long_term.enabled``.
+_MEMORY_READ_KINDS = ["lookup", "entity", "timeline", "pinned"]
+_LTM_KINDS = ["profile", "save", "update", "forget", "forget-confirm", "wipe", "wipe-confirm"]
+_MEMORY_KINDS = _MEMORY_READ_KINDS + _LTM_KINDS  # full surface (LTM on)
 
-def make_openai_memory_tool() -> list[dict]:
-    """OpenAI Chat Completions tools= entry for the memory tool."""
+_KIND_DESC_FULL = "lookup/entity/timeline/pinned = read; profile = list long-term facts; save = remember permanently; update = correct by id-prefix; forget/wipe = PREVIEW a deletion (returns a confirm token); forget-confirm/wipe-confirm = execute with that token after the user confirms"
+_KIND_DESC_READ = "lookup (semantic+entity), entity (deterministic), timeline (last N raw turns), pinned (all pinned facts)"
+
+
+def _memory_kinds(long_term: bool) -> list[str]:
+    return _MEMORY_READ_KINDS + _LTM_KINDS if long_term else list(_MEMORY_READ_KINDS)
+
+
+def make_openai_memory_tool(long_term: bool = True) -> list[dict]:
+    """OpenAI Chat Completions tools= entry for the memory tool.
+
+    ``long_term`` mirrors ``config.memory.long_term.enabled``: when False the
+    cross-conversation MANAGE verbs are omitted so the schema stays byte-identical
+    to the pre-LTM / LTM-off world (NICE-1)."""
     return [
         {
             "type": "function",
             "function": {
                 "name": "memory_lookup",
-                "description": _MEMORY_DESCRIPTION,
+                "description": _MEMORY_DESCRIPTION if long_term else _MEMORY_READ_DESCRIPTION,
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "kind": {
                             "type": "string",
-                            "enum": ["lookup", "entity", "timeline", "pinned"],
-                            "description": "lookup = semantic+entity search; entity = deterministic entity match; timeline = last N raw turns; pinned = all pinned facts",
+                            "enum": _memory_kinds(long_term),
+                            "description": _KIND_DESC_FULL if long_term else _KIND_DESC_READ,
                         },
                         "args": {
                             "type": "string",
-                            "description": "Query / entity / count, depending on kind. Empty for 'pinned'.",
+                            "description": (
+                                "Query / entity / count / text / id-prefix / confirm token, depending on kind. Empty for 'pinned', 'profile', 'wipe'."
+                                if long_term
+                                else "Query / entity / count, depending on kind. Empty for 'pinned'."
+                            ),
                         },
                     },
                     "required": ["kind"],
@@ -288,22 +834,23 @@ def make_openai_memory_tool() -> list[dict]:
     ]
 
 
-def make_anthropic_memory_tool() -> list[dict]:
-    """Anthropic Messages tools= entry for the memory tool."""
+def make_anthropic_memory_tool(long_term: bool = True) -> list[dict]:
+    """Anthropic Messages tools= entry for the memory tool. ``long_term`` gates the
+    cross-conversation MANAGE verbs exactly as in ``make_openai_memory_tool``."""
     return [
         {
             "name": "memory_lookup",
-            "description": _MEMORY_DESCRIPTION,
+            "description": _MEMORY_DESCRIPTION if long_term else _MEMORY_READ_DESCRIPTION,
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "kind": {
                         "type": "string",
-                        "enum": ["lookup", "entity", "timeline", "pinned"],
+                        "enum": _memory_kinds(long_term),
                     },
                     "args": {
                         "type": "string",
-                        "description": "Query / entity / count, depending on kind.",
+                        "description": "Query / entity / count / text / id-prefix / confirm token, depending on kind.",
                     },
                 },
                 "required": ["kind"],

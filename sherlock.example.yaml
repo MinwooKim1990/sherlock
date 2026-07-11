@@ -25,6 +25,15 @@ models:
     model: gpt-5.4-mini
     api_key_env: OPENAI_API_KEY
 
+  # v1.12: optional 4th role — LLM-4 the VISUALIZER (renders inline
+  # <<sherlock-viz: …>> markers into self-contained HTML/SVG). Unset → the
+  # visualizer falls back to the `main` provider, so `visualization` (below) can
+  # be turned on with no extra model key. Uncomment to give it its own model:
+  # viz:
+  #   provider: anthropic
+  #   model: claude-haiku-4-5-20251001
+  #   api_key_env: ANTHROPIC_API_KEY
+
   # Open-source-model hosts (OpenAI-compatible, via litellm) work the same way —
   # set provider + the host's model id (as shown on its site) + the key env var.
   # Browse exact model ids in the playground, or each host's /models endpoint.
@@ -51,6 +60,21 @@ storage:
 memory:
   k_turn_min: 3
   k_turn_max_adaptive: true
+
+  # v1.12: cross-conversation LONG-TERM memory. LLM-2 promotes a small, durable
+  # subset of session facts (identity/health, explicit "remember this", stable
+  # preferences/relationships/projects) into a shared sentinel scope; LLM-1
+  # recalls them via an always-on USER PROFILE block + a sentinel RAG channel.
+  # ON by default in v1.12 — set enabled: false to disable (byte-identical to
+  # pre-v1.12). Values below are the real defaults; uncomment to override.
+  long_term:
+    enabled: true
+    # incognito: false            # true = recall existing facts but PAUSE new writes
+    # cap: 200                    # hard cap on stored rows (lowest-conf/oldest evicted past it)
+    # profile_max_facts: 12       # USER PROFILE block budget — max facts injected per turn
+    # profile_max_chars: 1200     # …and max characters (whichever binds first)
+    # rag_channel: true           # also expose long-term facts to semantic RAG retrieval
+    # auto_export_on_wipe: true   # Markdown backup before any wipe (fail-closed; recoverable)
 
 # Web search (v0.3.0 — multi-provider).
 search:
@@ -122,6 +146,22 @@ perception:
   enabled: false
   # max_observations: 12   # per-primitive toggles: dates / scripts / arithmetic /
   # freshness: true        # spans / code / discourse / freshness (all default true)
+
+# LLM-4 inline VISUALIZER (v1.12). When enabled, LLM-1 may drop an inline
+# <<sherlock-viz: …>> marker where a diagram/chart helps; LLM-4 renders it into a
+# sandboxed-iframe HTML/SVG artifact via generate → lint → self-review → repair.
+# OFF by default: the marker protocol is dormant and a stray marker stays
+# verbatim (byte-identical). Uses models.viz, else falls back to models.main.
+# Values below are the real defaults; uncomment to override.
+visualization:
+  enabled: false
+  # self_review_rounds: 1     # LLM-4 self-critique rounds before a render is accepted
+  # max_repair_rounds: 2      # render-repair attempts when an artifact fails the lint
+  # timeout_s: 30.0           # per-marker wall-clock budget (best-effort; timeout drops the visual)
+  # max_markers_chat: 3       # cap on markers honoured per CHAT reply
+  # max_markers_report: 4     # …and per deep-research REPORT
+  # max_html_bytes: 64000     # upper bound on one rendered artifact's HTML payload
+  # save_artifacts: true      # persist rendered artifacts so a reopened session re-hydrates them
 
 execution:
   # NOTE: the next three are ADVISORY / NOT ENFORCED today. The background
