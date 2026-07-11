@@ -743,6 +743,17 @@ Two headline features, each with a byte-identical off-state.
   Opt in with `config.visualization.enabled`; off (default) the marker protocol is dormant
   and a stray marker stays verbatim (byte-identical). See the new LLM-4 role + the
   `memory.*` / `viz.*` events in [`docs/EVENTS.md`](docs/EVENTS.md).
+- **Content-appropriate visuals & images:** LLM-4 picks the form that fits the content —
+  charts for real data, SVG diagrams for structure, and **generated images** for
+  narrative/illustrative material (`image:` markers). Works with **omni models**
+  (image-capable chat models get an adaptive request ladder) or a dedicated image model
+  (`visualization.image_model`); text-only models gracefully fall back to drawing SVG.
+  Security is fail-closed: a per-artifact CSP `img-src` allowlist pins exact URLs, and
+  artifacts self-size to their content (dynamic `resize` protocol — no dead space).
+- **Playground: persistent history + one-screen setup.** Conversations persist per
+  profile with **LLM-generated titles**, a sidebar to reopen / rename / delete them
+  (visuals re-hydrate from disk), one connect row + a per-role provider/model grid
+  ("all same" master + per-role override), and mid-session model switching.
 
 ### v1.11 — audit hardening: correctness fixes, parallel search, observability
 A five-agent audit of v1.10 drove this maintenance release. No accuracy defaults
