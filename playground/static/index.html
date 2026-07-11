@@ -296,7 +296,7 @@
         <option value="on" data-i18n="viz_on">viz on</option>
       </select></span>
       <span class="ml-auto flex flex-wrap items-center gap-1.5">
-        <span id="tokBar" class="mono text-slate-300 whitespace-nowrap cursor-help px-1" title="cumulative tokens this session (in/out per role)"></span>
+        <span id="tokBar" class="mono text-slate-300 whitespace-nowrap cursor-help px-1 overflow-hidden text-ellipsis" style="max-width:34rem" title="cumulative tokens this session (in/out per role)"></span>
         <span id="wsStatus" class="text-slate-400 whitespace-nowrap px-1">ws: …</span>
         <button id="modelsBtn" class="topbtn" data-i18n-title="models_title" title="Per-role models (applies next turn)">⚙ <span data-i18n="models_btn">models</span></button>
         <button id="exportBtn" class="topbtn" title="download this session as a markdown debugging doc">⬇ <span data-i18n="export">export</span></button>

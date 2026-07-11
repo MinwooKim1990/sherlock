@@ -928,12 +928,14 @@ function renderTokBar() {
   const total = TOK.main.i + TOK.main.o + TOK.summary.i + TOK.summary.o + TOK.inference.i + TOK.inference.o + TOK.viz.i + TOK.viz.o;
   const cached = TOK.main.c + TOK.summary.c + TOK.inference.c + TOK.viz.c;
   const l4 = TOK.viz.i + TOK.viz.o ? ` · L4 ${kfmt(TOK.viz.i)}/${kfmt(TOK.viz.o)}` : "";
-  // Compact ONE-LINE badge (Σ only) — the per-role in/out breakdown lives in the
-  // hover tooltip so the counter can never wrap the top bar.
+  // ONE LINE, per-role VISIBLE (user request): "L1 14k/1.9k · L2 … · Σ 45k".
+  // Small mono font + ellipsis (CSS) keeps it from ever wrapping the bar; the
+  // tooltip repeats the full string plus cached/single detail.
   const el = $("tokBar");
-  el.textContent = `🪙 Σ ${kfmt(total)}`;
+  const roles = `L1 ${kfmt(TOK.main.i)}/${kfmt(TOK.main.o)} · L2 ${kfmt(TOK.summary.i)}/${kfmt(TOK.summary.o)} · L3 ${kfmt(TOK.inference.i)}/${kfmt(TOK.inference.o)}${l4}`;
+  el.textContent = `${roles} · Σ ${kfmt(total)}`;
   el.title =
-    `L1 ${kfmt(TOK.main.i)}/${kfmt(TOK.main.o)} · L2 ${kfmt(TOK.summary.i)}/${kfmt(TOK.summary.o)} · L3 ${kfmt(TOK.inference.i)}/${kfmt(TOK.inference.o)}${l4}${cached ? ` · ⚡cached ${kfmt(cached)}` : ""}${BASE.i + BASE.o ? ` · single ${kfmt(BASE.i)}/${kfmt(BASE.o)}` : ""} (in/out per role, cumulative)`;
+    `${roles}${cached ? ` · ⚡cached ${kfmt(cached)}` : ""}${BASE.i + BASE.o ? ` · single ${kfmt(BASE.i)}/${kfmt(BASE.o)}` : ""} · Σ ${kfmt(total)} (in/out per role, cumulative)`;
 }
 function countTokens(d) {
   const t = TOK[d.role]; if (!t) return;
