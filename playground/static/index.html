@@ -73,6 +73,14 @@
   .conn-chip:hover { background:#dcfce7; }
   html.dark .conn-chip { background:#052e16; border-color:#166534; color:#4ade80; }
   html.dark .conn-chip:hover { background:#14532d; }
+  /* v1.12 UI: two-row top bar — fixed-height chips/selects/buttons that never stack */
+  #topbar .topsel { background:#1e293b; color:#fff; border:0; border-radius:6px; height:24px; padding:0 4px; font-size:11px; min-width:0; max-width:200px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #topbar .role-chip { flex:0 0 auto; font-size:10px; font-weight:700; line-height:1; padding:4px 6px; border-radius:5px; letter-spacing:.03em; }
+  #topbar .topbtn { display:inline-flex; align-items:center; gap:4px; height:24px; padding:0 8px; border-radius:6px; background:#334155; white-space:nowrap; }
+  #topbar .topbtn:hover { background:#475569; }
+  #topbar .togchip { display:inline-flex; align-items:center; gap:4px; height:24px; padding:0 6px; border-radius:6px; background:rgba(148,163,184,.12); white-space:nowrap; }
+  /* dark mode paints selects #0f172a (same as the bar) — keep the pills visible */
+  html.dark #topbar .topsel { box-shadow: inset 0 0 0 1px #293548; }
   /* ---------- dark mode ---------- */
   html.dark body { background:#0b1220 !important; color:#e2e8f0; }
   html.dark .bg-white { background:#111827 !important; }
@@ -96,12 +104,13 @@
 <body class="bg-slate-100 text-slate-800 h-screen overflow-hidden">
 
 <!-- ============ SETUP SCREEN ============ -->
-<div id="setup" class="h-full flex items-center justify-center p-4">
-  <div class="bg-white rounded-2xl shadow-xl w-full max-w-2xl p-7 space-y-5">
+<div id="setup" class="h-full overflow-y-auto scroll flex p-4">
+  <!-- m-auto (not items-center on the parent): centers when short, scrolls without top-clipping when tall -->
+  <div class="bg-white rounded-2xl shadow-xl w-full max-w-2xl p-7 space-y-5 m-auto">
     <div class="flex items-start justify-between gap-3">
       <div>
         <h1 class="text-2xl font-bold tracking-tight">🔍 Sherlock Live Inspector</h1>
-        <p class="text-sm text-slate-500 mt-1" data-i18n="subtitle">Bring any LLM — Gemini, OpenAI, Anthropic, an open-source-model host (DeepInfra · Together · OpenRouter), or a local OpenAI-compatible server — and watch Sherlock curate its context in real time.</p>
+        <p class="text-sm text-slate-500 mt-1" data-i18n="subtitle">Connect any LLM — cloud or a local OpenAI-compatible server — and watch Sherlock curate its context in real time.</p>
       </div>
       <div class="flex gap-2 shrink-0">
         <select id="langSel" class="border rounded-lg px-2 py-1 text-xs" title="UI language" aria-label="UI language">
@@ -118,7 +127,7 @@
     </div>
 
     <div class="space-y-2">
-      <label class="text-sm font-semibold"><span data-i18n="providers">Providers</span> <span class="text-slate-400 font-normal" data-i18n="providers_hint">— connect at least one; mix freely per role</span></label>
+      <label class="text-sm font-semibold"><span data-i18n="providers">Providers</span> <span class="text-slate-400 font-normal" data-i18n="providers_hint">— connect at least one; mix providers per role</span></label>
       <div class="flex gap-2 items-center">
         <select id="connProvider" class="w-28 border rounded-lg px-2 py-1.5 text-xs shrink-0" data-i18n-title="connect_provider" title="provider" aria-label="provider">
           <option value="gemini">Gemini</option>
@@ -170,7 +179,7 @@
         <select id="roleImageProv" class="w-28 border rounded-lg px-2 py-1.5 text-xs mono shrink-0" disabled></select>
         <select id="roleImageModel" class="flex-1 min-w-0 border rounded-lg px-2 py-1.5 text-xs mono" disabled></select>
         <input id="vizImageModel" type="text" placeholder="dall-e-3" class="w-32 border rounded-lg px-2 py-1.5 text-xs mono shrink-0" />
-        <span class="basis-full text-[11px] text-slate-400 pl-[126px]" data-i18n="viz_image_help"><code>image:</code> markers render a generated picture — needs an image-capable model + that provider's key</span>
+        <span class="basis-full text-[11px] text-slate-400 pl-[126px]" data-i18n="viz_image_help"><code>image:</code> markers render a generated picture — needs an image-capable model and that provider's key.</span>
       </div>
     </div>
 
@@ -199,11 +208,12 @@
         </select>
       </label>
     </div>
+    <p class="text-xs text-slate-500 -mt-2" data-i18n="companions_help"><b>turbo</b> runs LLM-2 + LLM-3 every turn, <b>cold_start</b> wakes them only when a real signal calls for it, and <b>off</b> stays single-model.</p>
 
     <!-- v1.12 A5: long-term (cross-session) memory -->
     <div class="flex flex-wrap gap-4 text-sm items-center">
       <label class="flex items-center gap-2" title="remember durable facts across sessions">
-        <input id="optLongTerm" type="checkbox" /> <b>🧠 <span data-i18n="longterm">Long-term memory</span></b>
+        <input id="optLongTerm" type="checkbox" checked /> <b>🧠 <span data-i18n="longterm">Long-term memory</span></b>
       </label>
       <label class="flex items-center gap-1 text-xs text-slate-500">
         <span data-i18n="ltm_profile">profile</span>
@@ -213,15 +223,15 @@
         <input id="optIncognito" type="checkbox" /> <span data-i18n="ltm_incognito">incognito — read, don't save</span>
       </label>
     </div>
-    <p class="text-xs text-slate-500 -mt-2" data-i18n="longterm_help">🧠 Long-term memory keeps durable facts (name, allergies, “remember this”) under the named <b>profile</b> across sessions and restarts. Off by default. <b>Incognito</b> keeps recalling what's stored but pauses new writes.</p>
+    <p class="text-xs text-slate-500 -mt-2" data-i18n="longterm_help">Durable facts (name, allergies, “remember this”) are saved to the chosen <b>profile</b> and survive restarts; <b>incognito</b> keeps recalling them but pauses new writes.</p>
 
     <!-- v1.12 B4: LLM-4 inline visualizer (its model lives in the role grid above; the image row shows only when this is on) -->
     <div class="flex flex-wrap gap-4 text-sm items-center">
       <label class="flex items-center gap-2" data-i18n-title="viz_title" title="inline data visualizations (LLM-4)">
-        <input id="optViz" type="checkbox" /> <b>📊 <span data-i18n="viz">Visualizations</span></b>
+        <input id="optViz" type="checkbox" checked /> <b>📊 <span data-i18n="viz">Visualizations</span></b>
       </label>
     </div>
-    <p class="text-xs text-slate-500 -mt-2" data-i18n="viz_help">📊 When on, LLM-1 (and deep research) may drop an inline chart where a visual genuinely helps; LLM-4 renders it into a self-contained, sandboxed artifact. Off by default.</p>
+    <p class="text-xs text-slate-500 -mt-2" data-i18n="viz_help">Where a chart genuinely helps, LLM-1 proposes one and LLM-4 renders it inline as a sandboxed artifact.</p>
 
     <div class="flex items-center gap-2 text-sm">
       <label class="font-semibold" data-i18n="websearch">🌐 Web search</label>
@@ -234,8 +244,7 @@
       </select>
       <input id="searchKey" type="password" placeholder="search API key" data-i18n-ph="searchkey_ph" class="flex-1 border rounded-lg px-3 py-1.5 text-xs mono hidden" />
     </div>
-    <p class="text-xs text-slate-500 -mt-2" data-i18n="websearch_help">LLM-1 (search + fetch) and LLM-3 (freshness) both use this engine. DuckDuckGo is free but weak for news; Brave/Tavily/Valyu give far better results with a key.</p>
-    <p class="text-xs text-slate-500 -mt-2" data-i18n="companions_help">💡 <b>turbo</b> runs LLM-3 inference + LLM-2 compaction every turn (the 🧠 Inference / 🗜 Compaction panels always fill). <b>cold_start</b> keeps it single-model until a real signal needs the companions; <b>off</b> is the legacy gate.</p>
+    <p class="text-xs text-slate-500 -mt-2" data-i18n="websearch_help">LLM-1 search and LLM-3 freshness checks share this engine; with a key, Brave/Tavily/Valyu beat the free DuckDuckGo by a wide margin.</p>
 
     <button id="startBtn" class="w-full bg-slate-900 hover:bg-black text-white font-semibold py-2.5 rounded-lg disabled:opacity-40" disabled data-i18n="start_session">Start session</button>
     <p id="startStatus" class="text-xs text-slate-500 text-center"></p>
@@ -244,43 +253,62 @@
 
 <!-- ============ MAIN SCREEN ============ -->
 <div id="main" class="h-full hidden flex-col">
-  <!-- top bar -->
-  <div class="bg-slate-900 text-white px-4 py-2 flex items-center gap-4 text-xs">
-    <button id="histToggle" class="bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded" data-i18n-title="hist_title" title="history">🗂</button>
-    <span class="font-bold">🔍 Sherlock Live Inspector</span>
-    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-blue-400"></span>L1 <select id="liveMain" class="bg-slate-800 rounded px-1 py-0.5 mono"></select></span>
-    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-green-400"></span>L2 <select id="liveSummary" class="bg-slate-800 rounded px-1 py-0.5 mono"></select></span>
-    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-purple-400"></span>L3 <select id="liveInference" class="bg-slate-800 rounded px-1 py-0.5 mono"></select></span>
-    <span class="flex items-center gap-1" title="companion gating — change live"><span>🔬</span> <select id="liveCompanions" class="bg-slate-800 rounded px-1 py-0.5 mono">
-      <option value="cold_start" selected>cold_start</option>
-      <option value="turbo">turbo</option>
-      <option value="off">off</option>
-    </select></span>
-    <span class="flex items-center gap-1" data-i18n-title="async_title" title="async — companions run in the background so the reply never waits (change live)"><span>⚡</span> <select id="liveBackground" class="bg-slate-800 rounded px-1 py-0.5 mono">
-      <option value="on" data-i18n="bg_on">async</option>
-      <option value="off" data-i18n="bg_off">inline</option>
-    </select></span>
-    <span class="flex items-center gap-1" data-i18n-title="ltm_title" title="long-term (cross-session) memory — change live"><span>🧠</span> <select id="liveLongTerm" class="bg-slate-800 rounded px-1 py-0.5 mono">
-      <option value="off" data-i18n="ltm_off">LTM off</option>
-      <option value="on" data-i18n="ltm_on">LTM on</option>
-    </select> <select id="liveIncognito" class="bg-slate-800 rounded px-1 py-0.5 mono" data-i18n-title="incog_title" title="incognito — recall but pause new writes">
-      <option value="off" data-i18n="incog_off">rec</option>
-      <option value="on" data-i18n="incog_on">incognito</option>
-    </select></span>
-    <span class="flex items-center gap-1" data-i18n-title="viz_title" title="inline data visualizations (LLM-4) — change live"><span>📊</span> <select id="liveVizOn" class="bg-slate-800 rounded px-1 py-0.5 mono">
-      <option value="off" data-i18n="viz_off">viz off</option>
-      <option value="on" data-i18n="viz_on">viz on</option>
-    </select> <select id="liveViz" class="bg-slate-800 rounded px-1 py-0.5 mono"></select></span>
-    <span id="tokBar" class="ml-auto mono text-slate-300" title="cumulative tokens this session (in+out per role)"></span>
-    <span id="wsStatus" class="text-slate-400">ws: …</span>
-    <button id="darkToggle2" class="bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded" title="toggle dark mode" aria-label="toggle dark mode">🌙</button>
-    <button id="modelsBtn" class="bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded" data-i18n-title="models_title" title="Per-role models (applies next turn)">⚙ <span data-i18n="models_btn">models</span></button>
-    <button id="exportBtn" class="bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded" title="download this session as a markdown debugging doc" data-i18n="export">⬇ export</button>
-    <button id="newSession" class="bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded" data-i18n="new_session">new session</button>
+  <!-- top bar — two rows: (1) brand + per-role model selects, (2) toggles + status + actions -->
+  <div id="topbar" class="bg-slate-900 text-white text-xs">
+    <div class="px-3 pt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+      <span class="font-bold whitespace-nowrap shrink-0">🔍 Sherlock Live Inspector</span>
+      <span class="flex items-center gap-1.5 min-w-0">
+        <span class="role-chip bg-blue-500/25 text-blue-300">L1</span>
+        <select id="liveMain" class="topsel mono"></select>
+      </span>
+      <span class="flex items-center gap-1.5 min-w-0">
+        <span class="role-chip bg-green-500/25 text-green-300">L2</span>
+        <select id="liveSummary" class="topsel mono"></select>
+      </span>
+      <span class="flex items-center gap-1.5 min-w-0">
+        <span class="role-chip bg-purple-500/25 text-purple-300">L3</span>
+        <select id="liveInference" class="topsel mono"></select>
+      </span>
+      <span class="flex items-center gap-1.5 min-w-0" data-i18n-title="viz_title" title="inline data visualizations (LLM-4) — change live">
+        <span class="role-chip bg-orange-500/25 text-orange-300">L4</span>
+        <select id="liveViz" class="topsel mono"></select>
+      </span>
+    </div>
+    <div class="px-3 py-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+      <span class="togchip" title="companion gating — change live">🔬<select id="liveCompanions" class="topsel mono">
+        <option value="cold_start" selected>cold_start</option>
+        <option value="turbo">turbo</option>
+        <option value="off">off</option>
+      </select></span>
+      <span class="togchip" data-i18n-title="async_title" title="async — companions run in the background so the reply never waits (change live)">⚡<select id="liveBackground" class="topsel mono">
+        <option value="on" data-i18n="bg_on">async</option>
+        <option value="off" data-i18n="bg_off">inline</option>
+      </select></span>
+      <span class="togchip" data-i18n-title="ltm_title" title="long-term (cross-session) memory — change live">🧠<select id="liveLongTerm" class="topsel mono">
+        <option value="off" data-i18n="ltm_off">LTM off</option>
+        <option value="on" data-i18n="ltm_on">LTM on</option>
+      </select><select id="liveIncognito" class="topsel mono" data-i18n-title="incog_title" title="incognito — recall but pause new writes">
+        <option value="off" data-i18n="incog_off">rec</option>
+        <option value="on" data-i18n="incog_on">incognito</option>
+      </select></span>
+      <span class="togchip" data-i18n-title="viz_title" title="inline data visualizations (LLM-4) — change live">📊<select id="liveVizOn" class="topsel mono">
+        <option value="off" data-i18n="viz_off">viz off</option>
+        <option value="on" data-i18n="viz_on">viz on</option>
+      </select></span>
+      <span class="ml-auto flex flex-wrap items-center gap-1.5">
+        <span id="tokBar" class="mono text-slate-300 whitespace-nowrap cursor-help px-1" title="cumulative tokens this session (in/out per role)"></span>
+        <span id="wsStatus" class="text-slate-400 whitespace-nowrap px-1">ws: …</span>
+        <button id="modelsBtn" class="topbtn" data-i18n-title="models_title" title="Per-role models (applies next turn)">⚙ <span data-i18n="models_btn">models</span></button>
+        <button id="exportBtn" class="topbtn" title="download this session as a markdown debugging doc">⬇ <span data-i18n="export">export</span></button>
+        <button id="newSession" class="topbtn">＋ <span data-i18n="new_session">new chat</span></button>
+        <button id="histToggle" class="topbtn" data-i18n-title="hist_title" title="history">🗂</button>
+        <button id="darkToggle2" class="topbtn" title="toggle dark mode" aria-label="toggle dark mode">🌙</button>
+      </span>
+    </div>
   </div>
 
   <!-- v1.12 P1: mid-session per-role model panel (⚙ models) -->
-  <div id="modelsPanel" class="hidden fixed right-3 top-10 z-50 bg-white border rounded-xl shadow-xl p-3 text-xs w-[400px] space-y-2 text-slate-700">
+  <div id="modelsPanel" class="hidden fixed right-3 top-[70px] z-50 bg-white border rounded-xl shadow-xl p-3 text-xs w-[400px] space-y-2 text-slate-700">
     <div class="font-semibold" data-i18n="models_title">Per-role models (applies next turn)</div>
     <div id="modelsPanelRows" class="space-y-1.5"></div>
   </div>
