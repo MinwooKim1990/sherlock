@@ -75,6 +75,7 @@
   html.dark .conn-chip:hover { background:#14532d; }
   /* v1.12 UI: two-row top bar — fixed-height chips/selects/buttons that never stack */
   #topbar .topsel { background:#1e293b; color:#fff; border:0; border-radius:6px; height:24px; padding:0 4px; font-size:11px; min-width:0; max-width:200px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #topbar .topnum { width:44px; text-align:center; }
   #topbar .role-chip { flex:0 0 auto; font-size:10px; font-weight:700; line-height:1; padding:4px 6px; border-radius:5px; letter-spacing:.03em; }
   #topbar .topbtn { display:inline-flex; align-items:center; gap:4px; height:24px; padding:0 8px; border-radius:6px; background:#334155; white-space:nowrap; }
   #topbar .topbtn:hover { background:#475569; }
@@ -207,6 +208,10 @@
           <option value="off">off — no accuracy pass</option>
         </select>
       </label>
+      <label class="flex items-center gap-2" data-i18n-title="dr_rounds_title" title="maximum deep-research rounds (1–20; change live)">
+        <b>↻ <span data-i18n="dr_max_rounds">Max research rounds</span></b>
+        <input id="deepResearchMaxRounds" type="number" min="1" max="20" step="1" value="20" class="w-16 border rounded-lg px-2 py-1 text-xs mono text-center" />
+      </label>
     </div>
     <p class="text-xs text-slate-500 -mt-2" data-i18n="companions_help"><b>turbo</b> runs LLM-2 + LLM-3 every turn, <b>cold_start</b> wakes them only when a real signal calls for it, and <b>off</b> stays single-model.</p>
 
@@ -295,6 +300,7 @@
         <option value="off" data-i18n="viz_off">viz off</option>
         <option value="on" data-i18n="viz_on">viz on</option>
       </select></span>
+      <span class="togchip" data-i18n-title="dr_rounds_title" title="maximum deep-research rounds (1–20; change live)">↻ DR<input id="liveDeepResearchMaxRounds" type="number" min="1" max="20" step="1" value="20" class="topsel topnum mono" aria-label="maximum deep-research rounds" /></span>
       <span class="ml-auto flex flex-wrap items-center gap-1.5">
         <span id="tokBar" class="mono text-slate-300 whitespace-nowrap cursor-help px-1 overflow-hidden text-ellipsis" style="max-width:34rem" title="cumulative tokens this session (in/out per role)"></span>
         <span id="wsStatus" class="text-slate-400 whitespace-nowrap px-1">ws: …</span>

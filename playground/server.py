@@ -35,7 +35,13 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from playground import providers as prov
-from playground.session import Session, build_agent, carry_snapshot, memory_snapshot
+from playground.session import (
+    Session,
+    build_agent,
+    carry_snapshot,
+    memory_snapshot,
+    normalize_deep_research_max_rounds,
+)
 
 app = FastAPI(title="Sherlock Live Inspector")
 STATIC = Path(__file__).parent / "static"
@@ -664,6 +670,25 @@ async def api_verify(req: VerifyReq):
     sess.agent.config.search.deep_research_verify = req.tier
     sess.settings["deep_research_verify"] = req.tier
     return {"ok": True, "tier": req.tier}
+
+
+class DeepResearchMaxRoundsReq(BaseModel):
+    session_id: str
+    max_rounds: int
+
+
+@app.post("/api/deep_research/max_rounds")
+async def api_deep_research_max_rounds(req: DeepResearchMaxRoundsReq):
+    """Change the hard-bounded loop cap for the next deep-research run."""
+    sess = SESSIONS.get(req.session_id)
+    if sess is None:
+        return {"error": "no such session"}
+    if not 1 <= req.max_rounds <= 20:
+        return {"error": "max_rounds must be between 1 and 20"}
+    value = normalize_deep_research_max_rounds(req.max_rounds)
+    sess.agent.config.search.deep_research_max_rounds = value
+    sess.settings["deep_research_max_rounds"] = value
+    return {"ok": True, "max_rounds": value}
 
 
 class VisualizationReq(BaseModel):

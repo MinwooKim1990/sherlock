@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 # Distribution name (PyPI "sherlock" is a locks library; the famous OSINT
 # tool also owns the brand). The IMPORT package stays `sherlock`.
 name = "sherlock-context"
-version = "1.12.1"
+version = "1.12.2"
 description = "Bring-your-own-LLM context curation: memory with provenance, implied-intent inference, multilingual deep research — any model, even small local ones, acts smarter."
 readme = "README.md"
 requires-python = ">=3.11"

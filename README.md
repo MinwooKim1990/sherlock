@@ -720,6 +720,16 @@ caching, deep-research trust, memory reconciliation — lives in
 
 ## Changelog highlights
 
+### v1.12.2 — content-fit visualizations + controllable research depth
+- **Seamless inline artifacts:** the playground now injects a sandbox-confined
+  sizing observer into every HTML/SVG/JS/image artifact, removes the old 640px
+  host clamp and internal iframe scrolling, and follows late image/font/DOM
+  changes. Short visuals no longer leave a blank viewport below them; tall
+  diagrams expand in the conversation and use the page's normal scroll.
+- **Deep-research round control:** the playground exposes the hard-bounded
+  `deep_research_max_rounds` setting (1-20) both before session creation and as a
+  live control that applies to the next research run.
+
 ### v1.12 — cross-session long-term memory + LLM-4 inline visualizations
 Two headline features, each with a byte-identical off-state.
 - **Long-term memory (default ON):** Sherlock now remembers durable facts *across

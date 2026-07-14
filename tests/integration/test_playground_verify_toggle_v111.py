@@ -45,6 +45,28 @@ def test_build_agent_applies_verify_tier(monkeypatch):
     )
 
 
+def test_build_agent_applies_bounded_deep_research_rounds(monkeypatch):
+    import playground.providers as providers
+    import playground.session as session_mod
+
+    monkeypatch.setattr(providers, "make_role_callable", lambda role, sess, emit: (lambda m: "ok"))
+
+    def _rounds(value):
+        sess = session_mod.Session(sid="s", models={}, loop=None, queue=None)
+        settings = {
+            "embedding": "fake",
+            "search_engine": "off",
+            "background": False,
+            "deep_research_max_rounds": value,
+        }
+        return session_mod.build_agent(sess, "sys", settings).config.search.deep_research_max_rounds
+
+    assert _rounds(7) == 7
+    assert _rounds(0) == 1
+    assert _rounds(99) == 20
+    assert _rounds("bad") == 20
+
+
 # ---------------------------------------------------------------- /api/verify
 def _make_fake_build():
     def fake_build_agent(session, system_prompt, settings):
@@ -113,4 +135,34 @@ def test_verify_invalid_tier_errors(monkeypatch):
 def test_verify_unknown_session_errors(monkeypatch):
     client, _ = _client(monkeypatch)
     r = client.post("/api/verify", json={"session_id": "nope", "tier": "off"})
+    assert "error" in r.json()
+
+
+def test_deep_research_max_rounds_toggle_flips_live(monkeypatch):
+    client, server = _client(monkeypatch)
+    sid = _start(client)
+    sess = server.SESSIONS[sid]
+
+    r = client.post("/api/deep_research/max_rounds", json={"session_id": sid, "max_rounds": 6})
+    assert r.json() == {"ok": True, "max_rounds": 6}
+    assert sess.agent.config.search.deep_research_max_rounds == 6
+    assert sess.settings["deep_research_max_rounds"] == 6
+
+
+@pytest.mark.parametrize("value", [0, 21])
+def test_deep_research_max_rounds_rejects_out_of_range(monkeypatch, value):
+    client, server = _client(monkeypatch)
+    sid = _start(client)
+
+    r = client.post("/api/deep_research/max_rounds", json={"session_id": sid, "max_rounds": value})
+    assert "error" in r.json()
+    assert server.SESSIONS[sid].agent.config.search.deep_research_max_rounds == 20
+
+
+def test_deep_research_max_rounds_unknown_session_errors(monkeypatch):
+    client, _ = _client(monkeypatch)
+    r = client.post(
+        "/api/deep_research/max_rounds",
+        json={"session_id": "nope", "max_rounds": 5},
+    )
     assert "error" in r.json()

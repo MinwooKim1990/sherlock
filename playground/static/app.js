@@ -27,7 +27,10 @@ const LANG = {
     companions_cold: "cold_start — only when a signal needs them",
     companions_off: "off — single model (legacy)",
     companions_help: "<b>turbo</b> runs LLM-2 + LLM-3 every turn, <b>cold_start</b> wakes them only when a real signal calls for it, and <b>off</b> stays single-model.",
-    background: "Background", redact: "Redact secrets", verify: "Verify", websearch: "🌐 Web search",
+    background: "Background", redact: "Redact secrets", verify: "Verify",
+    dr_max_rounds: "Max research rounds",
+    dr_rounds_title: "maximum deep-research rounds (1–20; change live)",
+    websearch: "🌐 Web search",
     engine_ddg: "DuckDuckGo (free, no key)", engine_brave: "Brave (key)",
     engine_tavily: "Tavily (key)", engine_valyu: "Valyu (key)", engine_off: "Off",
     searchkey_ph: "search API key",
@@ -105,6 +108,12 @@ const LANG = {
   de: {"subtitle":"Bring ein beliebiges LLM mit — Gemini, OpenAI, Anthropic, einen Host für Open-Source-Modelle (DeepInfra · Together · OpenRouter) oder einen lokalen, OpenAI-kompatiblen Server — und sieh Sherlock dabei zu, wie es dessen Kontext in Echtzeit kuratiert.","providers":"Anbieter","providers_hint":"— mindestens einen verbinden; pro Rolle frei kombinierbar","role_main":"Haupt","role_summary":"Zusammenfasser","role_infer":"Schlussfolgerer","sysprompt_label":"System-Prompt (LLM-1-Persona)","companions":"Begleiter","companions_turbo":"turbo — LLM-2 + LLM-3 in jedem Zug","companions_cold":"cold_start — nur wenn ein Signal sie erfordert","companions_off":"off — einzelnes Modell (Legacy)","companions_help":"💡 <b>turbo</b> führt in jedem Zug LLM-3-Inferenz + LLM-2-Verdichtung aus (die Panels 🧠 Inferenz / 🗜 Verdichtung füllen sich immer). <b>cold_start</b> bleibt beim Einzelmodell, bis ein echtes Signal die Begleiter erfordert; <b>off</b> ist das Legacy-Gate.","background":"Hintergrund","redact":"Geheimnisse schwärzen","websearch":"🌐 Websuche","engine_ddg":"DuckDuckGo (kostenlos, kein Schlüssel)","engine_brave":"Brave (Schlüssel)","engine_tavily":"Tavily (Schlüssel)","engine_valyu":"Valyu (Schlüssel)","engine_off":"Aus","searchkey_ph":"Such-API-Schlüssel","websearch_help":"LLM-1 (Suche + Abruf) und LLM-3 (Aktualität) nutzen beide diese Engine. DuckDuckGo ist kostenlos, aber schwach bei Nachrichten; Brave/Tavily/Valyu liefern mit einem Schlüssel deutlich bessere Ergebnisse.","start_session":"Sitzung starten","export":"exportieren","new_session":"neue Sitzung","thinking":"Sherlock denkt nach …","stop":"Stopp","try":"Probier:","ex1":"Meine Tochter Yujin hat eine Erdnussallergie","ex2":"Ich bin hin- und hergerissen, ob ich kündigen soll","ex3":"Ich fliege nächste Woche nach Tokio — empfiehl mir ein Hotel","ex4":"Suche nach dem heutigen Wetter in München","ex5":"Erinnerst du dich, was ich vorhin gesagt habe?","dr_proposed":"🔬 Deep Research vorgeschlagen","approve":"Bestätigen","skip":"Überspringen","dr_or_yes":"… oder antworte einfach mit „ja“.","chatmode_title":"wer antwortet: Sherlock, das blanke Modell oder beide nebeneinander","mode_single":"Einzelnes LLM","mode_both":"Vergleichen (A/B)","baseline_search_title":"Fairer Vergleich: Das einzelne LLM bekommt ebenfalls einen Suchdurchlauf mit derselben Engine","single_search":"🔎einzeln","msg_ph":"Sag etwas …","send":"Senden","single_baseline":"⚖ Einzelnes LLM (Baseline)","tab_flow":"⚡ Fluss","tab_slot":"🧱 Slot","tab_llmio":"💬 LLM-E/A","tab_infer":"🧠 Inferenz","tab_compact":"🗜 Verdichtung","tab_memory":"🗃 Speicher","tab_carry":"↪ Übertrag","tab_research":"🔬 Recherche","thinking_single":"Einzelnes LLM denkt nach …","stopping":"wird gestoppt …","building_agent":"Agent wird aufgebaut (beim ersten Lauf wird der Embedder heruntergeladen) …","need_provider":"✗ Verbinde zuerst einen Anbieter und wähle Modelle aus","dr_running":"🔬 Deep Research läuft …","dr_synth":"🔬 finale Antwort wird zusammengeführt …","dr_starting":"🔬 Deep Research startet …"},
   es: {"subtitle":"Conecta cualquier LLM — Gemini, OpenAI, Anthropic, un host de modelos open source (DeepInfra · Together · OpenRouter) o un servidor local compatible con OpenAI — y observa cómo Sherlock organiza su contexto en tiempo real.","providers":"Proveedores","providers_hint":"— conecta al menos uno; combínalos libremente por rol","role_main":"Principal","role_summary":"Resumidor","role_infer":"Inferenciador","sysprompt_label":"Prompt de sistema (persona de LLM-1)","companions":"Acompañantes","companions_turbo":"turbo — LLM-2 + LLM-3 en cada turno","companions_cold":"cold_start — solo cuando una señal los necesita","companions_off":"off — modelo único (heredado)","companions_help":"💡 <b>turbo</b> ejecuta la inferencia de LLM-3 + la compactación de LLM-2 en cada turno (los paneles 🧠 Inferencia / 🗜 Compactación siempre se llenan). <b>cold_start</b> lo mantiene en modelo único hasta que una señal real necesite a los acompañantes; <b>off</b> es la compuerta heredada.","background":"Segundo plano","redact":"Ocultar secretos","websearch":"🌐 Búsqueda web","engine_ddg":"DuckDuckGo (gratis, sin clave)","engine_brave":"Brave (clave)","engine_tavily":"Tavily (clave)","engine_valyu":"Valyu (clave)","engine_off":"Desactivada","searchkey_ph":"clave de API de búsqueda","websearch_help":"LLM-1 (búsqueda + recuperación) y LLM-3 (actualidad) usan este motor. DuckDuckGo es gratis pero flojo para noticias; Brave/Tavily/Valyu dan resultados mucho mejores con una clave.","start_session":"Iniciar sesión","export":"exportar","new_session":"nueva sesión","thinking":"Sherlock está pensando…","stop":"Detener","try":"prueba:","ex1":"Mi hija Lucía tiene alergia al maní","ex2":"No sé si debería renunciar a mi trabajo","ex3":"Voy a Barcelona la próxima semana — recomiéndame un hotel","ex4":"Busca el clima de hoy en Madrid","ex5":"¿Recuerdas lo que te dije antes?","dr_proposed":"🔬 Investigación a fondo propuesta","approve":"Aprobar","skip":"Omitir","dr_or_yes":"…o simplemente responde «sí».","chatmode_title":"quién responde: Sherlock, el modelo a secas, o ambos en paralelo","mode_single":"LLM único","mode_both":"Comparar (A/B)","baseline_search_title":"Comparación justa: el LLM único también recibe una pasada de búsqueda con el mismo motor","single_search":"🔎único","msg_ph":"Escribe algo…","send":"Enviar","single_baseline":"⚖ LLM único (referencia)","tab_flow":"⚡ Flujo","tab_slot":"🧱 Ranura","tab_llmio":"💬 E/S de LLM","tab_infer":"🧠 Inferencia","tab_compact":"🗜 Compactación","tab_memory":"🗃 Memoria","tab_carry":"↪ Arrastre","tab_research":"🔬 Investigación","thinking_single":"El LLM único está pensando…","stopping":"deteniendo…","building_agent":"construyendo el agente (la primera ejecución descarga el embebedor)…","need_provider":"✗ conecta un proveedor y elige modelos primero","dr_running":"🔬 investigación a fondo en curso…","dr_synth":"🔬 sintetizando la respuesta final…","dr_starting":"🔬 iniciando investigación a fondo…"},
 };
+// Keep the compact one-line locale dictionaries readable: newer controls fall
+// back to English everywhere, with a native label for the primary Korean UI.
+Object.assign(LANG.ko, {
+  dr_max_rounds: "최대 리서치 라운드",
+  dr_rounds_title: "심층 리서치 최대 라운드 (1–20, 실시간 변경 가능)",
+});
 let LOCALE = (() => {
   try { const s = localStorage.getItem("sherlock_lang"); if (s && LANG[s]) return s; } catch (e) {}
   const n = (navigator.language || "en").slice(0, 2).toLowerCase();
@@ -355,6 +364,10 @@ function syncSelTitle(el) {
   const o = el.selectedOptions && el.selectedOptions[0];
   el.title = o ? o.textContent : (el.value || "");
 }
+function deepResearchRoundsValue(el) {
+  const n = Math.trunc(Number(el && el.value));
+  return Number.isFinite(n) ? Math.max(1, Math.min(20, n)) : 20;
+}
 function mirrorLive() {
   for (const [sel, prefix, role] of [["liveMain", "roleMain", "main"], ["liveSummary", "roleSummary", "summary"], ["liveInference", "roleInference", "inference"]]) {
     const el = $(sel);
@@ -387,6 +400,17 @@ function mirrorLive() {
     lv2.value = lv2.value || ($("verifyTier") ? $("verifyTier").value : "faithfulness");
     lv2.onchange = async () => {
       await fetch("/api/verify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: S.sid, tier: lv2.value }) });
+    };
+  }
+  // Deep-research loop cap — setup and live controls share the same bounded value.
+  const ldr = $("liveDeepResearchMaxRounds");
+  if (ldr) {
+    ldr.value = String(deepResearchRoundsValue($("deepResearchMaxRounds")));
+    ldr.onchange = async () => {
+      const value = deepResearchRoundsValue(ldr);
+      ldr.value = String(value);
+      if ($("deepResearchMaxRounds")) $("deepResearchMaxRounds").value = String(value);
+      await fetch("/api/deep_research/max_rounds", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: S.sid, max_rounds: value }) });
     };
   }
   // v1.12 A5: live long-term-memory on/off — mirrors the setup checkbox
@@ -453,6 +477,7 @@ function currentSettings() {
     search_engine: $("searchEngine").value, search_api_key: $("searchKey").value.trim() || null,
     companions_mode: mode, force_companions: mode === "turbo",
     deep_research_verify: ($("liveVerify") && $("liveVerify").value) || ($("verifyTier") && $("verifyTier").value) || "faithfulness",
+    deep_research_max_rounds: deepResearchRoundsValue(S.sid ? $("liveDeepResearchMaxRounds") : $("deepResearchMaxRounds")),
     // v1.12 A5: long-term memory (off by default; opt-in per session)
     long_term: !!($("optLongTerm") && $("optLongTerm").checked),
     ltm_profile: ($("ltmProfile") && $("ltmProfile").value.trim()) || "default",
@@ -1495,7 +1520,57 @@ $("drSkip").onclick = async () => {
 // never a broken iframe, never a crash. The host page is NEVER innerHTML'd the
 // artifact HTML — it only ever reaches the DOM as an iframe srcdoc.
 const VIZ_TOKEN_RE = /⟦viz:([A-Za-z0-9._:-]{1,80})⟧/g;
-const VIZ_DEF_H = 360, VIZ_MAX_H = 640, VIZ_HARNESS_MS = 4000, VIZ_ORPHAN_MS = 40000, VIZ_CLIENT_REPAIRS = 2;
+const VIZ_BOOT_H = 1, VIZ_DEF_H = 360, VIZ_HARD_MAX_H = 12000;
+const VIZ_HARNESS_MS = 4000, VIZ_ORPHAN_MS = 40000, VIZ_CLIENT_REPAIRS = 2;
+
+function fitVizHeight(value) {
+  const n = Math.ceil(Number(value));
+  return Number.isFinite(n) && n > 0 ? Math.max(40, Math.min(n + 2, VIZ_HARD_MAX_H)) : 0;
+}
+
+// Sizing must not depend on the model remembering ResizeObserver. Add a trusted,
+// sandbox-confined fit helper after server-side validation; it has no network or
+// storage access and can emit only the already-allowlisted resize signal.
+const VIZ_FIT_STYLE = '<style data-sherlock-viz-fit>html,body{height:auto!important;min-height:0!important;max-height:none!important;overflow:hidden!important}body{margin:0!important}body>:first-child{min-height:0!important;max-height:none!important}</style>';
+const VIZ_FIT_SCRIPT = `<script data-sherlock-viz-fit>
+(() => {
+  let frame = 0, last = 0;
+  const measure = () => {
+    if (!document.body) return 0;
+    const origin = document.body.getBoundingClientRect().top;
+    let bottom = origin;
+    for (const el of document.body.querySelectorAll('*')) {
+      const style = getComputedStyle(el);
+      if (style.display === 'none' || style.visibility === 'hidden') continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.width || rect.height) bottom = Math.max(bottom, rect.bottom);
+    }
+    const pad = parseFloat(getComputedStyle(document.body).paddingBottom) || 0;
+    return Math.max(1, Math.ceil(bottom - origin + pad));
+  };
+  const send = () => {
+    frame = 0;
+    const height = measure();
+    if (height > 0 && height !== last) {
+      last = height;
+      parent.postMessage({sherlockViz:'resize', height}, '*');
+    }
+  };
+  const queue = () => { if (!frame) frame = requestAnimationFrame(send); };
+  new ResizeObserver(queue).observe(document.documentElement);
+  if (document.body) new ResizeObserver(queue).observe(document.body);
+  new MutationObserver(queue).observe(document.documentElement, {subtree:true, childList:true, attributes:true, characterData:true});
+  window.addEventListener('load', queue);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(queue);
+  send();
+  setTimeout(queue, 100);
+})();
+</script>`;
+function withVizFitRuntime(html) {
+  let out = String(html || "");
+  out = /<\/head>/i.test(out) ? out.replace(/<\/head>/i, VIZ_FIT_STYLE + "</head>") : VIZ_FIT_STYLE + out;
+  return /<\/body>/i.test(out) ? out.replace(/<\/body>/i, VIZ_FIT_SCRIPT + "</body>") : out + VIZ_FIT_SCRIPT;
+}
 
 // Bounded (≈50) KEY→element registry so async viz events find the right bubble
 // AFTER it finalized (chat: "t{turn}", deep research: "dr:{research_id}").
@@ -1649,8 +1724,8 @@ function ensureVizMessageListener() {
     if (data.sherlockViz === "resize" && S.vizLiveFrames) {
       for (const f of S.vizLiveFrames) {
         if (f.contentWindow === e.source) {
-          const hh = Number(data.height);
-          if (hh > 0) f.style.height = Math.max(40, Math.min(hh + 8, VIZ_MAX_H)) + "px";
+          const hh = fitVizHeight(data.height);
+          if (hh > 0) f.style.height = hh + "px";
           return;
         }
       }
@@ -1668,15 +1743,16 @@ function startVizHarness(slot, d, html, attempt) {
   const iframe = document.createElement("iframe");
   iframe.setAttribute("sandbox", "allow-scripts"); // NO allow-same-origin → opaque origin
   iframe.setAttribute("referrerpolicy", "no-referrer");
+  iframe.setAttribute("scrolling", "no");
   iframe.setAttribute("title", "visualization " + (d.viz_id || ""));
   // overlay the loading placeholder INVISIBLY and in-flow-width (slot is
   // position:relative) so the artifact measures its real width; revealed only
   // once it posts {sherlockViz:'ready'}.
-  iframe.style.cssText = "position:absolute;top:0;left:0;width:100%;height:" + VIZ_DEF_H + "px;border:0;visibility:hidden";
+  iframe.style.cssText = "position:absolute;top:0;left:0;width:100%;height:" + VIZ_BOOT_H + "px;border:0;visibility:hidden;overflow:hidden";
   iframe.style.colorScheme = vizFrameScheme(); // theme the frame from first paint
-  iframe.srcdoc = html; // NEVER innerHTML — the artifact only runs inside the sandbox
+  iframe.srcdoc = withVizFitRuntime(html); // trusted fit helper stays inside the sandbox
 
-  let settled = false;
+  let settled = false, readyQueued = false;
   const harness = { iframe, height: 0 };
   const timer = setTimeout(() => settle("timeout"), VIZ_HARNESS_MS);
   harness.timer = timer; // so resetChatUI can cancel an in-flight settle across sessions
@@ -1694,9 +1770,17 @@ function startVizHarness(slot, d, html, attempt) {
   }
   harness.onMessage = (data) => {
     if (data.sherlockViz === "ready") {
-      const hgt = Number(data.height);
-      if (hgt > 0) harness.height = Math.max(40, Math.min(hgt + 8, VIZ_MAX_H));
-      settle("ready");
+      const hgt = fitVizHeight(data.height);
+      if (hgt > 0) harness.height = hgt;
+      // The trusted fit helper is parsed immediately after the model script.
+      // Reveal next paint so its more accurate resize can win first.
+      if (!readyQueued) {
+        readyQueued = true;
+        requestAnimationFrame(() => settle("ready"));
+      }
+    } else if (data.sherlockViz === "resize") {
+      const hgt = fitVizHeight(data.height);
+      if (hgt > 0) harness.height = hgt;
     } else if (data.sherlockViz === "error") {
       settle("error", String(data.message || "").slice(0, 300));
     }
@@ -1712,7 +1796,7 @@ function revealVizIframe(slot, iframe, height) {
   const hgt = height || VIZ_DEF_H;
   // background + color-scheme track the app's dark toggle (cssText wipes the
   // mount-time colorScheme, so re-stamp it after).
-  iframe.style.cssText = "position:static;display:block;width:100%;height:" + hgt + "px;max-height:" + VIZ_MAX_H + "px;border:0;border-radius:10px;background:" + vizFrameBg() + ";overflow:auto";
+  iframe.style.cssText = "position:static;display:block;width:100%;height:" + hgt + "px;border:0;border-radius:10px;background:" + vizFrameBg() + ";overflow:hidden";
   iframe.style.colorScheme = vizFrameScheme();
   if (!S.vizLiveFrames) S.vizLiveFrames = new Set();
   for (const f of [...S.vizLiveFrames]) { if (!f.isConnected) S.vizLiveFrames.delete(f); }

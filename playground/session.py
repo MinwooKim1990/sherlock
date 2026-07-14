@@ -38,6 +38,17 @@ def _ltm_profile_dir(profile: str | None) -> str:
     return str(d)
 
 
+def normalize_deep_research_max_rounds(value, default: int = 20) -> int:
+    """Return the playground/library deep-research cap within its hard 1..20 range."""
+    if isinstance(value, bool):
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(1, min(parsed, 20))
+
+
 class _BoundedIdSet:
     """v1.12 F5: an insertion-ordered, bounded id registry with a set-like API
     (``.add`` / ``in`` / ``len`` / iteration).
@@ -267,6 +278,9 @@ def build_agent(session: Session, system_prompt: str, settings: dict):
     _vt = settings.get("deep_research_verify", "faithfulness")
     if _vt in ("off", "faithfulness", "faithfulness+web"):
         agent.config.search.deep_research_verify = _vt
+    _dr_rounds = normalize_deep_research_max_rounds(settings.get("deep_research_max_rounds", 20))
+    agent.config.search.deep_research_max_rounds = _dr_rounds
+    session.settings["deep_research_max_rounds"] = _dr_rounds
     agent.set_event_sink(session.emit)
     session.agent = agent
     return agent
